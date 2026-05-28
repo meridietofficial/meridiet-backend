@@ -1,0 +1,11 @@
+{
+  "watch": ["src"],
+  "ext": "ts,json",
+  "ignore": ["src/migrations/**", "dist", "node_modules"],
+  "exec": "ts-node --transpile-only -r tsconfig-paths/register src/server.ts",
+  "legacyWatch": true,
+  "delay": 1500,
+  "env": {
+    "NODE_ENV": "development"
+  }
+}
