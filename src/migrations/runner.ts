@@ -66,7 +66,7 @@ async function run(rollback = false) {
     if (!target) { console.log('Nothing to rollback.'); return conn.end(); }
 
     console.log(`⏪  Rolling back: ${target.name}`);
-    await conn.execute(target.down);
+    await conn.query(target.down);
     await conn.execute('DELETE FROM _migrations WHERE name = ?', [target.name]);
     console.log(`✅  Done`);
   } else {
@@ -76,7 +76,7 @@ async function run(rollback = false) {
 
     for (const m of pending) {
       console.log(`⚡  Running: ${m.name}`);
-      await conn.execute(m.up);
+      await conn.query(m.up);
       await conn.execute('INSERT INTO _migrations (name) VALUES (?)', [m.name]);
       console.log(`✅  Done: ${m.name}`);
     }

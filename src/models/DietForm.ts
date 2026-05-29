@@ -3,27 +3,27 @@ import { query, execute } from '../config/database';
 export interface DietForm {
   id: number;
   user_id: number | null;
+
+  // Step 1: Basic Details & Goals
   full_name: string | null;
   age: number | null;
   gender: 'male' | 'female' | 'other' | 'prefer_not_to_say' | null;
-  dob: Date | null;
+  dob: string | null;
   height_unit: 'cm' | 'ft_in' | null;
   height: string | null;
   weight_unit: 'kg' | 'lbs' | null;
   weight: number | null;
-  body_type: 'slim' | 'average' | 'overweight' | 'obese' | 'athletic' | null;
-  basic_notes: string | null;
   goals: string[] | null;
+
+  // Step 2: Lifestyle
   activity_level: 'sedentary' | 'lightly_active' | 'moderately_active' | 'very_active' | 'super_active' | null;
-  sleep_duration: 'less_than_5' | '5_6' | '6_7' | '7_8' | 'more_than_8' | null;
-  water_intake: 'less_than_1l' | '1_2l' | '2_3l' | '3_4l' | 'more_than_4l' | null;
   work_type: 'desk_job' | 'standing_job' | 'physical_job' | null;
-  workout_frequency: 'never' | '1x' | '2_3x' | '4_5x' | 'daily' | null;
   workout_type: 'none' | 'gym' | 'yoga' | 'running' | 'sports' | 'mixed' | null;
-  daily_steps: 'less_2k' | '2k_5k' | '5k_8k' | '8k_12k' | 'more_12k' | null;
+
+  // Step 3: Food Preferences
   diet_type: 'vegetarian' | 'non_vegetarian' | 'eggetarian' | null;
   cuisine_preference: string[] | null;
-  preferred_meals: 'home_cooked' | 'restaurant' | 'meal_prep' | 'no_preference' | null;
+  preferred_meals: string[] | null;
   food_allergies: string[] | null;
   foods_dislike: string | null;
   favorite_foods: string | null;
@@ -32,33 +32,38 @@ export interface DietForm {
   lunch_time: string | null;
   evening_snack_time: string | null;
   dinner_time: string | null;
+
+  // Step 4: Health & Medical
   medical_conditions: string[] | null;
   other_condition: string | null;
   on_medication: 'yes_regularly' | 'yes_occasionally' | 'no' | null;
   medications: string | null;
-  food_intolerances: string[] | null;
-  other_intolerance: string | null;
   digestive_health: 'excellent' | 'good' | 'average' | 'poor' | null;
   smoke_alcohol: 'neither' | 'smoke' | 'alcohol' | 'both' | null;
   health_notes: string | null;
-  budget: 'under_500' | '500_1k' | '1k_2k' | '2k_3k' | 'above_3k' | null;
-  meal_preference: 'home_cooked' | 'meal_prep' | 'ready_to_eat' | 'food_delivery' | null;
-  prep_time: 'less_30min' | '30_60min' | '1_2hrs' | 'more_2hrs' | null;
-  grocery_shopping: 'online' | 'local_market' | 'both' | null;
-  cooking_support: 'self' | 'someone_helps' | 'full_time_help' | null;
-  other_preferences: string | null;
+
+  // Step 5: Contact Details
   contact_name: string | null;
   whatsapp: string | null;
   email: string | null;
-  delivery_method: 'whatsapp' | 'email' | null;
+  delivery_method: string[] | null;
   city: string | null;
   state: string | null;
+  state_code: string | null;
   final_notes: string | null;
+
   created_at: Date;
   updated_at: Date;
 }
 
-const JSON_FIELDS = ['goals', 'cuisine_preference', 'food_allergies', 'medical_conditions', 'food_intolerances'];
+const JSON_FIELDS = [
+  'goals',
+  'cuisine_preference',
+  'preferred_meals',
+  'food_allergies',
+  'medical_conditions',
+  'delivery_method',
+];
 
 const parse = (row: DietForm) => {
   const r = row as unknown as Record<string, unknown>;

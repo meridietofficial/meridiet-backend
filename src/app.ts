@@ -33,6 +33,11 @@ app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
 
+// Root
+app.get('/', (_req, res) => {
+  res.json({ success: true, message: 'Meri Diet server is working fine' });
+});
+
 // Health check
 app.get('/health', (_req, res) => {
   res.json({ success: true, message: 'Server is healthy 🟢' });
