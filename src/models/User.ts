@@ -8,7 +8,7 @@ export interface User {
   password: string;
   phone_code: string | null;
   phone_number: string | null;
-  role: 'user' | 'admin';
+  role: 'user' | 'admin' | 'dietitian';
   is_active: boolean;
   is_delete: boolean;
   avatar_url: string | null;
@@ -22,7 +22,7 @@ export interface CreateUserData {
   password: string;
   phone_code?: string | null;
   phone_number?: string | null;
-  role?: 'user' | 'admin';
+  role?: 'user' | 'admin' | 'dietitian';
 }
 
 export interface UpdateUserData {
