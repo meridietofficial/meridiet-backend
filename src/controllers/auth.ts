@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
-import { createUser, findUserByEmail, findUserByPhone, findUserByPhoneNumber, checkPassword } from '../models/User';
+import { createUser, findUserByEmail, findUserByPhone, findUserByPhoneNumber, checkPassword, findUserByGoogleId, linkGoogleId, createGoogleUser } from '../models/User';
 import { env } from '../config/env';
 import { successResponse, errorResponse } from '../utils/response';
 
@@ -101,6 +101,85 @@ export const login = async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('Login error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// POST /api/v1/auth/google
+// Body: { google_id, email, full_name, avatar_url?, user_type }
+// Case 1 — google_id + email already in DB  → login
+// Case 2 — email in DB, new google_id        → bind google_id then login
+// Case 3 — neither in DB                     → register new user
+export const googleLogin = async (req: Request, res: Response) => {
+  try {
+    const { google_id, email, full_name, avatar_url, user_type } = req.body as {
+      google_id?: string;
+      email?: string;
+      full_name?: string;
+      avatar_url?: string;
+      user_type?: string;
+    };
+
+    if (!google_id)  return errorResponse(res, 400, 'google_id is required');
+    if (!email)      return errorResponse(res, 400, 'email is required');
+    if (!full_name)  return errorResponse(res, 400, 'full_name is required');
+    if (!user_type)  return errorResponse(res, 400, 'user_type is required');
+    if (!['user', 'dietitian'].includes(user_type)) {
+      return errorResponse(res, 400, 'user_type must be user or dietitian');
+    }
+
+    let user = null;
+    let action: 'login' | 'linked' | 'registered' = 'login';
+
+    // Case 1: google_id already in DB — direct login
+    user = await findUserByGoogleId(google_id);
+
+    if (!user) {
+      // Case 2: email exists, bind the google_id to it
+      const byEmail = await findUserByEmail(email);
+      if (byEmail) {
+        user = await linkGoogleId(byEmail.id, google_id, avatar_url ?? null);
+        action = 'linked';
+      } else {
+        // Case 3: new user — register
+        user = await createGoogleUser({
+          google_id,
+          email,
+          full_name,
+          avatar_url: avatar_url ?? null,
+          role: user_type as 'user' | 'dietitian',
+        });
+        action = 'registered';
+      }
+    }
+
+    if (!user) return errorResponse(res, 500, 'Failed to process Google login');
+
+    if (!user.is_active) {
+      return errorResponse(res, 403, 'Account is deactivated. Please contact support.');
+    }
+
+    const token = generateToken(user.id, user.email, user.role);
+
+    const message =
+      action === 'registered' ? 'Google registration successful' :
+      action === 'linked'     ? 'Google account linked and logged in' :
+                                'Google login successful';
+
+    return successResponse(res, action === 'registered' ? 201 : 200, message, {
+      token,
+      user: {
+        id: user.id,
+        full_name: user.full_name,
+        email: user.email,
+        phone_code: user.phone_code,
+        phone_number: user.phone_number,
+        role: user.role,
+        avatar_url: user.avatar_url,
+      },
+    });
+  } catch (err) {
+    console.error('Google login error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

@@ -5,6 +5,7 @@ export interface User {
   id: number;
   full_name: string;
   email: string | null;
+  google_id: string | null;
   password: string;
   phone_code: string | null;
   phone_number: string | null;
@@ -96,4 +97,34 @@ export const updateUserPassword = async (id: number, newPassword: string) => {
 
 export const checkPassword = async (plainText: string, hashed: string) => {
   return bcrypt.compare(plainText, hashed);
+};
+
+export const findUserByGoogleId = async (googleId: string) => {
+  const rows = await query<User>('SELECT * FROM users WHERE google_id = ? AND is_delete = 0 LIMIT 1', [googleId]);
+  return rows[0] ?? null;
+};
+
+// Case 2: email exists, bind google_id to that account
+export const linkGoogleId = async (userId: number, googleId: string, avatarUrl: string | null) => {
+  await execute(
+    'UPDATE users SET google_id = ?, avatar_url = COALESCE(avatar_url, ?) WHERE id = ?',
+    [googleId, avatarUrl, userId],
+  );
+  return findUserById(userId);
+};
+
+// Case 3: new user — register via Google
+export const createGoogleUser = async (data: {
+  google_id: string;
+  email: string;
+  full_name: string;
+  avatar_url?: string | null;
+  role: 'user' | 'dietitian';
+}) => {
+  const placeholder = await bcrypt.hash(data.google_id + Date.now(), 12);
+  const result = await execute(
+    'INSERT INTO users (full_name, email, google_id, password, avatar_url, role) VALUES (?, ?, ?, ?, ?, ?)',
+    [data.full_name, data.email, data.google_id, placeholder, data.avatar_url ?? null, data.role],
+  );
+  return findUserById(result.insertId);
 };

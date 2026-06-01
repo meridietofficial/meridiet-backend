@@ -41,6 +41,7 @@ const envSchema = z.object({
 
   // AWS Key Reveal
   AWS_REVEAL_SECRET: z.string().min(8, 'AWS_REVEAL_SECRET must be at least 8 characters'),
+
 });
 
 const parsed = envSchema.safeParse(process.env);
