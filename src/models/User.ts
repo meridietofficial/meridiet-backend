@@ -58,6 +58,17 @@ export const getAllUsers = async () => {
   return query<User>('SELECT id, full_name, email, phone_code, phone_number, role, is_active, avatar_url, created_at, updated_at FROM users WHERE is_delete = 0');
 };
 
+const USER_SELECT = 'SELECT id, full_name, email, phone_code, phone_number, role, is_active, avatar_url, created_at, updated_at FROM users';
+
+export const getUsersPaginated = async (page: number, limit: number) => {
+  const offset = (page - 1) * limit;
+  const rows = await query<Omit<User, 'password' | 'is_delete'>>(
+    `${USER_SELECT} WHERE role = 'user' AND is_delete = 0 ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`,
+  );
+  const countRows = await query<{ total: number }>("SELECT COUNT(*) AS total FROM users WHERE role = 'user' AND is_delete = 0");
+  return { rows, total: countRows[0]?.total ?? 0 };
+};
+
 export const createUser = async (data: CreateUserData) => {
   const hashedPassword = await bcrypt.hash(data.password, 12);
   const result = await execute(
@@ -76,6 +87,11 @@ export const updateUser = async (id: number, data: UpdateUserData) => {
 
 export const softDeleteUser = async (id: number) => {
   await execute('UPDATE users SET is_delete = 1 WHERE id = ?', [id]);
+};
+
+export const updateUserPassword = async (id: number, newPassword: string) => {
+  const hashed = await bcrypt.hash(newPassword, 12);
+  await execute('UPDATE users SET password = ? WHERE id = ?', [hashed, id]);
 };
 
 export const checkPassword = async (plainText: string, hashed: string) => {
