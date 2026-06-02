@@ -120,10 +120,10 @@ export const googleLogin = async (req: Request, res: Response) => {
       user_type?: string;
     };
 
-    if (!google_id)  return errorResponse(res, 400, 'google_id is required');
-    if (!email)      return errorResponse(res, 400, 'email is required');
-    if (!full_name)  return errorResponse(res, 400, 'full_name is required');
-    if (!user_type)  return errorResponse(res, 400, 'user_type is required');
+    if (!google_id) return errorResponse(res, 400, 'google_id is required');
+    if (!email) return errorResponse(res, 400, 'email is required');
+    if (!full_name) return errorResponse(res, 400, 'full_name is required');
+    if (!user_type) return errorResponse(res, 400, 'user_type is required');
     if (!['user', 'dietitian'].includes(user_type)) {
       return errorResponse(res, 400, 'user_type must be user or dietitian');
     }
@@ -163,8 +163,8 @@ export const googleLogin = async (req: Request, res: Response) => {
 
     const message =
       action === 'registered' ? 'Google registration successful' :
-      action === 'linked'     ? 'Google account linked and logged in' :
-                                'Google login successful';
+        action === 'linked' ? 'Google account linked and logged in' :
+          'Google login successful';
 
     return successResponse(res, action === 'registered' ? 201 : 200, message, {
       token,
