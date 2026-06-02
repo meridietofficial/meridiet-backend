@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { createUser, findUserByEmail, findUserByPhone, findUserByPhoneNumber, checkPassword, findUserByGoogleId, linkGoogleId, createGoogleUser } from '../models/User';
+import { findDietitianByUserId } from '../models/Dietitian';
 import { env } from '../config/env';
 import { successResponse, errorResponse } from '../utils/response';
 
@@ -64,10 +65,16 @@ export const register = async (req: Request, res: Response) => {
 // Body: { email_phone, password }  — email_phone can be email or phone number
 export const login = async (req: Request, res: Response) => {
   try {
-    const { email_phone, password } = req.body;
+    const { email_phone, password, role } = req.body;
 
     if (!email_phone || !password) {
       return errorResponse(res, 400, 'email_phone and password are required');
+    }
+    if (!role) {
+      return errorResponse(res, 400, 'role is required');
+    }
+    if (!['user', 'admin', 'dietitian'].includes(role)) {
+      return errorResponse(res, 400, 'role must be user, admin or dietitian');
     }
 
     // If email_phone contains @ it's an email, otherwise it's a phone number
@@ -78,8 +85,19 @@ export const login = async (req: Request, res: Response) => {
 
     if (!user) return errorResponse(res, 401, 'Invalid credentials');
 
+    if (user.role !== role) {
+      return errorResponse(res, 403, `This account is not registered as ${role}`);
+    }
+
     if (!user.is_active) {
       return errorResponse(res, 403, 'Account is deactivated. Please contact support.');
+    }
+
+    if (role === 'dietitian') {
+      const dietitian = await findDietitianByUserId(user.id);
+      if (!dietitian || !dietitian.is_verified) {
+        return errorResponse(res, 403, 'Your profile is currently under review. Our team will verify your details shortly. Please check back in 24–48 hours.');
+      }
     }
 
     const isValid = await checkPassword(password, user.password);

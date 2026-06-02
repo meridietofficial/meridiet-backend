@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
-import { createUser, findUserByEmail } from '../models/User';
+import { createUser, findUserByEmail, findUserById, checkPassword, updateUserPassword } from '../models/User';
 import { createDietitian, findDietitianByRegistrationNumber, findDietitianByUserId, findDietitianById, updateDietitian } from '../models/Dietitian';
 import { updateUser } from '../models/User';
 import { env } from '../config/env';
@@ -185,6 +185,7 @@ const formatDietitian = (d: Awaited<ReturnType<typeof findDietitianById>>) => ({
   awards: parseJson<{ title: string; organization: string; year: string | null }[]>(d!.awards) ?? [],
   availability: parseJson<Record<string, string[]>>(d!.availability) ?? null,
   is_verified: d!.is_verified,
+  is_online: d!.is_online,
   documents: {
     profile_photo: d!.profile_photo,
     degree_certificate: d!.degree_certificate,
@@ -287,6 +288,35 @@ export const updateDietitianProfile = async (req: Request, res: Response) => {
     return successResponse(res, 200, 'Profile updated successfully', formatDietitian(updated));
   } catch (err) {
     console.error('Update dietitian profile error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// PUT /api/v1/dietitian/change-password
+export const changeDietitianPassword = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user?.sub);
+    const { current_password, new_password } = req.body as { current_password?: string; new_password?: string };
+
+    if (!current_password) return errorResponse(res, 400, 'current_password is required');
+    if (!new_password)     return errorResponse(res, 400, 'new_password is required');
+    if (new_password.length < 6) return errorResponse(res, 400, 'new_password must be at least 6 characters');
+
+    const user = await findUserById(userId);
+    if (!user) return errorResponse(res, 404, 'User not found');
+
+    const isValid = await checkPassword(current_password, user.password);
+    if (!isValid) return errorResponse(res, 401, 'Current password is incorrect');
+
+    if (current_password === new_password) {
+      return errorResponse(res, 400, 'New password must be different from current password');
+    }
+
+    await updateUserPassword(userId, new_password);
+
+    return successResponse(res, 200, 'Password changed successfully');
+  } catch (err) {
+    console.error('Change password error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

@@ -34,6 +34,7 @@ export interface Dietitian {
   id_proof: string | null;
   experience_certificate: string | null;
   is_verified: boolean;
+  is_online: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -97,7 +98,7 @@ const DIETITIAN_USER_SELECT = `
     d.experience, d.specialization, d.date_of_birth, d.gender, d.bio,
     d.languages, d.services, d.degrees, d.awards, d.availability,
     d.profile_photo, d.degree_certificate, d.registration_certificate,
-    d.id_proof, d.experience_certificate, d.is_verified, d.created_at, d.updated_at,
+    d.id_proof, d.experience_certificate, d.is_verified, d.is_online, d.created_at, d.updated_at,
     u.full_name, u.email, u.phone_code, u.phone_number, u.is_active, u.avatar_url
   FROM dietitians d
   JOIN users u ON d.user_id = u.id
