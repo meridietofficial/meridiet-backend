@@ -42,6 +42,22 @@ const envSchema = z.object({
   // AWS Key Reveal
   AWS_REVEAL_SECRET: z.string().min(8, 'AWS_REVEAL_SECRET must be at least 8 characters'),
 
+  // Gemini AI
+  GEMINI_API_KEY: z.string().min(1, 'GEMINI_API_KEY is required'),
+
+  // SMTP / Email (BigRock mailbox: support@meridiet.com)
+  SMTP_HOST: z.string().min(1, 'SMTP_HOST is required'),
+  SMTP_PORT: z.coerce.number().default(465),
+  SMTP_USER: z.string().email('SMTP_USER must be a valid email'),
+  SMTP_PASS: z.string().min(1, 'SMTP_PASS is required'),
+  MAIL_FROM_NAME: z.string().default('Meri Diet'),
+
+  // MSG91 (mobile OTP)
+  MSG91_AUTH_KEY: z.string().min(1, 'MSG91_AUTH_KEY is required'),
+  MSG91_OTP_TEMPLATE_ID: z.string().min(1, 'MSG91_OTP_TEMPLATE_ID is required'),
+  MSG91_OTP_EXPIRY_MINUTES: z.coerce.number().default(5),
+  MSG91_OTP_LENGTH: z.coerce.number().default(4),
+
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -1,10 +1,12 @@
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { createUser, findUserByEmail, findUserById, checkPassword, updateUserPassword } from '../models/User';
-import { createDietitian, findDietitianByRegistrationNumber, findDietitianByUserId, findDietitianById, updateDietitian } from '../models/Dietitian';
+import { createDietitian, findDietitianByRegistrationNumber, findDietitianByUserId, findDietitianById, updateDietitian, formatDietitianRow } from '../models/Dietitian';
 import { updateUser } from '../models/User';
 import { env } from '../config/env';
 import { successResponse, errorResponse } from '../utils/response';
+import { sendEmail } from '../services/email';
+import { dietitianWelcomeEmail } from '../services/emails/dietitianWelcome';
 
 const generateToken = (userId: number, email: string | null, role: string) => {
   return jwt.sign(
@@ -121,6 +123,15 @@ export const registerDietitian = async (req: Request, res: Response) => {
 
     const token = generateToken(user.id, user.email, user.role);
 
+    // Fire-and-forget acknowledgment email. A mail failure must not break
+    // registration, so we don't await it and just log any error.
+    if (user.email) {
+      const { subject, html, text } = dietitianWelcomeEmail(user.full_name ?? fullName);
+      void sendEmail({ to: user.email, subject, html, text }).catch((mailErr) => {
+        console.error('Dietitian welcome email failed:', mailErr);
+      });
+    }
+
     return successResponse(res, 201, 'Dietitian registered successfully', {
       token,
       user: {
@@ -154,48 +165,7 @@ export const registerDietitian = async (req: Request, res: Response) => {
   }
 };
 
-const parseJson = <T>(val: T | string | null): T | null => {
-  if (val === null || val === undefined) return null;
-  if (typeof val === 'string') {
-    try { return JSON.parse(val) as T; } catch { return null; }
-  }
-  return val as T;
-};
-
-const formatDietitian = (d: Awaited<ReturnType<typeof findDietitianById>>) => ({
-  id: d!.id,
-  user_id: d!.user_id,
-  full_name: d!.full_name,
-  email: d!.email,
-  phone_code: d!.phone_code,
-  phone_number: d!.phone_number,
-  avatar_url: d!.avatar_url,
-  is_active: d!.is_active,
-  date_of_birth: d!.date_of_birth ?? null,
-  gender: d!.gender ?? null,
-  bio: d!.bio ?? null,
-  state: d!.state,
-  city: d!.city,
-  registration_number: d!.registration_number,
-  experience: d!.experience,
-  specialization: parseJson<string[]>(d!.specialization) ?? [],
-  languages: parseJson<string[]>(d!.languages) ?? [],
-  services: parseJson<string[]>(d!.services) ?? [],
-  degrees: parseJson<{ degree: string; institute: string; year: string | null }[]>(d!.degrees) ?? [],
-  awards: parseJson<{ title: string; organization: string; year: string | null }[]>(d!.awards) ?? [],
-  availability: parseJson<Record<string, string[]>>(d!.availability) ?? null,
-  is_verified: d!.is_verified,
-  is_online: d!.is_online,
-  documents: {
-    profile_photo: d!.profile_photo,
-    degree_certificate: d!.degree_certificate,
-    registration_certificate: d!.registration_certificate,
-    id_proof: d!.id_proof,
-    experience_certificate: d!.experience_certificate,
-  },
-  created_at: d!.created_at,
-  updated_at: d!.updated_at,
-});
+const formatDietitian = (d: Awaited<ReturnType<typeof findDietitianById>>) => formatDietitianRow(d!);
 
 // PUT /api/v1/dietitian/profile
 // Updates the logged-in dietitian's profile (all fields optional)

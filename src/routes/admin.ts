@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/authenticate';
-import { adminLogin, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, getUserList, getUserDetails, toggleBlockUser, deleteUser } from '../controllers/admin';
+import { adminLogin, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDietFormRequests, getDietChartDetails, previewDietPlan } from '../controllers/admin';
 
 export const adminRouter = Router();
 
@@ -18,6 +18,11 @@ adminRouter.get('/dietitian/:id', authenticate, authorize('admin'), getDietitian
 adminRouter.patch('/toggle-block-dietitian', authenticate, authorize('admin'), toggleBlockDietitian);
 adminRouter.delete('/delete-dietitian', authenticate, authorize('admin'), deleteDietitian);
 adminRouter.patch('/dietitians/verify', authenticate, authorize('admin'), verifyDietitianHandler);
+
+// Diet form requests — admin only
+adminRouter.get('/diet-form-requests', authenticate, authorize('admin'), getDietFormRequests);
+adminRouter.get('/diet-form-requests/:form_id/details', authenticate, authorize('admin'), getDietChartDetails);
+adminRouter.get('/diet-form-requests/:form_id/preview', authenticate, authorize('admin'), previewDietPlan);
 
 // User management — admin only
 adminRouter.get('/existing-users', authenticate, authorize('admin'), getUserList);

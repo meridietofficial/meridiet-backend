@@ -13,6 +13,8 @@ export interface User {
   is_active: boolean;
   is_delete: boolean;
   avatar_url: string | null;
+  reset_token_hash: string | null;
+  reset_token_expires_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -93,6 +95,33 @@ export const softDeleteUser = async (id: number) => {
 export const updateUserPassword = async (id: number, newPassword: string) => {
   const hashed = await bcrypt.hash(newPassword, 12);
   await execute('UPDATE users SET password = ? WHERE id = ?', [hashed, id]);
+};
+
+// Store a hashed password-reset token + its expiry against a user.
+export const setPasswordResetToken = async (id: number, tokenHash: string, expiresAt: Date) => {
+  await execute('UPDATE users SET reset_token_hash = ?, reset_token_expires_at = ? WHERE id = ?', [
+    tokenHash,
+    expiresAt,
+    id,
+  ]);
+};
+
+// Find a (non-deleted) user by a still-valid reset token hash.
+export const findUserByResetTokenHash = async (tokenHash: string) => {
+  const rows = await query<User>(
+    'SELECT * FROM users WHERE reset_token_hash = ? AND reset_token_expires_at > NOW() AND is_delete = 0 LIMIT 1',
+    [tokenHash],
+  );
+  return rows[0] ?? null;
+};
+
+// Set a new password and clear the reset token in one shot.
+export const resetUserPassword = async (id: number, newPassword: string) => {
+  const hashed = await bcrypt.hash(newPassword, 12);
+  await execute(
+    'UPDATE users SET password = ?, reset_token_hash = NULL, reset_token_expires_at = NULL WHERE id = ?',
+    [hashed, id],
+  );
 };
 
 export const checkPassword = async (plainText: string, hashed: string) => {

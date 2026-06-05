@@ -3,6 +3,7 @@ import { query, execute } from '../config/database';
 export interface DietForm {
   id: number;
   user_id: number | null;
+  plan_type: number | null;
 
   // Step 1: Basic Details & Goals
   full_name: string | null;
@@ -23,15 +24,9 @@ export interface DietForm {
   // Step 3: Food Preferences
   diet_type: 'vegetarian' | 'non_vegetarian' | 'eggetarian' | null;
   cuisine_preference: string[] | null;
-  preferred_meals: string[] | null;
   food_allergies: string[] | null;
   foods_dislike: string | null;
   favorite_foods: string | null;
-  breakfast_time: string | null;
-  mid_morning_time: string | null;
-  lunch_time: string | null;
-  evening_snack_time: string | null;
-  dinner_time: string | null;
 
   // Step 4: Health & Medical
   medical_conditions: string[] | null;
@@ -39,7 +34,7 @@ export interface DietForm {
   on_medication: 'yes_regularly' | 'yes_occasionally' | 'no' | null;
   medications: string | null;
   digestive_health: 'excellent' | 'good' | 'average' | 'poor' | null;
-  smoke_alcohol: 'neither' | 'smoke' | 'alcohol' | 'both' | null;
+  smoke_alcohol: 'neither' | 'smoke' | 'occasionally_smoke' | 'alcohol' | 'occasionally_drink' | 'both' | null;
   health_notes: string | null;
 
   // Step 5: Contact Details
@@ -59,7 +54,6 @@ export interface DietForm {
 const JSON_FIELDS = [
   'goals',
   'cuisine_preference',
-  'preferred_meals',
   'food_allergies',
   'medical_conditions',
   'delivery_method',
