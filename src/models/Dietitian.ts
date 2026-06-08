@@ -164,10 +164,26 @@ export const formatDietitianCard = (d: DietitianWithUser, days = 14) => {
 
 // Public profile shape — full details WITHOUT sensitive fields (email, phone,
 // id proofs / certificates, registration number).
-export const formatDietitianPublic = (d: DietitianWithUser, days = 30) => {
+export const formatDietitianPublic = (
+  d: DietitianWithUser,
+  days = 30,
+  bookedSlots: { appointment_date: string; slot: string }[] = [],
+) => {
   const specialization = parseJson<string[]>(d.specialization) ?? [];
   const schedule = parseJson<Record<string, string[]>>(d.availability);
   const availableDates = buildAvailableDates(schedule, days);
+
+  const bookedMap = new Map<string, Set<string>>();
+  for (const b of bookedSlots) {
+    if (!bookedMap.has(b.appointment_date)) bookedMap.set(b.appointment_date, new Set());
+    bookedMap.get(b.appointment_date)!.add(b.slot);
+  }
+
+  const availableDatesWithBooked = availableDates.map((entry) => ({
+    ...entry,
+    booked_slots: [...(bookedMap.get(entry.date) ?? [])],
+  }));
+
   return {
     id: d.id,
     full_name: d.full_name,
@@ -185,7 +201,7 @@ export const formatDietitianPublic = (d: DietitianWithUser, days = 30) => {
     education: parseJson<DegreeEntry[]>(d.degrees) ?? [],
     awards: parseJson<AwardEntry[]>(d.awards) ?? [],
     slots: schedule ?? null,
-    available_dates: availableDates,
+    available_dates: availableDatesWithBooked,
     next_available: firstAvailable(availableDates),
     availability: d.is_online ? 'online' : 'offline',
     is_verified: d.is_verified,

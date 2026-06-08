@@ -59,6 +59,16 @@ const JSON_FIELDS = [
   'delivery_method',
 ];
 
+const ALLOWED_FIELDS = new Set([
+  'user_id', 'plan_type', 'full_name', 'age', 'gender', 'dob',
+  'height_unit', 'height', 'weight_unit', 'weight', 'goals',
+  'activity_level', 'work_type', 'workout_type', 'diet_type',
+  'cuisine_preference', 'food_allergies', 'foods_dislike', 'favorite_foods',
+  'medical_conditions', 'other_condition', 'on_medication', 'medications',
+  'digestive_health', 'smoke_alcohol', 'health_notes', 'contact_name',
+  'whatsapp', 'email', 'delivery_method', 'city', 'state', 'state_code', 'final_notes',
+]);
+
 const parse = (row: DietForm) => {
   const r = row as unknown as Record<string, unknown>;
   for (const field of JSON_FIELDS) {
@@ -90,7 +100,8 @@ export const findDietFormByUserId = async (user_id: number) => {
 };
 
 export const createDietForm = async (data: Partial<DietForm>) => {
-  const payload = serialize(data);
+  const filtered = Object.fromEntries(Object.entries(data).filter(([k]) => ALLOWED_FIELDS.has(k)));
+  const payload = serialize(filtered as Partial<DietForm>);
   const fields = Object.keys(payload).join(', ');
   const placeholders = Object.keys(payload).map(() => '?').join(', ');
   const result = await execute(

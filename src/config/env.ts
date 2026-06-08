@@ -32,6 +32,14 @@ const envSchema = z.object({
   RAZORPAY_KEY_ID: z.string().min(1, 'RAZORPAY_KEY_ID is required'),
   RAZORPAY_KEY_SECRET: z.string().min(1, 'RAZORPAY_KEY_SECRET is required'),
 
+  // Plans
+  PLAN_1_WEEK_LABEL: z.string().default('1 Week'),
+  PLAN_1_WEEK_AMOUNT: z.coerce.number().default(199),
+  PLAN_1_MONTH_LABEL: z.string().default('1 Month'),
+  PLAN_1_MONTH_AMOUNT: z.coerce.number().default(499),
+  PLAN_3_MONTHS_LABEL: z.string().default('3 Months'),
+  PLAN_3_MONTHS_AMOUNT: z.coerce.number().default(999),
+
   // AWS S3
   AWS_REGION: z.string().min(1, 'AWS_REGION is required'),
   AWS_ACCESS_KEY_ID: z.string().min(1, 'AWS_ACCESS_KEY_ID is required'),
@@ -57,6 +65,13 @@ const envSchema = z.object({
   MSG91_OTP_TEMPLATE_ID: z.string().min(1, 'MSG91_OTP_TEMPLATE_ID is required'),
   MSG91_OTP_EXPIRY_MINUTES: z.coerce.number().default(5),
   MSG91_OTP_LENGTH: z.coerce.number().default(4),
+
+  // Agora — 1-to-1 video calls with cloud recording
+  AGORA_APP_ID: z.string().default(''),
+  AGORA_APP_CERTIFICATE: z.string().default(''),
+  AGORA_CUSTOMER_ID: z.string().default(''),       // RESTful API key
+  AGORA_CUSTOMER_SECRET: z.string().default(''),   // RESTful API secret
+  AGORA_WEBHOOK_SECRET: z.string().default(''),    // optional: verifies Agora webhook calls
 
 });
 

@@ -69,9 +69,6 @@ export const registerDietitian = async (req: Request, res: Response) => {
     if (!fullName || !email || !phone || !password || !state || !city || !experience) {
       return errorResponse(res, 400, 'fullName, email, phone, password, state, city and experience are required');
     }
-    if (!specialization || specialization.length === 0) {
-      return errorResponse(res, 400, 'specialization array is required and must not be empty');
-    }
 
     const existingEmail = await findUserByEmail(email);
     if (existingEmail) return errorResponse(res, 409, 'Email is already registered');
@@ -103,7 +100,7 @@ export const registerDietitian = async (req: Request, res: Response) => {
       city,
       registration_number: regNumber,
       experience,
-      specialization,
+      specialization: specialization ?? [],
       date_of_birth: dateOfBirth ?? null,
       gender: gender ?? null,
       bio: bio ?? null,

@@ -7,6 +7,7 @@ import {
   formatDietitianPublic,
   type DietitianListFilters,
 } from '../models/Dietitian';
+import { getBookedSlots } from '../models/Appointment';
 import { getActiveSpecializations } from '../models/Specialization';
 import { successResponse, errorResponse } from '../utils/response';
 
@@ -163,10 +164,17 @@ export const getPublicDietitian = async (req: Request, res: Response) => {
     const id = Number(req.params.id);
     if (!id || isNaN(id)) return errorResponse(res, 400, 'Invalid dietitian id');
 
-    const dietitian = await findPublicDietitianById(id);
+    const today = new Date();
+    const fromDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+    const [dietitian, booked] = await Promise.all([
+      findPublicDietitianById(id),
+      getBookedSlots(id, fromDate),
+    ]);
+
     if (!dietitian) return errorResponse(res, 404, 'Dietitian not found');
 
-    return successResponse(res, 200, 'Dietitian fetched successfully', formatDietitianPublic(dietitian));
+    return successResponse(res, 200, 'Dietitian fetched successfully', formatDietitianPublic(dietitian, 30, booked));
   } catch (err) {
     console.error('Get public dietitian error:', err);
     return errorResponse(res, 500, 'Something went wrong');

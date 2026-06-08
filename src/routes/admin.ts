@@ -1,11 +1,14 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/authenticate';
-import { adminLogin, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDietFormRequests, getDietChartDetails, previewDietPlan } from '../controllers/admin';
+import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDietFormRequests, getDietChartDetails, previewDietPlan } from '../controllers/admin';
 
 export const adminRouter = Router();
 
 // POST /api/v1/admin/login
 adminRouter.post('/login', adminLogin);
+
+// POST /api/v1/admin/refresh-token
+adminRouter.post('/refresh-token', refreshAdminToken);
 
 // Profile & password — admin only
 adminRouter.get('/profile', authenticate, authorize('admin'), getAdminProfile);

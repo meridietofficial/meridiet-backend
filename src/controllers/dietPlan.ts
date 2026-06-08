@@ -6,8 +6,9 @@ import type { WeekPlan, FeaturedRecipe } from '../models/DietPlan';
 import { successResponse, errorResponse } from '../utils/response';
 import type { DietForm } from '../models/DietForm';
 
-const PLAN_LABELS: Record<number, string> = { 1: '1 Week', 2: '1 Month (4 Weeks)', 3: '3 Months (12 Weeks)' };
-const PLAN_WEEKS:  Record<number, number> = { 1: 1, 2: 4, 3: 12 };
+// plan_type 1 → 2 weeks, 2 → 1 month (4 weeks), 3 → 3 months (12 weeks)
+const PLAN_LABELS: Record<number, string> = { 1: '2 Weeks', 2: '1 Month (4 Weeks)', 3: '3 Months (12 Weeks)' };
+const PLAN_WEEKS:  Record<number, number> = { 1: 2, 2: 4, 3: 12 };
 
 const ACTIVITY_MULTIPLIER: Record<string, number> = {
   sedentary:          1.2,
@@ -57,7 +58,7 @@ const calcVitals = (form: DietForm) => {
   return { bmi, bmi_category, bmr, tdee, weightKg, heightCm };
 };
 
-const PLAN_TYPE_LABELS: Record<number, string> = { 1: '1 Week', 2: '1 Month', 3: '3 Months' };
+const PLAN_TYPE_LABELS: Record<number, string> = { 1: '2 Weeks', 2: '1 Month', 3: '3 Months' };
 
 const formatLabel = (val: string) =>
   val.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
@@ -85,7 +86,7 @@ const buildClientProfile = (form: DietForm, vitals: ReturnType<typeof calcVitals
   },
   health_and_fitness_goals: {
     goals:        form.goals ?? [],
-    plan_type:    PLAN_TYPE_LABELS[form.plan_type ?? 1] ?? '1 Week',
+    plan_type:    PLAN_TYPE_LABELS[form.plan_type ?? 1] ?? '2 Weeks',
     health_notes: form.health_notes ?? null,
     final_notes:  form.final_notes ?? null,
   },
@@ -119,8 +120,8 @@ const buildClientProfile = (form: DietForm, vitals: ReturnType<typeof calcVitals
 
 const buildPrompt = (form: DietForm, vitals: ReturnType<typeof calcVitals>): string => {
   const planType  = form.plan_type ?? 1;
-  const weeks     = PLAN_WEEKS[planType] ?? 1;
-  const duration  = PLAN_LABELS[planType] ?? '1 Week';
+  const weeks     = PLAN_WEEKS[planType] ?? 2;
+  const duration  = PLAN_LABELS[planType] ?? '2 Weeks';
 
   return `
 You are an expert Indian clinical dietitian. Generate a personalized diet plan in strict JSON format based on the client details below.

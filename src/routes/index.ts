@@ -9,6 +9,8 @@ import { adminRouter } from './admin';
 import { dietPlanRouter } from './dietPlan';
 import { settingsRouter } from './settings';
 import { contactRouter } from './contact';
+import { appointmentRouter } from './appointment';
+import { webhookRouter } from './webhook';
 
 export const router = Router();
 
@@ -21,4 +23,6 @@ router.use('/dietitians', dietitiansRouter);
 router.use('/admin', adminRouter);
 router.use('/diet-plan', dietPlanRouter);
 router.use('/contact', contactRouter);
+router.use('/appointments', appointmentRouter);
+router.use('/webhooks', webhookRouter);
 router.use('/', settingsRouter);

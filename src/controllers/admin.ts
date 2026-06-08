@@ -78,6 +78,38 @@ export const adminLogin = async (req: Request, res: Response) => {
   }
 };
 
+// POST /api/v1/admin/refresh-token
+// Body: { refreshToken }  (also accepts refresh_token)
+// Exchanges a valid refresh token for a fresh access + refresh token pair so the
+// admin session stays alive without re-logging in.
+export const refreshAdminToken = async (req: Request, res: Response) => {
+  try {
+    const refreshToken = req.body?.refreshToken ?? req.body?.refresh_token;
+    if (!refreshToken) return errorResponse(res, 400, 'refreshToken is required');
+
+    let payload: { sub: string; email: string | null; role: string };
+    try {
+      payload = jwt.verify(refreshToken, env.JWT_REFRESH_SECRET) as typeof payload;
+    } catch {
+      return errorResponse(res, 401, 'Invalid or expired refresh token');
+    }
+
+    const user = await findUserById(Number(payload.sub));
+    if (!user || user.role !== 'admin') return errorResponse(res, 401, 'Invalid refresh token');
+    if (!user.is_active) return errorResponse(res, 403, 'Account is deactivated. Please contact support.');
+
+    const accessToken = generateAccessToken(user.id, user.email, user.role);
+    const newRefreshToken = generateRefreshToken(user.id, user.email, user.role);
+
+    return successResponse(res, 200, 'Token refreshed', {
+      tokens: { accessToken, refreshToken: newRefreshToken },
+    });
+  } catch (err) {
+    console.error('Refresh admin token error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
 // GET /api/v1/admin/dietitians?page=1&limit=10  (verified only)
 export const getDietitianList = async (req: Request, res: Response) => {
   try {
