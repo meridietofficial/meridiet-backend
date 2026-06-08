@@ -391,6 +391,70 @@ export const getDietitianSessionsList = async (
   };
 };
 
+export interface DashboardStats {
+  today_count: number;
+  yesterday_count: number;
+  pending_count: number;
+  upcoming_count: number;
+  next_date: string | null;
+  next_slot: string | null;
+  this_month_earnings: number;
+  last_month_earnings: number;
+}
+
+export const getDietitianDashboardStats = async (dietitianId: number): Promise<DashboardStats> => {
+  const [todayRows, pendingRows, upcomingRows, nextRows, earningsRows] = await Promise.all([
+    query<{ today_count: number; yesterday_count: number }>(
+      `SELECT
+         SUM(appointment_date = CURDATE() AND status <> 'cancelled')                            AS today_count,
+         SUM(appointment_date = DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND status <> 'cancelled') AS yesterday_count
+       FROM appointments
+       WHERE dietitian_id = ?
+         AND appointment_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND CURDATE()`,
+      [dietitianId],
+    ),
+    query<{ pending_count: number }>(
+      `SELECT COUNT(*) AS pending_count FROM appointments WHERE dietitian_id = ? AND status = 'pending'`,
+      [dietitianId],
+    ),
+    query<{ upcoming_count: number }>(
+      `SELECT COUNT(*) AS upcoming_count FROM appointments
+       WHERE dietitian_id = ? AND status = 'confirmed'
+         AND TIMESTAMP(appointment_date, slot) >= NOW()`,
+      [dietitianId],
+    ),
+    query<{ next_date: string; next_slot: string }>(
+      `SELECT DATE_FORMAT(appointment_date, '%Y-%m-%d') AS next_date, TIME_FORMAT(slot, '%H:%i') AS next_slot
+       FROM appointments
+       WHERE dietitian_id = ? AND status = 'confirmed' AND TIMESTAMP(appointment_date, slot) >= NOW()
+       ORDER BY appointment_date ASC, slot ASC LIMIT 1`,
+      [dietitianId],
+    ),
+    query<{ this_month_earnings: number; last_month_earnings: number }>(
+      `SELECT
+         SUM(CASE WHEN YEAR(appointment_date) = YEAR(CURDATE()) AND MONTH(appointment_date) = MONTH(CURDATE())
+                  THEN fee ELSE 0 END) AS this_month_earnings,
+         SUM(CASE WHEN YEAR(appointment_date) = YEAR(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))
+                    AND MONTH(appointment_date) = MONTH(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))
+                  THEN fee ELSE 0 END) AS last_month_earnings
+       FROM appointments
+       WHERE dietitian_id = ? AND payment_status = 'paid' AND status <> 'cancelled'`,
+      [dietitianId],
+    ),
+  ]);
+
+  return {
+    today_count:          Number(todayRows[0]?.today_count          ?? 0),
+    yesterday_count:      Number(todayRows[0]?.yesterday_count      ?? 0),
+    pending_count:        Number(pendingRows[0]?.pending_count       ?? 0),
+    upcoming_count:       Number(upcomingRows[0]?.upcoming_count     ?? 0),
+    next_date:            nextRows[0]?.next_date  ?? null,
+    next_slot:            nextRows[0]?.next_slot  ?? null,
+    this_month_earnings:  Number(earningsRows[0]?.this_month_earnings ?? 0),
+    last_month_earnings:  Number(earningsRows[0]?.last_month_earnings ?? 0),
+  };
+};
+
 // Already-taken slots for a dietitian (to subtract from available_dates)
 export const getBookedSlots = async (dietitian_id: number, fromDate: string) => {
   return query<{ appointment_date: string; slot: string }>(

@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { createUser, findUserByEmail, findUserById, checkPassword, updateUserPassword } from '../models/User';
-import { createDietitian, findDietitianByRegistrationNumber, findDietitianByUserId, findDietitianById, updateDietitian, formatDietitianRow } from '../models/Dietitian';
+import { createDietitian, findDietitianByRegistrationNumber, findDietitianByUserId, findDietitianById, updateDietitian, setDietitianOnlineStatus, formatDietitianRow } from '../models/Dietitian';
 import { updateUser } from '../models/User';
 import { env } from '../config/env';
 import { successResponse, errorResponse } from '../utils/response';
@@ -303,6 +303,31 @@ export const getDietitianProfile = async (req: Request, res: Response) => {
     return successResponse(res, 200, 'Dietitian profile fetched successfully', formatDietitian(full));
   } catch (err) {
     console.error('Get dietitian profile error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// PATCH /api/v1/dietitian/online-status
+// Body: { is_online: boolean }
+export const updateOnlineStatus = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user?.sub);
+    const { is_online } = req.body as { is_online?: boolean };
+
+    if (is_online === undefined || typeof is_online !== 'boolean') {
+      return errorResponse(res, 400, 'is_online (boolean) is required');
+    }
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    await setDietitianOnlineStatus(dietitian.id, is_online);
+
+    return successResponse(res, 200, `You are now ${is_online ? 'online' : 'offline'}`, {
+      is_online,
+    });
+  } catch (err) {
+    console.error('Update online status error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

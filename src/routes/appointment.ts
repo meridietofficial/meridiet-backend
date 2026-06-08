@@ -7,6 +7,7 @@ import {
   getMyAppointments,
   getDietitianAppointments,
   getDietitianSessions,
+  getDietitianDashboard,
   getDietitianClients,
   updateAppointmentStatusHandler,
   cancelMyAppointment,
@@ -33,6 +34,7 @@ appointmentRouter.patch('/:id/cancel', authenticate, cancelMyAppointment);
 // Dietitian — must be logged in as dietitian
 appointmentRouter.get('/dietitian', authenticate, authorize('dietitian'), getDietitianAppointments);
 appointmentRouter.get('/dietitian/sessions', authenticate, authorize('dietitian'), getDietitianSessions);
+appointmentRouter.get('/dietitian/dashboard', authenticate, authorize('dietitian'), getDietitianDashboard);
 appointmentRouter.get('/clients', authenticate, authorize('dietitian'), getDietitianClients);
 appointmentRouter.patch('/:id/status', authenticate, authorize('dietitian'), updateAppointmentStatusHandler);
 

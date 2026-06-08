@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { registerDietitian, getDietitianProfile, getDietitianById, updateDietitianProfile, changeDietitianPassword } from '../controllers/dietitian';
+import { registerDietitian, getDietitianProfile, getDietitianById, updateDietitianProfile, changeDietitianPassword, updateOnlineStatus } from '../controllers/dietitian';
 import { authenticate, authorize } from '../middlewares/authenticate';
 
 export const dietitianRouter = Router();
@@ -14,6 +14,9 @@ dietitianRouter.put('/profile', authenticate, authorize('dietitian'), updateDiet
 
 // PUT  /api/v1/dietitian/change-password
 dietitianRouter.put('/change-password', authenticate, authorize('dietitian'), changeDietitianPassword);
+
+// PATCH /api/v1/dietitian/online-status
+dietitianRouter.patch('/online-status', authenticate, authorize('dietitian'), updateOnlineStatus);
 
 // GET /api/v1/dietitian/:id  — any dietitian by ID (authenticated users)
 dietitianRouter.get('/:id', authenticate, getDietitianById);

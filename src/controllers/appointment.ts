@@ -18,6 +18,7 @@ import {
   findAppointmentsByUserId,
   findAppointmentsByDietitianId,
   getDietitianSessionsList,
+  getDietitianDashboardStats,
   getClientsByDietitianId,
   updateAppointmentStatus,
   updateAppointmentPayment,
@@ -475,6 +476,51 @@ export const getDietitianClients = async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('Get dietitian clients error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// GET /api/v1/appointments/dietitian/dashboard
+export const getDietitianDashboard = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user?.sub);
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const stats = await getDietitianDashboardStats(dietitian.id);
+
+    const todayChange = stats.yesterday_count > 0
+      ? Math.round(((stats.today_count - stats.yesterday_count) / stats.yesterday_count) * 100)
+      : stats.today_count > 0 ? 100 : 0;
+
+    const earningsChange = stats.last_month_earnings > 0
+      ? Math.round(((stats.this_month_earnings - stats.last_month_earnings) / stats.last_month_earnings) * 100)
+      : stats.this_month_earnings > 0 ? 100 : 0;
+
+    return successResponse(res, 200, 'Dashboard stats fetched', {
+      today_consultations: {
+        count: stats.today_count,
+        change_percent: Math.abs(todayChange),
+        change_direction: todayChange >= 0 ? 'up' : 'down',
+      },
+      pending_requests: {
+        count: stats.pending_count,
+      },
+      upcoming_appointments: {
+        count: stats.upcoming_count,
+        next_slot: stats.next_slot ? toAmPm(stats.next_slot) : null,
+        next_date: stats.next_date,
+      },
+      monthly_earnings: {
+        amount: stats.this_month_earnings,
+        currency: 'INR',
+        change_percent: Math.abs(earningsChange),
+        change_direction: earningsChange >= 0 ? 'up' : 'down',
+      },
+    });
+  } catch (err) {
+    console.error('Get dietitian dashboard error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

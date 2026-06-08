@@ -404,6 +404,10 @@ export const createDietitian = async (data: CreateDietitianData) => {
   return rows[0] ?? null;
 };
 
+export const setDietitianOnlineStatus = async (id: number, isOnline: boolean) => {
+  await execute('UPDATE dietitians SET is_online = ? WHERE id = ?', [isOnline ? 1 : 0, id]);
+};
+
 export const updateDietitian = async (id: number, data: UpdateDietitianData) => {
   const jsonFields = new Set(['specialization', 'degrees', 'languages', 'services', 'awards', 'availability']);
   const fields = Object.keys(data).map((k) => `${k} = ?`).join(', ');
