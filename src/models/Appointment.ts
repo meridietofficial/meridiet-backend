@@ -470,6 +470,20 @@ export const getBookedSlots = async (dietitian_id: number, fromDate: string) => 
 
 // ── Agora video call helpers ──────────────────────────────────────────────────
 
+// Called immediately when a participant clicks "End Call" — saves duration right away.
+// The Agora webhook will later fill in recording_url without overwriting call_ended_at.
+export const markCallLeft = async (id: number) => {
+  await execute(
+    `UPDATE appointments
+     SET status                = 'completed',
+         video_call_status     = 'ended',
+         call_ended_at         = COALESCE(call_ended_at, NOW()),
+         call_duration_seconds = TIMESTAMPDIFF(SECOND, call_started_at, COALESCE(call_ended_at, NOW()))
+     WHERE id = ? AND video_call_status = 'ongoing'`,
+    [id],
+  );
+};
+
 export const setAgoraChannel = async (id: number, channelName: string) => {
   await execute(
     `UPDATE appointments

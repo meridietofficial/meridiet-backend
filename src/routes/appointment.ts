@@ -12,6 +12,7 @@ import {
   updateAppointmentStatusHandler,
   cancelMyAppointment,
   joinCall,
+  leaveCall,
   getCallRecording,
 } from '../controllers/appointment';
 import { authenticate, authorize } from '../middlewares/authenticate';
@@ -42,4 +43,5 @@ appointmentRouter.patch('/:id/status', authenticate, authorize('dietitian'), upd
 // Recording auto-starts on first join (if video_recording_enabled = '1' in settings)
 // and auto-stops via Agora's maxIdleTime when all participants leave.
 appointmentRouter.post('/:id/join-call', authenticate, joinCall);
+appointmentRouter.post('/:id/leave-call', authenticate, leaveCall);
 appointmentRouter.get('/:id/recording', authenticate, getCallRecording);

@@ -26,6 +26,7 @@ import {
   getBookedSlots,
   isSlotTaken,
   setAgoraChannel,
+  markCallLeft,
   updateRecordingStarted,
   updateCallEnded,
   updateRecordingUrl,
@@ -631,6 +632,51 @@ export const joinCall = async (req: Request, res: Response) => {
 };
 
 
+// POST /api/v1/appointments/:id/leave-call
+// Authenticated: user or dietitian. Call this when the participant clicks "End Call".
+// Immediately saves call_ended_at + call_duration_seconds so the user sees their time right away.
+// recording_url is filled in later by the Agora webhook.
+export const leaveCall = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const role   = req.user!.role;
+    const id     = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+
+    // Verify caller belongs to this appointment
+    if (role === 'dietitian') {
+      const dietitian = await findDietitianByUserId(userId);
+      if (!dietitian || dietitian.id !== appointment.dietitian_id)
+        return errorResponse(res, 403, 'Access denied');
+    } else {
+      if (appointment.user_id !== userId) return errorResponse(res, 403, 'Access denied');
+    }
+
+    if (appointment.video_call_status === 'not_started')
+      return errorResponse(res, 400, 'Call has not started yet');
+
+    // Save end time + duration immediately (idempotent — won't overwrite if already ended)
+    await markCallLeft(id);
+
+    // Re-fetch to return the latest duration to the client
+    const updated = await findAppointmentById(id);
+
+    return successResponse(res, 200, 'Call ended', {
+      status:                updated?.status,
+      video_call_status:     updated?.video_call_status,
+      call_started_at:       updated?.call_started_at,
+      call_ended_at:         updated?.call_ended_at,
+      call_duration_seconds: updated?.call_duration_seconds,
+    });
+  } catch (err) {
+    console.error('Leave call error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
 // GET /api/v1/appointments/:id/recording
 // Authenticated: user or dietitian. Returns recording URL and call duration.
 export const getCallRecording = async (req: Request, res: Response) => {
@@ -695,6 +741,8 @@ interface AgoraWebhookBody {
 export const agoraWebhook = async (req: Request, res: Response) => {
   try {
     const body = req.body as AgoraWebhookBody;
+
+    console.log('[Agora Webhook] received:', JSON.stringify({ productId: body.productId, eventType: body.eventType, cname: body.details?.cname }));
 
     // Only care about Cloud Recording events (productId 4)
     if (body.productId !== 4) return res.status(200).json({ success: true });
