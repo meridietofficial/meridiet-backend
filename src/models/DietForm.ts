@@ -99,6 +99,11 @@ export const findDietFormByUserId = async (user_id: number) => {
   return rows[0] ? parse(rows[0]) : null;
 };
 
+export const findAllDietFormsByUserId = async (user_id: number) => {
+  const rows = await query<DietForm>('SELECT * FROM diet_forms WHERE user_id = ? ORDER BY created_at DESC', [user_id]);
+  return rows.map(parse);
+};
+
 export const createDietForm = async (data: Partial<DietForm>) => {
   const filtered = Object.fromEntries(Object.entries(data).filter(([k]) => ALLOWED_FIELDS.has(k)));
   const payload = serialize(filtered as Partial<DietForm>);

@@ -5,6 +5,7 @@ import { env } from '../config/env';
 import { createPayment, findPaymentByOrderId, markPaymentPaid, markPaymentFailed } from '../models/Payment';
 import { createDietForm } from '../models/DietForm';
 import { successResponse, errorResponse } from '../utils/response';
+import { generateAndDeliverDietPlan } from '../services/dietPlanDelivery';
 
 // POST /api/v1/payment/create-order
 // Body: { plan: '1_week' | '1_month' | '3_months' }
@@ -25,10 +26,15 @@ export const createOrder = async (req: Request, res: Response) => {
       receipt: `receipt_${Date.now()}`,
     });
 
+    const monthsTotal = plan === '3_months' ? 3 : 1;
+    const perMonthAmount = parseFloat((selectedPlan.amountInr / monthsTotal).toFixed(2));
+
     await createPayment({
       razorpay_order_id: order.id,
       plan,
       amount: selectedPlan.amountInr,
+      months_total: monthsTotal,
+      per_month_amount: perMonthAmount,
       currency: selectedPlan.currency,
       user_id: userId,
     });
@@ -89,6 +95,15 @@ export const verifyPaymentAndSubmitForm = async (req: Request, res: Response) =>
     });
 
     await markPaymentPaid(razorpay_order_id, razorpay_payment_id, razorpay_signature, form!.id);
+
+    // Background: generate plan → PDF → S3 → cashback/subscription credit → email
+    // For 3-month plans, only generate month 1 (4 weeks); remaining credit goes to wallet.
+    if (form) {
+      const weeksOverride = payment.plan === '3_months' ? 4 : undefined;
+      void generateAndDeliverDietPlan(form.id, userId, weeksOverride).catch((err) => {
+        console.error('[payment] delivery pipeline error:', err);
+      });
+    }
 
     return successResponse(res, 201, 'Payment verified and diet form submitted successfully', {
       diet_form: form,

@@ -13,6 +13,7 @@ export interface User {
   is_active: boolean;
   is_delete: boolean;
   avatar_url: string | null;
+  wallet_balance: number;
   reset_token_hash: string | null;
   reset_token_expires_at: Date | null;
   created_at: Date;
@@ -58,10 +59,10 @@ export const findUserByPhoneNumber = async (phone_number: string) => {
 };
 
 export const getAllUsers = async () => {
-  return query<User>('SELECT id, full_name, email, phone_code, phone_number, role, is_active, avatar_url, created_at, updated_at FROM users WHERE is_delete = 0');
+  return query<User>('SELECT id, full_name, email, phone_code, phone_number, role, is_active, avatar_url, wallet_balance, created_at, updated_at FROM users WHERE is_delete = 0');
 };
 
-const USER_SELECT = 'SELECT id, full_name, email, phone_code, phone_number, role, is_active, avatar_url, created_at, updated_at FROM users';
+const USER_SELECT = 'SELECT id, full_name, email, phone_code, phone_number, role, is_active, avatar_url, wallet_balance, created_at, updated_at FROM users';
 
 export const getUsersPaginated = async (page: number, limit: number) => {
   const offset = (page - 1) * limit;
@@ -131,6 +132,16 @@ export const checkPassword = async (plainText: string, hashed: string) => {
 export const findUserByGoogleId = async (googleId: string) => {
   const rows = await query<User>('SELECT * FROM users WHERE google_id = ? AND is_delete = 0 LIMIT 1', [googleId]);
   return rows[0] ?? null;
+};
+
+export const findDeletedUserByGoogleId = async (googleId: string) => {
+  const rows = await query<User>('SELECT * FROM users WHERE google_id = ? AND is_delete = 1 LIMIT 1', [googleId]);
+  return rows[0] ?? null;
+};
+
+export const restoreDeletedUser = async (id: number) => {
+  await execute('UPDATE users SET is_delete = 0, is_active = 1 WHERE id = ?', [id]);
+  return findUserById(id);
 };
 
 // Case 2: email exists, bind google_id to that account

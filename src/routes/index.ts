@@ -11,6 +11,7 @@ import { settingsRouter } from './settings';
 import { contactRouter } from './contact';
 import { appointmentRouter } from './appointment';
 import { webhookRouter } from './webhook';
+import { walletRouter } from './wallet';
 
 export const router = Router();
 
@@ -22,6 +23,7 @@ router.use('/dietitian', dietitianRouter);
 router.use('/dietitians', dietitiansRouter);
 router.use('/admin', adminRouter);
 router.use('/diet-plan', dietPlanRouter);
+router.use('/wallet', walletRouter);
 router.use('/contact', contactRouter);
 router.use('/appointments', appointmentRouter);
 router.use('/webhooks', webhookRouter);

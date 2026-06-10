@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import { createUser, findUserByEmail, findUserByPhone, findUserByPhoneNumber, checkPassword, findUserByGoogleId, linkGoogleId, createGoogleUser, setPasswordResetToken, findUserByResetTokenHash, resetUserPassword } from '../models/User';
+import { createUser, findUserByEmail, findUserByPhone, findUserByPhoneNumber, checkPassword, findUserByGoogleId, findDeletedUserByGoogleId, restoreDeletedUser, linkGoogleId, createGoogleUser, setPasswordResetToken, findUserByResetTokenHash, resetUserPassword } from '../models/User';
 import { findDietitianByUserId, findDietitianById, formatDietitianRow } from '../models/Dietitian';
 import { env } from '../config/env';
 import { BRAND } from '../config/brand';
@@ -9,6 +9,7 @@ import { successResponse, errorResponse } from '../utils/response';
 import { sendOtp, verifyOtp, resendOtp } from '../services/otp';
 import { sendEmail } from '../services/email';
 import { passwordResetEmail } from '../services/emails/passwordReset';
+import { userWelcomeEmail } from '../services/emails/userWelcome';
 
 // How long a password-reset link stays valid.
 const RESET_TOKEN_TTL_MINUTES = 60;
@@ -48,10 +49,19 @@ export const register = async (req: Request, res: Response) => {
       if (existing) return errorResponse(res, 409, 'Phone number is already registered');
     }
 
-    const user = await createUser({ full_name, email, password, phone_code, phone_number, role });
+    // Public register endpoint always creates a regular user — never admin.
+    const safeRole = role === 'dietitian' ? 'dietitian' : 'user';
+    const user = await createUser({ full_name, email, password, phone_code, phone_number, role: safeRole });
     if (!user) return errorResponse(res, 500, 'Failed to create user');
 
     const token = generateToken(user.id, user.email, user.role);
+
+    if (user.email) {
+      const { subject, html, text } = userWelcomeEmail(user.full_name);
+      void sendEmail({ to: user.email, subject, html, text }).catch((mailErr) => {
+        console.error('User welcome email failed:', mailErr);
+      });
+    }
 
     return successResponse(res, 201, 'Registration successful', {
       token,
@@ -63,6 +73,7 @@ export const register = async (req: Request, res: Response) => {
         phone_number: user.phone_number,
         role: user.role,
         avatar_url: user.avatar_url,
+        wallet_balance: user.wallet_balance,
       },
     });
   } catch (err) {
@@ -134,6 +145,7 @@ export const login = async (req: Request, res: Response) => {
         phone_number: user.phone_number,
         role: user.role,
         avatar_url: user.avatar_url,
+        wallet_balance: user.wallet_balance,
       },
       dietitian,
     });
@@ -169,11 +181,20 @@ export const googleLogin = async (req: Request, res: Response) => {
     let user = null;
     let action: 'login' | 'linked' | 'registered' = 'login';
 
-    // Case 1: google_id already in DB — direct login
+    // Case 1: google_id already in DB (active) — direct login
     user = await findUserByGoogleId(google_id);
 
     if (!user) {
-      // Case 2: email exists, bind the google_id to it
+      // Case 1b: google_id belongs to a soft-deleted account — restore it
+      const deleted = await findDeletedUserByGoogleId(google_id);
+      if (deleted) {
+        user = await restoreDeletedUser(deleted.id);
+        action = 'login';
+      }
+    }
+
+    if (!user) {
+      // Case 2: email exists (active), bind the google_id to it
       const byEmail = await findUserByEmail(email);
       if (byEmail) {
         user = await linkGoogleId(byEmail.id, google_id, avatar_url ?? null);
@@ -214,6 +235,7 @@ export const googleLogin = async (req: Request, res: Response) => {
         phone_number: user.phone_number,
         role: user.role,
         avatar_url: user.avatar_url,
+        wallet_balance: user.wallet_balance,
       },
     });
   } catch (err) {

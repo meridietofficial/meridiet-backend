@@ -77,6 +77,7 @@ export interface DietPlan {
   general_tips: string[] | string | null;
   featured_recipes: FeaturedRecipe[] | string | null;
 
+  pdf_url: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -160,4 +161,8 @@ export const findDietPlanByFormId = async (form_id: number) => {
 export const findDietPlanById = async (id: number) => {
   const rows = await query<DietPlan>('SELECT * FROM diet_plans WHERE id = ? LIMIT 1', [id]);
   return rows[0] ? parse(rows[0]) : null;
+};
+
+export const saveDietPlanPdfUrl = async (id: number, pdf_url: string) => {
+  await execute('UPDATE diet_plans SET pdf_url = ? WHERE id = ?', [pdf_url, id]);
 };
