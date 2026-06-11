@@ -105,7 +105,7 @@ export const findAllDietFormsByUserId = async (user_id: number) => {
 };
 
 export const createDietForm = async (data: Partial<DietForm>) => {
-  const filtered = Object.fromEntries(Object.entries(data).filter(([k]) => ALLOWED_FIELDS.has(k)));
+  const filtered = Object.fromEntries(Object.entries(data).filter(([k, v]) => ALLOWED_FIELDS.has(k) && v !== undefined));
   const payload = serialize(filtered as Partial<DietForm>);
   const fields = Object.keys(payload).join(', ');
   const placeholders = Object.keys(payload).map(() => '?').join(', ');

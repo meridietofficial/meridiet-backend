@@ -189,6 +189,8 @@ export const updateDietitianProfile = async (req: Request, res: Response) => {
       degrees,
       awards,
       availability,
+      appointmentFee,
+      appointmentCurrency,
       documents,
     } = req.body as {
       fullName?: string;
@@ -206,6 +208,8 @@ export const updateDietitianProfile = async (req: Request, res: Response) => {
       degrees?: { degree: string; institute: string; year: string | null }[];
       awards?: { title: string; organization: string; year: string | null }[];
       availability?: Record<string, string[]>;
+      appointmentFee?: number;
+      appointmentCurrency?: string;
       documents?: {
         profilePhoto?: string;
         degreeCertificate?: string;
@@ -243,6 +247,12 @@ export const updateDietitianProfile = async (req: Request, res: Response) => {
     if (documents?.registrationCertificate !== undefined) dietitianUpdates.registration_certificate = documents.registrationCertificate;
     if (documents?.idProof               !== undefined) dietitianUpdates.id_proof               = documents.idProof;
     if (documents?.experienceCertificate !== undefined) dietitianUpdates.experience_certificate  = documents.experienceCertificate;
+    if (appointmentFee       !== undefined) {
+      const fee = Number(appointmentFee);
+      if (isNaN(fee) || fee < 0) return errorResponse(res, 400, 'appointmentFee must be a non-negative number');
+      dietitianUpdates.appointment_fee = fee;
+    }
+    if (appointmentCurrency  !== undefined) dietitianUpdates.appointment_currency = appointmentCurrency;
 
     if (Object.keys(dietitianUpdates).length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -140,11 +140,12 @@ export const findAppointmentsByUserId = async (userId: number, page = 1, limit =
        JOIN dietitians d ON a.dietitian_id = d.id
        JOIN users u ON d.user_id = u.id
        WHERE a.user_id = ?
+         AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed')
        ORDER BY a.appointment_date DESC, a.slot ASC
        LIMIT ${limit} OFFSET ${offset}`,
       [userId],
     ),
-    query<{ total: number }>('SELECT COUNT(*) AS total FROM appointments WHERE user_id = ?', [userId]),
+    query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE user_id = ? AND (payment_status <> 'unpaid' OR status = 'confirmed')`, [userId]),
   ]);
 
   const appointments: AppointmentWithDietitian[] = rows.map((r) => ({
@@ -201,12 +202,17 @@ export const findAppointmentsByDietitianId = async (
   const [rows, countRows] = await Promise.all([
     query<Appointment>(
       `SELECT ${APPOINTMENT_SELECT} FROM appointments
-       WHERE dietitian_id = ? ${whereStatus}
+       WHERE dietitian_id = ?
+         AND (payment_status <> 'unpaid' OR status = 'confirmed')
+         ${whereStatus}
        ORDER BY appointment_date DESC, slot ASC LIMIT ${limit} OFFSET ${offset}`,
       countParams,
     ),
     query<{ total: number }>(
-      `SELECT COUNT(*) AS total FROM appointments WHERE dietitian_id = ? ${whereStatus}`,
+      `SELECT COUNT(*) AS total FROM appointments
+       WHERE dietitian_id = ?
+         AND (payment_status <> 'unpaid' OR status = 'confirmed')
+         ${whereStatus}`,
       countParams,
     ),
   ]);
@@ -337,7 +343,9 @@ export const getDietitianSessionsList = async (
          SUM(a.status = 'pending')     AS pending
        FROM appointments a
        LEFT JOIN users u ON a.user_id = u.id AND u.is_delete = 0
-       WHERE a.dietitian_id = ? ${searchCond}`,
+       WHERE a.dietitian_id = ?
+         AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed')
+         ${searchCond}`,
       [dietitianId, ...searchParam],
     ),
     query<SessionRow>(
@@ -364,7 +372,9 @@ export const getDietitianSessionsList = async (
          END AS session_number
        FROM appointments a
        LEFT JOIN users u ON a.user_id = u.id AND u.is_delete = 0
-       WHERE a.dietitian_id = ? ${tabCond} ${searchCond}
+       WHERE a.dietitian_id = ?
+         AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed')
+         ${tabCond} ${searchCond}
        ORDER BY a.appointment_date ASC, a.slot ASC
        LIMIT ${limit} OFFSET ${offset}`,
       [dietitianId, ...searchParam],
@@ -373,7 +383,9 @@ export const getDietitianSessionsList = async (
       `SELECT COUNT(*) AS total
        FROM appointments a
        LEFT JOIN users u ON a.user_id = u.id AND u.is_delete = 0
-       WHERE a.dietitian_id = ? ${tabCond} ${searchCond}`,
+       WHERE a.dietitian_id = ?
+         AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed')
+         ${tabCond} ${searchCond}`,
       [dietitianId, ...searchParam],
     ),
   ]);

@@ -4,6 +4,8 @@ import type { DietForm } from '../models/DietForm';
 import {
   createDietPlan,
   updateDietPlanData,
+  updateDietPlanStatus,
+  findDietPlanById,
   findDietPlanByFormId,
   saveDietPlanPdfUrl,
 } from '../models/DietPlan';
@@ -147,18 +149,34 @@ Return ONLY this JSON structure:
 
 // ── Main delivery pipeline ────────────────────────────────────────────────────
 
-export const generateAndDeliverDietPlan = async (formId: number, userId: number | null, weeksOverride?: number): Promise<void> => {
+export const generateAndDeliverDietPlan = async (
+  formId: number,
+  userId: number | null,
+  weeksOverride?: number,
+  dietitianId?: number | null,
+  appointmentId?: number | null,
+  existingPlanId?: number | null,
+): Promise<void> => {
   const form = await findDietFormById(formId);
   if (!form) { console.error(`[delivery] form ${formId} not found`); return; }
 
-  // Skip if a completed plan already exists
-  const existing = await findDietPlanByFormId(formId);
-  if (existing && existing.status === 'completed') return;
+  // Skip if a completed plan already exists for this form (non-dietitian flow only)
+  if (!dietitianId && !existingPlanId) {
+    const existing = await findDietPlanByFormId(formId);
+    if (existing && existing.status === 'completed') return;
+  }
 
   const vitals = calcVitals(form);
   const clientProfile = buildClientProfile(form, vitals);
 
-  const plan = await createDietPlan(formId, userId);
+  // For dietitian draft flow: reuse the existing plan record instead of creating a new one
+  let plan;
+  if (existingPlanId) {
+    await updateDietPlanStatus(existingPlanId, 'generating');
+    plan = await findDietPlanById(existingPlanId);
+  } else {
+    plan = await createDietPlan(formId, userId, dietitianId, appointmentId);
+  }
   if (!plan) { console.error(`[delivery] failed to create plan record for form ${formId}`); return; }
 
   // ── Step 1: Generate via Gemini (up to 3 attempts on 503) ──────────────────

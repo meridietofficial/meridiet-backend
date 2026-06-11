@@ -36,6 +36,8 @@ export interface Dietitian {
   experience_certificate: string | null;
   is_verified: boolean;
   is_online: boolean;
+  appointment_fee: number;
+  appointment_currency: string;
   created_at: Date;
   updated_at: Date;
 }
@@ -80,6 +82,8 @@ export interface UpdateDietitianData {
   registration_certificate?: string | null;
   id_proof?: string | null;
   experience_certificate?: string | null;
+  appointment_fee?: number;
+  appointment_currency?: string;
 }
 
 export interface DietitianWithUser extends Dietitian {
@@ -125,6 +129,8 @@ export const formatDietitianRow = (d: DietitianWithUser) => ({
   availability: parseJson<Record<string, string[]>>(d.availability) ?? null,
   is_verified: d.is_verified,
   is_online: d.is_online,
+  appointment_fee: Number(d.appointment_fee ?? 0),
+  appointment_currency: d.appointment_currency ?? 'INR',
   documents: {
     profile_photo: d.profile_photo,
     degree_certificate: d.degree_certificate,
@@ -209,7 +215,8 @@ export const formatDietitianPublic = (
     rating: 0,
     reviews: 0,
     reviewsList: [] as unknown[],
-    fee: null as number | null,
+    appointment_fee: Number(d.appointment_fee ?? 0),
+    appointment_currency: d.appointment_currency ?? 'INR',
     consultations: 0,
     created_at: d.created_at,
   };
@@ -221,7 +228,8 @@ const DIETITIAN_USER_SELECT = `
     d.experience, d.specialization, d.date_of_birth, d.gender, d.bio,
     d.languages, d.services, d.degrees, d.awards, d.availability,
     d.profile_photo, d.degree_certificate, d.registration_certificate,
-    d.id_proof, d.experience_certificate, d.is_verified, d.is_online, d.created_at, d.updated_at,
+    d.id_proof, d.experience_certificate, d.is_verified, d.is_online,
+    d.appointment_fee, d.appointment_currency, d.created_at, d.updated_at,
     u.full_name, u.email, u.phone_code, u.phone_number, u.is_active, u.avatar_url
   FROM dietitians d
   JOIN users u ON d.user_id = u.id

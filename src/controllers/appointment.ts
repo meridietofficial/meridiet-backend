@@ -113,7 +113,6 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
       name,
       email,
       phone,
-      fee: requestedFee,
       duration,
       session_type,
       notes,
@@ -124,7 +123,6 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
       name?: string;
       email?: string;
       phone?: string;
-      fee?: number;
       duration?: number;
       session_type?: 'video_call' | 'in_person';
       notes?: string;
@@ -185,8 +183,8 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
     }
     // --- End availability check ---
 
-    const fee = requestedFee ?? 0;
-    const currency = 'INR';
+    const fee = Number(dietitian.appointment_fee ?? 0);
+    const currency = (dietitian.appointment_currency as string) || 'INR';
     const userId = req.user?.sub ? Number(req.user.sub) : null;
 
     // Create Razorpay order only after all checks pass

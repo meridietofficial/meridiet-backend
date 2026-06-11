@@ -1,5 +1,13 @@
 import { Router } from 'express';
 import { registerDietitian, getDietitianProfile, getDietitianById, updateDietitianProfile, changeDietitianPassword, updateOnlineStatus } from '../controllers/dietitian';
+import {
+  saveDraft,
+  updateDraft,
+  generateFromDraft,
+  archivePlan,
+  listDietitianPlans,
+  getDietitianPlan,
+} from '../controllers/dietitianDietPlan';
 import { authenticate, authorize } from '../middlewares/authenticate';
 
 export const dietitianRouter = Router();
@@ -17,6 +25,26 @@ dietitianRouter.put('/change-password', authenticate, authorize('dietitian'), ch
 
 // PATCH /api/v1/dietitian/online-status
 dietitianRouter.patch('/online-status', authenticate, authorize('dietitian'), updateOnlineStatus);
+
+// ── Diet Plan Management (dietitian only) ─────────────────────────────────────
+
+// POST /api/v1/dietitian/diet-plans          — fill form & save as draft
+dietitianRouter.post('/diet-plans', authenticate, authorize('dietitian'), saveDraft);
+
+// GET  /api/v1/dietitian/diet-plans          — list all plans (filter by status)
+dietitianRouter.get('/diet-plans', authenticate, authorize('dietitian'), listDietitianPlans);
+
+// GET  /api/v1/dietitian/diet-plans/:id      — get single plan
+dietitianRouter.get('/diet-plans/:id', authenticate, authorize('dietitian'), getDietitianPlan);
+
+// PUT  /api/v1/dietitian/diet-plans/:id      — update draft form fields
+dietitianRouter.put('/diet-plans/:id', authenticate, authorize('dietitian'), updateDraft);
+
+// POST /api/v1/dietitian/diet-plans/:id/generate — trigger AI generation on a draft
+dietitianRouter.post('/diet-plans/:id/generate', authenticate, authorize('dietitian'), generateFromDraft);
+
+// PUT  /api/v1/dietitian/diet-plans/:id/archive  — archive a plan
+dietitianRouter.put('/diet-plans/:id/archive', authenticate, authorize('dietitian'), archivePlan);
 
 // GET /api/v1/dietitian/:id  — any dietitian by ID (authenticated users)
 dietitianRouter.get('/:id', authenticate, getDietitianById);
