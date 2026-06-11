@@ -1,4 +1,4 @@
-import { geminiModel } from '../config/gemini';
+import { geminiModel, geminiFallbackModel } from '../config/gemini';
 import { findDietFormById } from '../models/DietForm';
 import type { DietForm } from '../models/DietForm';
 import {
@@ -92,14 +92,9 @@ const buildClientProfile = (form: DietForm, vitals: ReturnType<typeof calcVitals
   },
 });
 
-const buildPrompt = (form: DietForm, vitals: ReturnType<typeof calcVitals>, weeksOverride?: number): string => {
-  const planType = form.plan_type ?? 1;
-  const weeks = weeksOverride ?? PLAN_WEEKS[planType] ?? 2;
-  const duration = weeksOverride === 4 ? '1 Month (4 Weeks)' : (PLAN_LABELS[planType] ?? '2 Weeks');
-  return `
-You are an expert Indian clinical dietitian. Generate a personalized diet plan in strict JSON format based on the client details below.
-
-CLIENT DETAILS:
+// Shared client details block reused in every prompt
+const clientBlock = (form: DietForm, vitals: ReturnType<typeof calcVitals>): string =>
+  `CLIENT DETAILS:
 - Name: ${form.full_name ?? 'Client'}
 - Age: ${form.age ?? 'N/A'} | Gender: ${form.gender ?? 'N/A'}
 - Height: ${vitals.heightCm.toFixed(1)} cm | Weight: ${vitals.weightKg.toFixed(1)} kg
@@ -118,9 +113,14 @@ CLIENT DETAILS:
 - On Medication: ${form.on_medication ?? 'no'} ${form.medications ? `(${form.medications})` : ''}
 - Digestive Health: ${form.digestive_health ?? 'good'}
 - Smoking/Alcohol: ${form.smoke_alcohol ?? 'neither'}
-- Plan Duration: ${duration} (${weeks} week${weeks > 1 ? 's' : ''})
 - City/State: ${form.city ?? ''}, ${form.state ?? ''}
-- Health Notes: ${form.health_notes ?? 'none'}
+- Health Notes: ${form.health_notes ?? 'none'}`;
+
+// Week 1 prompt — also generates summary, hydration_guide, general_tips, featured_recipes
+const buildWeek1Prompt = (form: DietForm, vitals: ReturnType<typeof calcVitals>, totalWeeks: number, duration: string): string => `
+You are an expert Indian clinical dietitian. Generate Week 1 of a ${totalWeeks}-week personalized diet plan along with the plan summary and recipes, in strict JSON format.
+
+${clientBlock(form, vitals)}
 
 INSTRUCTIONS:
 1. All meals must respect the diet type and strictly avoid disliked foods and allergens.
@@ -129,22 +129,95 @@ INSTRUCTIONS:
 4. Include meal_timing for each day with realistic Indian meal times.
 5. Keep calories between 1400–1600 kcal/day and protein between 90–110 g/day.
 6. Include water_liters (2.5–3.5) for each day.
-7. Generate exactly ${weeks} week(s) with exactly 7 days each.
+7. Generate exactly 7 days for Week 1.
 8. Never repeat the same meals within the same week.
-9. Include smart swaps and weekly tips for each week.
+9. Include smart swaps and weekly tips for Week 1.
 10. Include 4–6 featured recipes with full ingredients, steps, and macros.
 11. Return VALID JSON only — no markdown, no comments, no code blocks.
 12. All numeric fields must be numbers, not strings.
 
 Return ONLY this JSON structure:
 {
-  "summary": { "client_name": "...", "calorie_range": "1400-1600 kcal/day", "protein_target_g": 100, "carbs_target_g": 150, "fat_target_g": 50, "primary_goal": "...", "plan_duration": "${duration}", "diet_type": "${form.diet_type}" },
-  "weeks": [{ "week": 1, "title": "...", "description": "...", "focus": ["..."], "what_to_expect": "...", "days": [{ "day": 1, "breakfast": [{"food":"...","quantity":"..."}], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": 1450, "total_protein_g": 95, "water_liters": 3 }], "weekly_notes": ["..."], "smart_swaps": [{"instead_of":"...","choose":"..."}] }],
+  "summary": { "client_name": "...", "calorie_range": "1400-1600 kcal/day", "protein_target_g": 100, "carbs_target_g": 150, "fat_target_g": 50, "primary_goal": "...", "plan_duration": "${duration}", "diet_type": "${form.diet_type ?? ''}" },
   "hydration_guide": "...",
   "general_tips": ["..."],
-  "featured_recipes": [{ "name":"...", "cook_time":"20 mins", "servings":1, "calories":320, "ingredients":["..."], "steps":["..."], "macros":{"carbs_g":48,"protein_g":8,"fat_g":10,"fiber_g":4} }]
+  "featured_recipes": [{ "name":"...", "cook_time":"20 mins", "servings":1, "calories":320, "ingredients":["..."], "steps":["..."], "macros":{"carbs_g":48,"protein_g":8,"fat_g":10,"fiber_g":4} }],
+  "week": { "week": 1, "title": "...", "description": "...", "focus": ["..."], "what_to_expect": "...", "days": [{ "day": 1, "breakfast": [{"food":"...","quantity":"..."}], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": 1450, "total_protein_g": 95, "water_liters": 3 }], "weekly_notes": ["..."], "smart_swaps": [{"instead_of":"...","choose":"..."}] }
 }
 `;
+
+// Week N prompt (N > 1) — generates only one week, avoids repeating prior meals
+const buildWeekNPrompt = (form: DietForm, vitals: ReturnType<typeof calcVitals>, weekNumber: number, totalWeeks: number, usedMeals: string[]): string => `
+You are an expert Indian clinical dietitian. Generate Week ${weekNumber} of a ${totalWeeks}-week personalized diet plan in strict JSON format.
+
+${clientBlock(form, vitals)}
+
+MEALS ALREADY USED IN PREVIOUS WEEKS — do NOT repeat any of these:
+${usedMeals.slice(0, 150).join(', ')}
+
+INSTRUCTIONS:
+1. All meals must respect the diet type and strictly avoid disliked foods and allergens.
+2. Use Indian home-style meals suited to their cuisine preference.
+3. Each day must have Breakfast, Lunch, Snack, and Dinner as arrays of meal items.
+4. Include meal_timing for each day with realistic Indian meal times.
+5. Keep calories between 1400–1600 kcal/day and protein between 90–110 g/day.
+6. Include water_liters (2.5–3.5) for each day.
+7. Generate exactly 7 days for Week ${weekNumber}.
+8. Never repeat the same meals within this week or from the already used meals list above.
+9. Include smart swaps and weekly tips for Week ${weekNumber}.
+10. Return VALID JSON only — no markdown, no comments, no code blocks.
+11. All numeric fields must be numbers, not strings.
+
+Return ONLY this JSON structure:
+{ "week": { "week": ${weekNumber}, "title": "...", "description": "...", "focus": ["..."], "what_to_expect": "...", "days": [{ "day": 1, "breakfast": [{"food":"...","quantity":"..."}], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": 1450, "total_protein_g": 95, "water_liters": 3 }], "weekly_notes": ["..."], "smart_swaps": [{"instead_of":"...","choose":"..."}] } }
+`;
+
+// Extract all food names from a generated week to prevent repetition in subsequent weeks
+const extractMealNames = (week: WeekPlan): string[] => {
+  const names = new Set<string>();
+  for (const day of week.days ?? []) {
+    for (const item of [...(day.breakfast ?? []), ...(day.lunch ?? []), ...(day.snack ?? []), ...(day.dinner ?? [])]) {
+      if (item.food) names.add(item.food);
+    }
+  }
+  return [...names];
+};
+
+// Single Gemini call with retry — 3 attempts on primary, then 3 attempts on fallback model
+const callGeminiWithRetry = async (prompt: string, label: string): Promise<Record<string, unknown>> => {
+  const DELAYS = [15_000, 30_000, 60_000];
+
+  const tryModel = async (model: typeof geminiModel, modelName: string): Promise<Record<string, unknown> | null> => {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const result = await model.generateContent(prompt);
+        const raw = result.response.text().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+        return JSON.parse(raw);
+      } catch (err: unknown) {
+        const status = (err as { status?: number }).status;
+        const message = (err as Error).message ?? String(err);
+        if (attempt < 3) {
+          const delay = DELAYS[attempt - 1] ?? 60_000;
+          console.warn(`[gemini] ${label} (${modelName}) attempt ${attempt} failed (status=${status ?? 'unknown'}, msg=${message}), retrying in ${delay / 1000}s…`);
+          await new Promise((r) => setTimeout(r, delay));
+        } else {
+          console.warn(`[gemini] ${label} (${modelName}) exhausted after 3 attempts — last error: status=${status ?? 'unknown'}, msg=${message}`);
+        }
+      }
+    }
+    return null;
+  };
+
+  // Try primary model first
+  const primary = await tryModel(geminiModel, 'gemini-2.5-flash');
+  if (primary) return primary;
+
+  // Fall back to stable model
+  console.warn(`[gemini] ${label} falling back to gemini-1.5-flash…`);
+  const fallback = await tryModel(geminiFallbackModel, 'gemini-1.5-flash');
+  if (fallback) return fallback;
+
+  throw new Error(`[gemini] ${label} failed on both gemini-2.5-flash and gemini-1.5-flash`);
 };
 
 // ── Main delivery pipeline ────────────────────────────────────────────────────
@@ -179,39 +252,38 @@ export const generateAndDeliverDietPlan = async (
   }
   if (!plan) { console.error(`[delivery] failed to create plan record for form ${formId}`); return; }
 
-  // ── Step 1: Generate via Gemini (up to 5 attempts with exponential backoff) ──
+  // ── Step 1: Generate via Gemini week by week ─────────────────────────────────
   let generatedData: Record<string, unknown> = {};
-  const prompt = buildPrompt(form, vitals, weeksOverride);
-  let lastAiErr: unknown;
-  let geminiSuccess = false;
+  const planType = form.plan_type ?? 1;
+  const totalWeeks = weeksOverride ?? PLAN_WEEKS[planType] ?? 2;
+  const duration = weeksOverride === 4 ? '1 Month (4 Weeks)' : (PLAN_LABELS[planType] ?? '2 Weeks');
 
-  const RETRYABLE = new Set([429, 500, 503]);
-  // Backoff delays: 15s, 30s, 60s, 90s
-  const DELAYS = [15_000, 30_000, 60_000, 90_000];
+  try {
+    // Week 1 — also generates summary, hydration_guide, general_tips, featured_recipes
+    console.log(`[delivery] Generating week 1/${totalWeeks} for form ${formId}…`);
+    const week1Result = await callGeminiWithRetry(buildWeek1Prompt(form, vitals, totalWeeks, duration), 'week-1');
 
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    try {
-      const result = await geminiModel.generateContent(prompt);
-      // Strip markdown code fences if Gemini wraps the JSON
-      const raw = result.response.text().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-      generatedData = JSON.parse(raw);
-      geminiSuccess = true;
-      break;
-    } catch (err: unknown) {
-      lastAiErr = err;
-      const status = (err as { status?: number }).status;
-      const isRetryable = RETRYABLE.has(status ?? 0) || err instanceof SyntaxError;
-      if (isRetryable && attempt < 5) {
-        const delay = DELAYS[attempt - 1] ?? 90_000;
-        console.warn(`[delivery] Gemini attempt ${attempt} failed (status=${status ?? 'parse_error'}), retrying in ${delay / 1000}s…`);
-        await new Promise((r) => setTimeout(r, delay));
-      } else {
-        break;
-      }
+    const allWeeks: WeekPlan[] = [week1Result.week as WeekPlan];
+    const usedMeals = extractMealNames(week1Result.week as WeekPlan);
+
+    // Weeks 2 to N — smaller focused calls, each avoids repeating prior meals
+    for (let w = 2; w <= totalWeeks; w++) {
+      console.log(`[delivery] Generating week ${w}/${totalWeeks} for form ${formId}…`);
+      const weekResult = await callGeminiWithRetry(buildWeekNPrompt(form, vitals, w, totalWeeks, usedMeals), `week-${w}`);
+      const weekData = weekResult.week as WeekPlan;
+      allWeeks.push(weekData);
+      usedMeals.push(...extractMealNames(weekData));
     }
-  }
 
-  if (!geminiSuccess) {
+    // Merge into the same final structure — response shape is unchanged
+    generatedData = {
+      summary:          week1Result.summary,
+      hydration_guide:  week1Result.hydration_guide,
+      general_tips:     week1Result.general_tips,
+      featured_recipes: week1Result.featured_recipes,
+      weeks:            allWeeks,
+    };
+  } catch (lastAiErr) {
     console.error('[delivery] Gemini failed after retries:', lastAiErr);
     await updateDietPlanData(plan.id, {
       bmi: vitals.bmi, bmi_category: vitals.bmi_category, bmr: vitals.bmr, tdee: vitals.tdee,
