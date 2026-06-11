@@ -331,6 +331,28 @@ export const updateOnlineStatus = async (req: Request, res: Response) => {
     const dietitian = await findDietitianByUserId(userId);
     if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
 
+    if (is_online) {
+      const missing: string[] = [];
+
+      if (!dietitian.appointment_fee || dietitian.appointment_fee <= 0) {
+        missing.push('Appointment fee is not set — please add your consultation fee in your profile');
+      }
+
+      const availability = dietitian.availability;
+      const hasAvailability =
+        availability &&
+        typeof availability === 'object' &&
+        Object.values(availability).some((slots) => Array.isArray(slots) && slots.length > 0);
+
+      if (!hasAvailability) {
+        missing.push('Weekly availability is not set — please add at least one day with time slots in your profile');
+      }
+
+      if (missing.length > 0) {
+        return errorResponse(res, 400, `Cannot go online. Please fix the following:\n• ${missing.join('\n• ')}`);
+      }
+    }
+
     await setDietitianOnlineStatus(dietitian.id, is_online);
 
     return successResponse(res, 200, `You are now ${is_online ? 'online' : 'offline'}`, {

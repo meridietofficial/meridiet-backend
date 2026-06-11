@@ -179,24 +179,31 @@ export const generateAndDeliverDietPlan = async (
   }
   if (!plan) { console.error(`[delivery] failed to create plan record for form ${formId}`); return; }
 
-  // ── Step 1: Generate via Gemini (up to 3 attempts on 503) ──────────────────
+  // ── Step 1: Generate via Gemini (up to 5 attempts with exponential backoff) ──
   let generatedData: Record<string, unknown> = {};
   const prompt = buildPrompt(form, vitals, weeksOverride);
   let lastAiErr: unknown;
   let geminiSuccess = false;
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  const RETRYABLE = new Set([429, 500, 503]);
+  // Backoff delays: 15s, 30s, 60s, 90s
+  const DELAYS = [15_000, 30_000, 60_000, 90_000];
+
+  for (let attempt = 1; attempt <= 5; attempt++) {
     try {
       const result = await geminiModel.generateContent(prompt);
-      generatedData = JSON.parse(result.response.text());
+      // Strip markdown code fences if Gemini wraps the JSON
+      const raw = result.response.text().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+      generatedData = JSON.parse(raw);
       geminiSuccess = true;
       break;
     } catch (err: unknown) {
       lastAiErr = err;
       const status = (err as { status?: number }).status;
-      if (status === 503 && attempt < 3) {
-        const delay = attempt * 15_000; // 15s, then 30s
-        console.warn(`[delivery] Gemini 503 on attempt ${attempt}, retrying in ${delay / 1000}s…`);
+      const isRetryable = RETRYABLE.has(status ?? 0) || err instanceof SyntaxError;
+      if (isRetryable && attempt < 5) {
+        const delay = DELAYS[attempt - 1] ?? 90_000;
+        console.warn(`[delivery] Gemini attempt ${attempt} failed (status=${status ?? 'parse_error'}), retrying in ${delay / 1000}s…`);
         await new Promise((r) => setTimeout(r, delay));
       } else {
         break;

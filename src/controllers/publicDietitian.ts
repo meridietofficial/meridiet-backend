@@ -53,6 +53,9 @@ export const listDietitians = async (req: Request, res: Response) => {
 
     const availableNow = req.query.available_now === 'true' || req.query.available_now === '1';
 
+    const minFee = req.query.min_fee != null ? parseFloat(req.query.min_fee as string) || undefined : undefined;
+    const maxFee = req.query.max_fee != null ? parseFloat(req.query.max_fee as string) || undefined : undefined;
+
     const filters: DietitianListFilters = {
       search: str(req.query.search),
       specialization: str(req.query.specialization),
@@ -61,6 +64,8 @@ export const listDietitians = async (req: Request, res: Response) => {
       language: str(req.query.language),
       minExperience,
       maxExperience,
+      minFee,
+      maxFee,
       availableNow,
       sort,
       page,

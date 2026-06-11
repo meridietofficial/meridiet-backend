@@ -165,6 +165,8 @@ export const formatDietitianCard = (d: DietitianWithUser, days = 14) => {
     available_dates: availableDates,
     availability: d.is_online ? 'online' : 'offline',
     is_verified: d.is_verified,
+    appointment_fee: Number(d.appointment_fee ?? 0),
+    appointment_currency: d.appointment_currency ?? 'INR',
   };
 };
 
@@ -282,6 +284,8 @@ export interface DietitianListFilters {
   language?: string;
   minExperience?: number;
   maxExperience?: number;
+  minFee?: number;
+  maxFee?: number;
   availableNow?: boolean;
   sort?: 'top_rated' | 'most_reviewed' | 'available_now' | 'experience';
   page: number;
@@ -325,6 +329,14 @@ export const listPublicDietitians = async (filters: DietitianListFilters) => {
   if (filters.maxExperience != null) {
     conditions.push(`CAST(d.experience AS UNSIGNED) <= ?`);
     params.push(filters.maxExperience);
+  }
+  if (filters.minFee != null) {
+    conditions.push(`d.appointment_fee >= ?`);
+    params.push(filters.minFee);
+  }
+  if (filters.maxFee != null) {
+    conditions.push(`d.appointment_fee <= ?`);
+    params.push(filters.maxFee);
   }
   if (filters.availableNow) {
     conditions.push(`d.is_online = 1`);
