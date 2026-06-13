@@ -26,15 +26,18 @@ export const generateDietPlanPdf = async (plan: DietPlan): Promise<Buffer> => {
   const isProduction = process.env.NODE_ENV === 'production';
 
   const browser = await puppeteer.launch({
-    args: isProduction ? chromium.args : ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+    args: isProduction
+      ? [...chromium.args, '--font-render-hinting=none']
+      : ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--font-render-hinting=none'],
     executablePath: await getExecutablePath(),
-    headless: true,
+    headless: isProduction ? 'shell' : true,
   });
 
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: 794, height: 1123, deviceScaleFactor: 1 });
-    await page.setContent(html, { waitUntil: 'load' });
+    await page.setContent(html, { waitUntil: 'domcontentloaded' });
+    await new Promise((r) => setTimeout(r, 300));
 
     const pdf = await page.pdf({
       format: 'A4',

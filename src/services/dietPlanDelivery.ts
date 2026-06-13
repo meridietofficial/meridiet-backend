@@ -213,8 +213,8 @@ const callGeminiWithRetry = async (prompt: string, label: string): Promise<Recor
   if (primary) return primary;
 
   // Fall back to stable model
-  console.warn(`[gemini] ${label} falling back to gemini-1.5-flash…`);
-  const fallback = await tryModel(geminiFallbackModel, 'gemini-1.5-flash');
+  console.warn(`[gemini] ${label} falling back to gemini-2.0-flash…`);
+  const fallback = await tryModel(geminiFallbackModel, 'gemini-2.0-flash');
   if (fallback) return fallback;
 
   throw new Error(`[gemini] ${label} failed on both gemini-2.5-flash and gemini-1.5-flash`);
