@@ -37,7 +37,8 @@ export const generateDietPlanPdf = async (plan: DietPlan): Promise<Buffer> => {
     const page = await browser.newPage();
     await page.setViewport({ width: 794, height: 1123, deviceScaleFactor: 1 });
     await page.setContent(html, { waitUntil: 'domcontentloaded' });
-    await new Promise((r) => setTimeout(r, 300));
+    await page.evaluate('document.fonts.ready');
+    await new Promise((r) => setTimeout(r, 200));
 
     const pdf = await page.pdf({
       format: 'A4',

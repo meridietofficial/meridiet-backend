@@ -13,6 +13,7 @@ const PLAN_DURATION_LABELS: Record<number, string> = {
 };
 
 // POST /api/v1/diet-form
+// Creates a draft diet form — does NOT trigger plan generation yet.
 // Logged-in user → send Bearer token, user_id is auto-attached
 // Guest          → no token needed, user_id will be null
 export const submitDietForm = async (req: Request, res: Response) => {
@@ -24,9 +25,29 @@ export const submitDietForm = async (req: Request, res: Response) => {
       ...req.body,
     });
 
-    // Fire-and-forget confirmation email — never block the response
-    const recipientEmail = form?.email ?? null;
-    if (recipientEmail && form) {
+    return successResponse(res, 201, 'Diet form saved successfully', form);
+  } catch (err) {
+    console.error('Submit diet form error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// POST /api/v1/diet-form/:id/submit
+// Final submission — triggers plan generation + sends confirmation email.
+// Call this after all 5 steps are saved.
+export const finalizeDietForm = async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return errorResponse(res, 400, 'Form id is required');
+
+    const form = await findDietFormById(id);
+    if (!form) return errorResponse(res, 404, 'Diet form not found');
+
+    const userId = form.user_id;
+
+    // Fire-and-forget confirmation email
+    const recipientEmail = form.email ?? null;
+    if (recipientEmail) {
       const { subject, html, text } = dietFormConfirmationEmail(
         form.full_name ?? 'there',
         {
@@ -41,15 +62,16 @@ export const submitDietForm = async (req: Request, res: Response) => {
     }
 
     // Background: generate plan → PDF → S3 → cashback → email
-    if (form) {
-      void generateAndDeliverDietPlan(form.id, userId).catch((err) => {
+    // Only trigger for logged-in users (user_id must be present)
+    if (userId) {
+      void generateAndDeliverDietPlan(id, userId).catch((err) => {
         console.error('[dietForm] delivery pipeline error:', err);
       });
     }
 
-    return successResponse(res, 201, 'Diet form submitted successfully', form);
+    return successResponse(res, 200, 'Diet form submitted successfully. Your plan is being generated!', form);
   } catch (err) {
-    console.error('Submit diet form error:', err);
+    console.error('Finalize diet form error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };
@@ -106,10 +128,16 @@ export const getMyDietForm = async (req: Request, res: Response) => {
 
 // GET /api/v1/diet-form/my/all
 // Get all diet forms submitted by the currently logged-in user with count
+// Only returns forms where the user has completed at least Step 5 (email is present),
+// meaning they reached the payment screen. Incomplete/abandoned drafts are excluded.
 export const getMyAllDietForms = async (req: Request, res: Response) => {
   try {
     const userId = Number(req.user?.sub);
-    const forms = await findAllDietFormsByUserId(userId);
+    const allForms = await findAllDietFormsByUserId(userId);
+
+    // Filter: only include forms where Step 5 (contact details) is filled in
+    // email is a Step 5 field — if it's present the user reached the payment screen
+    const forms = allForms.filter((f) => f.email !== null && f.email !== '');
 
     const plans = await Promise.all(forms.map((f) => findDietPlanByFormId(f.id)));
 

@@ -3,25 +3,34 @@ import type { Request, Response } from 'express';
 import { razorpay, PLANS } from '../config/razorpay';
 import { env } from '../config/env';
 import { createPayment, findPaymentByOrderId, markPaymentPaid, markPaymentFailed } from '../models/Payment';
-import { createDietForm } from '../models/DietForm';
+import { findDietFormById } from '../models/DietForm';
 import { successResponse, errorResponse } from '../utils/response';
 import { generateAndDeliverDietPlan } from '../services/dietPlanDelivery';
 
 // POST /api/v1/payment/create-order
-// Body: { plan: '1_week' | '1_month' | '3_months' }
+// Body: { plan: '1_week' | '1_month' | '3_months', diet_form_id: number }
 export const createOrder = async (req: Request, res: Response) => {
   try {
-    const { plan } = req.body as { plan: string };
+    const { plan, diet_form_id } = req.body as { plan: string; diet_form_id?: number };
 
     const selectedPlan = PLANS[plan];
     if (!selectedPlan) {
       return errorResponse(res, 400, `Invalid plan. Valid options: ${Object.keys(PLANS).join(', ')}`);
     }
 
+    if (!diet_form_id) {
+      return errorResponse(res, 400, 'diet_form_id is required');
+    }
+
+    const form = await findDietFormById(diet_form_id);
+    if (!form) {
+      return errorResponse(res, 404, 'Diet form not found');
+    }
+
     const userId = req.user?.sub ? Number(req.user.sub) : null;
 
     const order = await razorpay.orders.create({
-      amount: selectedPlan.amountInr * 100, // Razorpay requires paise
+      amount: selectedPlan.amountInr * 100,
       currency: selectedPlan.currency,
       receipt: `receipt_${Date.now()}`,
     });
@@ -37,6 +46,7 @@ export const createOrder = async (req: Request, res: Response) => {
       per_month_amount: perMonthAmount,
       currency: selectedPlan.currency,
       user_id: userId,
+      diet_form_id,
     });
 
     return successResponse(res, 201, 'Order created', {
@@ -53,13 +63,13 @@ export const createOrder = async (req: Request, res: Response) => {
 };
 
 // POST /api/v1/payment/verify
-// Body: { razorpay_order_id, razorpay_payment_id, razorpay_signature, ...dietFormData }
+// Body: { razorpay_order_id, razorpay_payment_id, razorpay_signature }
+// diet_form_id is already stored in the payment record from create-order
 export const verifyPaymentAndSubmitForm = async (req: Request, res: Response) => {
-  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, ...dietFormData } = req.body as {
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body as {
     razorpay_order_id: string;
     razorpay_payment_id: string;
     razorpay_signature: string;
-    [key: string]: unknown;
   };
 
   if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
@@ -73,39 +83,34 @@ export const verifyPaymentAndSubmitForm = async (req: Request, res: Response) =>
     .digest('hex');
 
   if (expectedSignature !== razorpay_signature) {
-    // Mark payment as failed so it's tracked
     await markPaymentFailed(razorpay_order_id).catch(() => null);
     return errorResponse(res, 400, 'Payment verification failed: invalid signature');
   }
 
   try {
     const payment = await findPaymentByOrderId(razorpay_order_id);
-    if (!payment) {
-      return errorResponse(res, 404, 'Order not found');
+    if (!payment) return errorResponse(res, 404, 'Order not found');
+    if (payment.status === 'paid') return errorResponse(res, 409, 'Payment already verified');
+
+    if (!payment.diet_form_id) {
+      return errorResponse(res, 400, 'No diet form linked to this order');
     }
-    if (payment.status === 'paid') {
-      return errorResponse(res, 409, 'Payment already verified');
-    }
 
-    const userId = req.user?.sub ? Number(req.user.sub) : null;
+    const form = await findDietFormById(payment.diet_form_id);
+    if (!form) return errorResponse(res, 404, 'Diet form not found');
 
-    const form = await createDietForm({
-      user_id: userId,
-      ...dietFormData,
-    });
-
-    await markPaymentPaid(razorpay_order_id, razorpay_payment_id, razorpay_signature, form!.id);
+    await markPaymentPaid(razorpay_order_id, razorpay_payment_id, razorpay_signature, payment.diet_form_id);
 
     // Background: generate plan → PDF → S3 → cashback/subscription credit → email
-    // For 3-month plans, only generate month 1 (4 weeks); remaining credit goes to wallet.
-    if (form) {
+    const userId = form.user_id;
+    if (userId) {
       const weeksOverride = payment.plan === '3_months' ? 4 : undefined;
       void generateAndDeliverDietPlan(form.id, userId, weeksOverride).catch((err) => {
         console.error('[payment] delivery pipeline error:', err);
       });
     }
 
-    return successResponse(res, 201, 'Payment verified and diet form submitted successfully', {
+    return successResponse(res, 201, 'Payment verified successfully', {
       diet_form: form,
       payment: {
         order_id: razorpay_order_id,

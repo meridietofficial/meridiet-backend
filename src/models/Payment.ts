@@ -18,11 +18,11 @@ export interface Payment {
   updated_at: Date;
 }
 
-export const createPayment = async (data: Pick<Payment, 'razorpay_order_id' | 'plan' | 'amount' | 'currency' | 'user_id' | 'months_total' | 'per_month_amount'>) => {
+export const createPayment = async (data: Pick<Payment, 'razorpay_order_id' | 'plan' | 'amount' | 'currency' | 'user_id' | 'months_total' | 'per_month_amount'> & { diet_form_id?: number | null }) => {
   const result = await execute(
-    `INSERT INTO payments (razorpay_order_id, plan, amount, months_total, per_month_amount, currency, user_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [data.razorpay_order_id, data.plan, data.amount, data.months_total, data.per_month_amount, data.currency, data.user_id],
+    `INSERT INTO payments (razorpay_order_id, plan, amount, months_total, per_month_amount, currency, user_id, diet_form_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [data.razorpay_order_id, data.plan, data.amount, data.months_total, data.per_month_amount, data.currency, data.user_id, data.diet_form_id ?? null],
   );
   return findPaymentById(result.insertId);
 };

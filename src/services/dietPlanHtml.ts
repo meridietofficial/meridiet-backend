@@ -75,7 +75,7 @@ const fmtDate   = (iso: string | null | undefined): string => { if (!iso) return
 const todayFmt  = (): string => { const d = new Date(); return `${String(d.getDate()).padStart(2,'0')} / ${String(d.getMonth()+1).padStart(2,'0')} / ${d.getFullYear()}`; };
 
 // ── Global CSS ────────────────────────────────────────────────────────────
-const FONT = "'Segoe UI','Helvetica Neue',Arial,sans-serif";
+const FONT = "'Liberation Sans',Arial,'Helvetica Neue','Segoe UI',sans-serif";
 const PAGE_W = 794;
 const PAGE_H = 1123;
 

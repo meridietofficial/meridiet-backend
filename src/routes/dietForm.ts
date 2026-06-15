@@ -1,16 +1,20 @@
 import { Router } from 'express';
-import { submitDietForm, updateDietFormById, getDietFormById, getMyDietForm, getMyAllDietForms } from '../controllers/dietForm';
+import { submitDietForm, finalizeDietForm, updateDietFormById, getDietFormById, getMyDietForm, getMyAllDietForms } from '../controllers/dietForm';
 import { authenticate } from '../middlewares/authenticate';
 import { optionalAuth } from '../middlewares/optionalAuth';
 
 export const dietFormRouter = Router();
 
 // POST /api/v1/diet-form
-// Submit diet form — works for both logged-in users and guests
+// Step 1: Create a draft diet form — no plan generation yet
 dietFormRouter.post('/', optionalAuth, submitDietForm);
 
+// POST /api/v1/diet-form/:id/submit
+// Final submit: triggers plan generation + confirmation email (must come before /:id routes)
+dietFormRouter.post('/:id/submit', finalizeDietForm);
+
 // PUT /api/v1/diet-form/:id
-// Update an existing diet form by id
+// Steps 2–5: Partial update — only sent fields are saved
 dietFormRouter.put('/:id', updateDietFormById);
 
 // GET /api/v1/diet-form/my/all
