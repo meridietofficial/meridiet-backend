@@ -1,4 +1,4 @@
-import { geminiModel, geminiFallbackModel } from '../config/gemini';
+import { openaiClient, OPENAI_PRIMARY_MODEL, OPENAI_FALLBACK_MODEL } from '../config/openai';
 import { findDietFormById } from '../models/DietForm';
 import type { DietForm } from '../models/DietForm';
 import {
@@ -116,33 +116,74 @@ const clientBlock = (form: DietForm, vitals: ReturnType<typeof calcVitals>): str
 - City/State: ${form.city ?? ''}, ${form.state ?? ''}
 - Health Notes: ${form.health_notes ?? 'none'}`;
 
-// Week 1 prompt — also generates summary, hydration_guide, general_tips, featured_recipes
-const buildWeek1Prompt = (form: DietForm, vitals: ReturnType<typeof calcVitals>, totalWeeks: number, duration: string): string => `
-You are an expert Indian clinical dietitian. Generate Week 1 of a ${totalWeeks}-week personalized diet plan along with the plan summary and recipes, in strict JSON format.
+// Week 1 — Call A: summary, hydration, tips, and exactly 4 featured recipes (no days)
+const buildWeek1MetaPrompt = (form: DietForm, vitals: ReturnType<typeof calcVitals>, totalWeeks: number, duration: string): string => `
+You are an expert Indian clinical dietitian. Generate the plan summary, hydration guide, general tips, and exactly 4 featured recipes for a ${totalWeeks}-week personalized Indian diet plan in strict JSON format.
 
 ${clientBlock(form, vitals)}
 
 INSTRUCTIONS:
-1. All meals must respect the diet type and strictly avoid disliked foods and allergens.
-2. Use Indian home-style meals suited to their cuisine preference.
-3. Each day must have Breakfast, Lunch, Snack, and Dinner as arrays of meal items.
-4. Include meal_timing for each day with realistic Indian meal times.
-5. Keep calories between 1400–1600 kcal/day and protein between 90–110 g/day.
-6. Include water_liters (2.5–3.5) for each day.
-7. Generate exactly 7 days for Week 1.
-8. Never repeat the same meals within the same week.
-9. Include smart swaps and weekly tips for Week 1.
-10. Include 4–6 featured recipes with full ingredients, steps, and macros.
-11. Return VALID JSON only — no markdown, no comments, no code blocks.
-12. All numeric fields must be numbers, not strings.
+1. Recipes must respect the diet type and strictly avoid disliked foods and allergens.
+2. Use Indian home-style recipes suited to their cuisine preference.
+3. Generate EXACTLY 4 featured recipes — no more, no fewer.
+4. Each recipe must include: name, cook_time, servings, calories, ingredients (6–8 items), steps (4–6 steps), macros.
+5. Return VALID JSON only — no markdown, no comments, no code blocks.
+6. All numeric fields must be numbers, not strings.
 
 Return ONLY this JSON structure:
 {
   "summary": { "client_name": "...", "calorie_range": "1400-1600 kcal/day", "protein_target_g": 100, "carbs_target_g": 150, "fat_target_g": 50, "primary_goal": "...", "plan_duration": "${duration}", "diet_type": "${form.diet_type ?? ''}" },
   "hydration_guide": "...",
-  "general_tips": ["..."],
-  "featured_recipes": [{ "name":"...", "cook_time":"20 mins", "servings":1, "calories":320, "ingredients":["..."], "steps":["..."], "macros":{"carbs_g":48,"protein_g":8,"fat_g":10,"fiber_g":4} }],
-  "week": { "week": 1, "title": "...", "description": "...", "focus": ["..."], "what_to_expect": "...", "days": [{ "day": 1, "breakfast": [{"food":"...","quantity":"..."}], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": 1450, "total_protein_g": 95, "water_liters": 3 }], "weekly_notes": ["..."], "smart_swaps": [{"instead_of":"...","choose":"..."}] }
+  "general_tips": ["...", "...", "...", "...", "..."],
+  "featured_recipes": [
+    { "name":"...", "cook_time":"20 mins", "servings":1, "calories":320, "ingredients":["...","...","...","...","...","..."], "steps":["...","...","...","..."], "macros":{"carbs_g":48,"protein_g":8,"fat_g":10,"fiber_g":4} },
+    { "name":"...", "cook_time":"20 mins", "servings":1, "calories":300, "ingredients":["...","...","...","...","...","..."], "steps":["...","...","...","..."], "macros":{"carbs_g":40,"protein_g":12,"fat_g":8,"fiber_g":5} },
+    { "name":"...", "cook_time":"15 mins", "servings":1, "calories":280, "ingredients":["...","...","...","...","...","..."], "steps":["...","...","...","..."], "macros":{"carbs_g":35,"protein_g":15,"fat_g":7,"fiber_g":4} },
+    { "name":"...", "cook_time":"25 mins", "servings":1, "calories":350, "ingredients":["...","...","...","...","...","..."], "steps":["...","...","...","..."], "macros":{"carbs_g":50,"protein_g":10,"fat_g":9,"fiber_g":6} }
+  ]
+}
+`;
+
+// Week 1 — Call B: all 7 days only (no summary or recipes)
+const buildWeek1DaysPrompt = (form: DietForm, vitals: ReturnType<typeof calcVitals>, totalWeeks: number): string => `
+You are an expert Indian clinical dietitian. Generate EXACTLY 7 days for Week 1 of a ${totalWeeks}-week personalized Indian diet plan in strict JSON format.
+
+${clientBlock(form, vitals)}
+
+CRITICAL RULES:
+- You MUST generate all 7 days: day 1, day 2, day 3, day 4, day 5, day 6, day 7. Do NOT stop early.
+- The "days" array must contain exactly 7 objects.
+- All meals must respect the diet type and strictly avoid disliked foods and allergens.
+- Use Indian home-style meals suited to their cuisine preference.
+- Each day must have breakfast, lunch, snack, and dinner as arrays of meal items.
+- Include meal_timing for each day with realistic Indian meal times.
+- Keep calories between 1400–1600 kcal/day and protein between 90–110 g/day.
+- Include water_liters (2.5–3.5) for each day.
+- Never repeat the same meal across days within this week.
+- Include 3 smart_swaps and 3 weekly_notes.
+- Return VALID JSON only — no markdown, no comments, no code blocks.
+- All numeric fields must be numbers, not strings.
+
+Return ONLY this JSON structure (days array must have exactly 7 items):
+{
+  "week": {
+    "week": 1,
+    "title": "...",
+    "description": "...",
+    "focus": ["...", "...", "..."],
+    "what_to_expect": "...",
+    "days": [
+      { "day": 1, "breakfast": [{"food":"...","quantity":"..."},{"food":"...","quantity":"..."}], "lunch": [{"food":"...","quantity":"..."},{"food":"...","quantity":"..."}], "snack": [{"food":"...","quantity":"..."}], "dinner": [{"food":"...","quantity":"..."},{"food":"...","quantity":"..."}], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": 1450, "total_protein_g": 95, "water_liters": 3 },
+      { "day": 2, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": 1480, "total_protein_g": 98, "water_liters": 3 },
+      { "day": 3, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": 1460, "total_protein_g": 96, "water_liters": 2.5 },
+      { "day": 4, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": 1470, "total_protein_g": 97, "water_liters": 3 },
+      { "day": 5, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": 1500, "total_protein_g": 100, "water_liters": 3.5 },
+      { "day": 6, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": 1450, "total_protein_g": 95, "water_liters": 3 },
+      { "day": 7, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": 1490, "total_protein_g": 99, "water_liters": 3 }
+    ],
+    "weekly_notes": ["...", "...", "..."],
+    "smart_swaps": [{"instead_of":"...","choose":"..."},{"instead_of":"...","choose":"..."},{"instead_of":"...","choose":"..."}]
+  }
 }
 `;
 
@@ -183,25 +224,35 @@ const extractMealNames = (week: WeekPlan): string[] => {
   return [...names];
 };
 
-// Single Gemini call with retry — 3 attempts on primary, then 3 attempts on fallback model
-const callGeminiWithRetry = async (prompt: string, label: string): Promise<Record<string, unknown>> => {
+// Single OpenAI call with retry — 3 attempts on primary, then 3 attempts on fallback model
+const callOpenAIWithRetry = async (prompt: string, label: string): Promise<Record<string, unknown>> => {
   const DELAYS = [15_000, 30_000, 60_000];
 
-  const tryModel = async (model: typeof geminiModel, modelName: string): Promise<Record<string, unknown> | null> => {
+  const tryModel = async (modelName: string): Promise<Record<string, unknown> | null> => {
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        const result = await model.generateContent(prompt);
-        const raw = result.response.text().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+        const completion = await openaiClient.chat.completions.create({
+          model: modelName,
+          messages: [{ role: 'user', content: prompt }],
+          response_format: { type: 'json_object' },
+          temperature: 0.4,
+          max_tokens: 16384,
+        });
+        const choice = completion.choices[0];
+        if (choice?.finish_reason === 'length') {
+          throw new Error('Response truncated — output hit token limit before JSON was complete');
+        }
+        const raw = choice?.message?.content ?? '';
         return JSON.parse(raw);
       } catch (err: unknown) {
         const status = (err as { status?: number }).status;
         const message = (err as Error).message ?? String(err);
         if (attempt < 3) {
           const delay = DELAYS[attempt - 1] ?? 60_000;
-          console.warn(`[gemini] ${label} (${modelName}) attempt ${attempt} failed (status=${status ?? 'unknown'}, msg=${message}), retrying in ${delay / 1000}s…`);
+          console.warn(`[openai] ${label} (${modelName}) attempt ${attempt} failed (status=${status ?? 'unknown'}, msg=${message}), retrying in ${delay / 1000}s…`);
           await new Promise((r) => setTimeout(r, delay));
         } else {
-          console.warn(`[gemini] ${label} (${modelName}) exhausted after 3 attempts — last error: status=${status ?? 'unknown'}, msg=${message}`);
+          console.warn(`[openai] ${label} (${modelName}) exhausted after 3 attempts — last error: status=${status ?? 'unknown'}, msg=${message}`);
         }
       }
     }
@@ -209,15 +260,15 @@ const callGeminiWithRetry = async (prompt: string, label: string): Promise<Recor
   };
 
   // Try primary model first
-  const primary = await tryModel(geminiModel, 'gemini-2.5-flash');
+  const primary = await tryModel(OPENAI_PRIMARY_MODEL);
   if (primary) return primary;
 
-  // Fall back to stable model
-  console.warn(`[gemini] ${label} falling back to gemini-2.0-flash…`);
-  const fallback = await tryModel(geminiFallbackModel, 'gemini-2.0-flash');
+  // Fall back to cheaper model
+  console.warn(`[openai] ${label} falling back to ${OPENAI_FALLBACK_MODEL}…`);
+  const fallback = await tryModel(OPENAI_FALLBACK_MODEL);
   if (fallback) return fallback;
 
-  throw new Error(`[gemini] ${label} failed on both gemini-2.5-flash and gemini-1.5-flash`);
+  throw new Error(`[openai] ${label} failed on both ${OPENAI_PRIMARY_MODEL} and ${OPENAI_FALLBACK_MODEL}`);
 };
 
 // ── Main delivery pipeline ────────────────────────────────────────────────────
@@ -259,9 +310,15 @@ export const generateAndDeliverDietPlan = async (
   const duration = weeksOverride === 4 ? '1 Month (4 Weeks)' : (PLAN_LABELS[planType] ?? '2 Weeks');
 
   try {
-    // Week 1 — also generates summary, hydration_guide, general_tips, featured_recipes
-    console.log(`[delivery] Generating week 1/${totalWeeks} for form ${formId}…`);
-    const week1Result = await callGeminiWithRetry(buildWeek1Prompt(form, vitals, totalWeeks, duration), 'week-1');
+    // Week 1 — split into two calls to stay within OpenAI's 16 384-token output limit
+    console.log(`[delivery] Generating week 1/${totalWeeks} meta (summary + recipes) for form ${formId}…`);
+    const week1Meta = await callOpenAIWithRetry(buildWeek1MetaPrompt(form, vitals, totalWeeks, duration), 'week-1-meta');
+
+    console.log(`[delivery] Generating week 1/${totalWeeks} days for form ${formId}…`);
+    const week1Days = await callOpenAIWithRetry(buildWeek1DaysPrompt(form, vitals, totalWeeks), 'week-1-days');
+
+    // Merge meta + days into the same shape the rest of the pipeline expects
+    const week1Result: Record<string, unknown> = { ...week1Meta, week: week1Days.week };
 
     const allWeeks: WeekPlan[] = [week1Result.week as WeekPlan];
     const usedMeals = extractMealNames(week1Result.week as WeekPlan);
@@ -269,7 +326,7 @@ export const generateAndDeliverDietPlan = async (
     // Weeks 2 to N — smaller focused calls, each avoids repeating prior meals
     for (let w = 2; w <= totalWeeks; w++) {
       console.log(`[delivery] Generating week ${w}/${totalWeeks} for form ${formId}…`);
-      const weekResult = await callGeminiWithRetry(buildWeekNPrompt(form, vitals, w, totalWeeks, usedMeals), `week-${w}`);
+      const weekResult = await callOpenAIWithRetry(buildWeekNPrompt(form, vitals, w, totalWeeks, usedMeals), `week-${w}`);
       const weekData = weekResult.week as WeekPlan;
       allWeeks.push(weekData);
       usedMeals.push(...extractMealNames(weekData));
@@ -284,7 +341,7 @@ export const generateAndDeliverDietPlan = async (
       weeks:            allWeeks,
     };
   } catch (lastAiErr) {
-    console.error('[delivery] Gemini failed after retries:', lastAiErr);
+    console.error('[delivery] OpenAI failed after retries:', lastAiErr);
     await updateDietPlanData(plan.id, {
       bmi: vitals.bmi, bmi_category: vitals.bmi_category, bmr: vitals.bmr, tdee: vitals.tdee,
       client_profile: clientProfile, client_name: '', calorie_range: '',

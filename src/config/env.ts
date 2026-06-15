@@ -50,8 +50,8 @@ const envSchema = z.object({
   // AWS Key Reveal
   AWS_REVEAL_SECRET: z.string().min(8, 'AWS_REVEAL_SECRET must be at least 8 characters'),
 
-  // Gemini AI
-  GEMINI_API_KEY: z.string().min(1, 'GEMINI_API_KEY is required'),
+  // OpenAI
+  OPENAI_API_KEY: z.string().min(1, 'OPENAI_API_KEY is required'),
 
   // SMTP / Email (BigRock mailbox: support@meridiet.com)
   SMTP_HOST: z.string().min(1, 'SMTP_HOST is required'),
