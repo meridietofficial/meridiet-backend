@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import type { DietPlan, WeekPlan, FeaturedRecipe } from '../models/DietPlan';
+import type { DietPlan, WeekPlan, FeaturedRecipe, MealItem } from '../models/DietPlan';
 import { BRAND } from '../config/brand';
 
 // ── Same palette as the frontend DietPlanDocument component ──────────────
@@ -157,50 +157,18 @@ a { color: inherit; }
 /* ── Day card ── */
 .days-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin-bottom: 12px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 9px;
+  margin-bottom: 0;
 }
 .day-card {
-  background: ${C.card};
+  background: ${C.white};
   border-radius: 12px;
-  padding: 10px;
   border: 1px solid ${C.line};
-  font-size: 10px;
-}
-.day-badge {
-  display: inline-block;
-  background: ${C.brand};
-  color: #fff;
-  font-weight: 800;
-  font-size: 11px;
-  border-radius: 8px;
-  padding: 3px 12px;
-  margin-bottom: 8px;
-}
-.meal-row {
+  overflow: hidden;
   display: flex;
-  gap: 6px;
-  font-size: 10px;
-  line-height: 1.3;
-  margin-bottom: 5px;
+  flex-direction: column;
 }
-.meal-label {
-  width: 70px;
-  flex-shrink: 0;
-  color: ${C.sub};
-  font-weight: 700;
-}
-.meal-foods { color: ${C.ink}; }
-.day-stats {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-  padding-top: 6px;
-  border-top: 1px solid ${C.line};
-}
-.ds-kcal  { font-size: 10px; font-weight: 700; color: ${C.gold}; }
-.ds-prot  { font-size: 10px; font-weight: 700; color: ${C.brand}; }
 
 /* ── Weekly notes + swaps ── */
 .notes-swaps {
@@ -352,10 +320,6 @@ const coverPage = (plan: DietPlan): string => {
     ).join('');
     return `<div style="display:flex;justify-content:space-between;width:${width}px;${style}">${spans}</div>`;
   };
-
-  // ── Leaf SVG ─────────────────────────────────────────────────────────────
-  const leafSvg = (size = 20, color = C.brand) =>
-    `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="${color}"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12" fill="none" stroke="${color}" stroke-width="2"/></svg>`;
 
   // ── Cover features (4 items) ──────────────────────────────────────────────
   const features: Array<{ svg: string; title: string; desc: string }> = [
@@ -574,6 +538,14 @@ const pageFooter = (pageNum: number, tagline?: { main: string; sub?: string }): 
   </div>`;
 };
 
+// Inline SVG helper — module-level so all pages can share it
+const iSvg = (size: number, path: string, fill: string, stroke = false): string =>
+  `<svg width="${size}" height="${size}" viewBox="0 0 24 24" ${stroke ? `fill="none" stroke="${fill}" stroke-width="2"` : `fill="${fill}"`} style="flex-shrink:0;">${path}</svg>`;
+
+// Leaf SVG (matches React <Leaf> component) — module-level so all pages can use it
+const leafSvg = (size = 20, color = C.brand): string =>
+  `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="${color}"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12" fill="none" stroke="${color}" stroke-width="2"/></svg>`;
+
 // Title heading (matches React <Title> component)
 const pageTitle = (pre: string, accent?: string, size = 34): string =>
   `<div style="margin:16px 0 4px;font-size:${size}px;font-weight:800;color:${C.dark};letter-spacing:-0.5px;line-height:1.1;">
@@ -759,11 +731,18 @@ const profilePage = (plan: DietPlan, page: number): string => {
 const overviewPage = (plan: DietPlan, page: number): string => {
   const weeks = (plan.weeks ?? []) as WeekPlan[];
 
+  // Inline SVG icons to match React FA icons (16px, brand color, inside soft circle)
+  const stepIcons = [
+    `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${C.brand}" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+    `<svg width="16" height="16" viewBox="0 0 24 24" fill="${C.brand}"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>`,
+    `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${C.brand}" stroke-width="2"><circle cx="12" cy="5" r="1"/><path d="M9 20l3-15"/><path d="M15 20l-3-15"/><path d="M6 8h12"/><path d="M6 16l1.5-3 3 3 3-3 1.5 3"/></svg>`,
+    `<svg width="16" height="16" viewBox="0 0 24 24" fill="${C.brand}"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/></svg>`,
+  ];
   const howSteps = [
-    { icon: '⏰', title: 'Eat On Time',     desc: 'Follow meal timings consistently for better energy and digestion.' },
-    { icon: '💧', title: 'Stay Hydrated',   desc: 'Drink 2.5–3L water daily throughout your transformation journey.' },
-    { icon: '👟', title: 'Stay Active',     desc: 'Aim for 7000–10000 steps daily along with light exercise.' },
-    { icon: '🌙', title: 'Sleep Well',      desc: 'Maintain 7–8 hours of quality sleep for recovery and fat loss.' },
+    { svg: stepIcons[0], title: 'Eat On Time',   desc: 'Follow meal timings consistently for better energy and digestion.' },
+    { svg: stepIcons[1], title: 'Stay Hydrated', desc: 'Drink 2.5–3L water daily throughout your transformation journey.' },
+    { svg: stepIcons[2], title: 'Stay Active',   desc: 'Aim for 7000–10000 steps daily along with light exercise.' },
+    { svg: stepIcons[3], title: 'Sleep Well',    desc: 'Maintain 7–8 hours of quality sleep for recovery and fat loss.' },
   ];
 
   const weekColors = [C.brand, '#2f9e44', '#1b7a39', C.gold];
@@ -772,41 +751,44 @@ const overviewPage = (plan: DietPlan, page: number): string => {
   const weekCards = weeks.map((w, i) => {
     const sideColor = weekColors[i % 4] ?? C.brand;
     const focusItems = (w.focus ?? ['Balanced meals', 'Hydration', 'Consistency']).slice(0, 4)
-      .map((f) => `<li style="margin-bottom:2px;">${esc(f)}</li>`).join('');
+      .map((f) => `<li>${esc(f)}</li>`).join('');
     return `
-    <div style="display:flex;background:${C.card};border-radius:12px;overflow:hidden;min-height:90px;margin-bottom:10px;">
-      <!-- coloured week number sidebar -->
-      <div style="width:76px;background:${sideColor};color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0;padding:8px 0;">
-        <div style="font-size:9px;font-weight:700;opacity:0.85;letter-spacing:1px;">WEEK</div>
-        <div style="font-size:34px;font-weight:900;line-height:1;">${w.week}</div>
+    <div style="display:flex;background:${C.card};border-radius:12px;overflow:hidden;min-height:74px;">
+      <div style="width:70px;background:${sideColor};color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0;">
+        <div style="font-size:9.5px;font-weight:700;opacity:0.85;">WEEK</div>
+        <div style="font-size:30px;font-weight:900;line-height:1;">${w.week}</div>
       </div>
-      <!-- main content -->
-      <div style="flex:1;padding:12px 14px;display:flex;gap:14px;">
-        <!-- title + description -->
+      <div style="flex:1;padding:9px 14px;display:flex;gap:14px;">
         <div style="flex:1.4;">
-          <div style="font-weight:800;font-size:15px;color:${sideColor};">${esc(w.title ?? fallbackTitles[i] ?? '')}</div>
-          <div style="font-size:10.5px;color:${C.sub};line-height:1.4;margin-top:3px;">${esc(w.description ?? 'A structured week to progress your nutrition and habits.')}</div>
+          <div style="font-weight:800;font-size:14px;color:${C.brand};">${esc(w.title ?? fallbackTitles[i] ?? '')}</div>
+          <div style="font-size:10.5px;color:${C.sub};line-height:1.35;margin-top:2px;">${esc(w.description ?? 'A structured week to progress your nutrition and habits.')}</div>
         </div>
-        <!-- focus -->
         <div style="flex:1;border-left:1px solid ${C.line};padding-left:14px;">
-          <div style="font-size:9px;font-weight:800;color:${sideColor};margin-bottom:4px;letter-spacing:0.5px;">FOCUS</div>
-          <ul style="margin:0;padding-left:14px;font-size:10px;color:${C.sub};line-height:1.55;">${focusItems}</ul>
+          <div style="font-size:9.5px;font-weight:800;color:${C.brand};margin-bottom:3px;">FOCUS</div>
+          <ul style="margin:0;padding-left:14px;font-size:10px;color:${C.sub};line-height:1.4;">${focusItems}</ul>
         </div>
-        <!-- what to expect -->
         <div style="flex:0.9;border-left:1px solid ${C.line};padding-left:14px;">
-          <div style="font-size:9px;font-weight:800;color:${C.gold};margin-bottom:4px;letter-spacing:0.5px;">WHAT TO EXPECT</div>
-          <div style="font-size:10px;color:${C.sub};line-height:1.4;">${esc(w.what_to_expect ?? 'Steady progress toward your goal.')}</div>
+          <div style="font-size:9.5px;font-weight:800;color:${C.gold};margin-bottom:3px;">WHAT TO EXPECT</div>
+          <div style="font-size:10px;color:${C.sub};line-height:1.35;">${esc(w.what_to_expect ?? 'Steady progress toward your goal.')}</div>
         </div>
       </div>
     </div>`;
   }).join('');
 
-  const includeItems = [
-    ['📋', 'Daily meal plans'],   ['🏠', 'Indian home-style recipes'],
-    ['🥄', 'Portion guidance'],   ['🔥', 'Calorie-aware meals'],
-    ['🥗', 'Healthy snack ideas'],['💧', 'Hydration support'],
-    ['🔄', 'Smart food swaps'],   ['📈', 'Progress tracking'],
+  // Icon SVGs for "What this plan includes" — matches React FA icons at size 11
+  const inclSvg = (path: string) =>
+    `<svg width="11" height="11" viewBox="0 0 24 24" fill="${C.brand}" style="flex-shrink:0;">${path}</svg>`;
+  const includeItems: [string, string][] = [
+    [inclSvg('<path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2"/>'), 'Daily meal plans'],
+    [inclSvg('<path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>'), 'Indian home-style recipes'],
+    [inclSvg('<path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2 9m5-9v9m4-9v9m5-9l-2 9"/>'), 'Portion guidance'],
+    [inclSvg('<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 3z"/>'), 'Calorie-aware meals'],
+    [inclSvg('<path d="M12 2a7 7 0 1 0 0 14A7 7 0 0 0 12 2zm0 2a5 5 0 1 1 0 10A5 5 0 0 1 12 4zm0 2.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/>'), 'Healthy snack ideas'],
+    [inclSvg('<path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>'), 'Hydration support'],
+    [inclSvg('<path d="M7 16V4m0 0L3 8m4-4 4 4M17 8v12m0 0 4-4m-4 4-4-4"/>'), 'Smart food swaps'],
+    [inclSvg('<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>'), 'Progress tracking'],
   ];
+
   const importantNotes = [
     'One cheat meal allowed weekly.',
     'Avoid processed sugar as much as possible.',
@@ -822,49 +804,49 @@ const overviewPage = (plan: DietPlan, page: number): string => {
 
   ${pageHeader(plan.calorie_range)}
 
-  <div style="margin-top:10px;">
-    ${pageTitle('HOW TO USE', 'THIS PLAN', 28)}
-    <p style="font-size:12px;color:${C.sub};margin:2px 0 14px;">Simple steps to follow for the best results</p>
-  </div>
+  ${pageTitle('HOW TO USE', 'THIS PLAN')}
+  <p style="font-size:13px;color:${C.sub};margin:2px 0 16px;">Simple steps to follow for the best results</p>
 
-  <!-- 4 emoji how-to cards -->
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px;">
+  <!-- 4 icon how-to cards -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
     ${howSteps.map((s) => `
-      <div style="background:${C.card};border-radius:12px;padding:16px 12px;text-align:center;">
-        <div style="font-size:28px;margin-bottom:6px;">${s.icon}</div>
-        <div style="font-weight:800;font-size:12.5px;color:${C.dark};margin-bottom:4px;">${s.title}</div>
-        <div style="font-size:10.5px;color:${C.sub};line-height:1.4;">${s.desc}</div>
+      <div style="background:${C.card};border-radius:12px;padding:13px 12px;text-align:center;">
+        <div style="width:36px;height:36px;border-radius:50%;background:${C.soft};display:flex;align-items:center;justify-content:center;margin:0 auto 8px;">${s.svg}</div>
+        <div style="font-weight:800;font-size:12.5px;color:${C.dark};margin-bottom:3px;">${s.title}</div>
+        <div style="font-size:10.5px;color:${C.sub};line-height:1.35;">${s.desc}</div>
       </div>`).join('')}
   </div>
 
-  <!-- Plan overview heading -->
-  <div style="text-align:center;margin-bottom:12px;">
-    <div style="font-size:22px;font-weight:800;color:${C.dark};">🌿 ${totalDays}-DAY PLAN OVERVIEW 🌿</div>
-    <div style="font-size:11px;color:${C.sub};margin-top:3px;">A structured approach to transform your lifestyle</div>
+  <!-- Plan overview heading with leaf SVGs -->
+  <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin:14px 0 3px;">
+    ${leafSvg(18, C.brand)}
+    <span style="font-size:22px;font-weight:800;color:${C.dark};">${totalDays}-DAY PLAN OVERVIEW</span>
+    ${leafSvg(18, C.brand)}
+  </div>
+  <p style="text-align:center;font-size:12px;color:${C.sub};margin:0 0 10px;">A structured approach to transform your lifestyle</p>
+
+  <!-- Week cards — flex column gap 8 -->
+  <div style="display:flex;flex-direction:column;gap:8px;">
+    ${weekCards}
   </div>
 
-  <!-- Week cards -->
-  ${weekCards}
-
   <!-- What this plan includes + Important notes -->
-  <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:14px;margin-top:4px;">
-    <!-- includes -->
-    <div style="background:${C.card};border-radius:14px;padding:14px 16px;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-        <span style="font-size:15px;">✅</span>
-        <div style="font-size:12.5px;font-weight:800;color:${C.dark};letter-spacing:0.3px;">WHAT THIS PLAN INCLUDES</div>
+  <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:14px;margin-top:12px;">
+    <div style="background:${C.card};border-radius:14px;padding:11px 14px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="${C.brand}"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <div style="font-size:14px;font-weight:800;color:${C.dark};letter-spacing:0.3px;white-space:nowrap;">WHAT THIS PLAN INCLUDES</div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px 10px;">
-        ${includeItems.map(([ico, txt]) => `<div style="font-size:11px;color:${C.ink};display:flex;gap:6px;align-items:flex-start;"><span>${ico}</span>${txt}</div>`).join('')}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;">
+        ${includeItems.map(([ico, txt]) => `<div style="font-size:11px;color:${C.ink};display:flex;align-items:center;gap:7px;">${ico}${esc(txt)}</div>`).join('')}
       </div>
     </div>
-    <!-- important notes -->
-    <div style="background:${C.card};border-radius:14px;padding:14px 16px;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-        <span style="font-size:15px;">ℹ️</span>
-        <div style="font-size:12.5px;font-weight:800;color:${C.dark};letter-spacing:0.3px;">IMPORTANT NOTES</div>
+    <div style="background:${C.card};border-radius:14px;padding:11px 14px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="${C.brand}"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <div style="font-size:14px;font-weight:800;color:${C.dark};letter-spacing:0.3px;white-space:nowrap;">IMPORTANT NOTES</div>
       </div>
-      <ul style="margin:0;padding-left:16px;font-size:10.5px;color:${C.sub};line-height:1.65;">
+      <ul style="margin:0;padding-left:16px;font-size:11px;color:${C.sub};line-height:1.55;">
         ${importantNotes.map((n) => `<li>${esc(n)}</li>`).join('')}
       </ul>
     </div>
@@ -876,93 +858,157 @@ const overviewPage = (plan: DietPlan, page: number): string => {
 
 // ── Week pages ────────────────────────────────────────────────────────────
 const weekPage = (week: WeekPlan, plan: DietPlan, page: number): string => {
-  // Comma-joined food names (no quantities) — matches React dishes() helper
-  const dishNames = (items: { food: string; quantity: string }[] = []): string =>
-    items.map((it) => (it.food ?? '').replace(/\s*\([^)]*\)/g, '').trim()).filter(Boolean).join(', ');
+  // 8px icons for day card header / footer
+  const fireSvg8    = iSvg(8,  '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 3z"/>', C.gold);
+  const dumbSvg8    = iSvg(8,  '<path d="M6.5 6.5h.01M17.5 6.5h.01M6.5 17.5h.01M17.5 17.5h.01M3 12h3m12 0h3M6 6H3v12h3M21 6h-3v12h3M9 6v12M15 6v12"/>', C.brand, true);
+  const dropSvg8    = iSvg(8,  '<path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>', '#2563eb');
 
-  const MEALS = [
-    { key: 'breakfast' as const, label: 'Breakfast', icon: '☀️' },
-    { key: 'lunch'     as const, label: 'Lunch',     icon: '🍛' },
-    { key: 'snack'     as const, label: 'Snack',     icon: '🍎' },
-    { key: 'dinner'    as const, label: 'Dinner',    icon: '🌙' },
+  // 8px meal icons
+  const mealSvgs: Record<string, string> = {
+    breakfast: iSvg(8, '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>', C.brand, true),
+    lunch:     iSvg(8, '<path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2M7 2v20M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3v7"/>', C.brand, true),
+    snack:     iSvg(8, '<path d="M12 2a7 7 0 1 0 0 14A7 7 0 0 0 12 2z"/><path d="M12 2c1-2 3-2 3-2"/>', C.brand),
+    dinner:    iSvg(8, '<path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/>', C.brand),
+  };
+
+  const MEALS: { key: 'breakfast' | 'lunch' | 'snack' | 'dinner'; label: string }[] = [
+    { key: 'breakfast', label: 'Breakfast' },
+    { key: 'lunch',     label: 'Lunch' },
+    { key: 'snack',     label: 'Snack' },
+    { key: 'dinner',    label: 'Dinner' },
   ];
 
+  // ── Day cards ─────────────────────────────────────────────────────────
   const dayCards = (week.days ?? []).map((d) => {
-    const mealRows = MEALS.map((m) => {
-      const txt = dishNames((d as unknown as Record<string, { food: string; quantity: string }[]>)[m.key]);
-      if (!txt) return '';
-      return `
-        <div class="meal-row">
-          <span class="meal-label">${m.icon} ${m.label}</span>
-          <span class="meal-foods">${esc(txt)}</span>
+    const mealsHtml = MEALS.map((m) => {
+      const items: MealItem[] = d[m.key];
+      if (!items?.length) return '';
+      const time = d.meal_timing?.[m.key];
+      const foodRows = items.map((it) => {
+        const name = (it.food ?? '').replace(/\s*\([^)]*\)/g, '').trim();
+        return `<div style="display:flex;gap:5px;font-size:8.5px;color:${C.ink};line-height:1.3;padding-left:2px;">
+          <span style="color:${C.brand};flex-shrink:0;">•</span>
+          <span style="flex:1;">${esc(name)}${it.quantity ? `<span style="color:${C.sub};"> — ${esc(it.quantity)}</span>` : ''}</span>
         </div>`;
+      }).join('');
+      return `<div style="margin-bottom:7px;">
+        <div style="display:flex;align-items:center;gap:4px;font-size:8.5px;font-weight:800;color:${C.brand};letter-spacing:0.3px;margin-bottom:2px;">
+          ${mealSvgs[m.key]}<span>${m.label.toUpperCase()}</span>
+          ${time ? `<span style="margin-left:auto;color:${C.faint};font-weight:700;font-size:7.5px;">${esc(time)}</span>` : ''}
+        </div>
+        ${foodRows}
+      </div>`;
     }).join('');
 
-    return `
-    <div class="day-card">
-      <div class="day-badge">DAY ${d.day}</div>
-      ${mealRows}
-      <div class="day-stats">
-        ${d.total_kcal   != null ? `<span class="ds-kcal">🔥 ${esc(d.total_kcal)} kcal</span>` : ''}
-        ${d.total_protein_g != null ? `<span class="ds-prot">💪 ${esc(d.total_protein_g)}g Protein</span>` : ''}
+    return `<div class="day-card">
+      <div style="background:${C.brand};color:#fff;padding:5px 10px;display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-weight:800;font-size:11px;letter-spacing:0.3px;">DAY ${d.day}</span>
+        ${d.total_kcal != null ? `<span style="font-size:9px;font-weight:700;display:flex;align-items:center;gap:3px;">${fireSvg8} ${esc(String(d.total_kcal))} kcal</span>` : ''}
+      </div>
+      <div style="padding:7px 9px;flex:1;">${mealsHtml}</div>
+      <div style="border-top:1px solid ${C.line};padding:5px 9px;display:flex;justify-content:space-between;font-size:9px;font-weight:700;">
+        ${d.total_protein_g != null ? `<span style="color:${C.brand};display:flex;align-items:center;gap:3px;">${dumbSvg8} ${esc(String(d.total_protein_g))}g protein</span>` : ''}
+        ${d.water_liters    != null ? `<span style="color:#2563eb;display:flex;align-items:center;gap:3px;">${dropSvg8} ${esc(String(d.water_liters))}L water</span>` : ''}
       </div>
     </div>`;
   }).join('');
 
-  const days = week.days ?? [];
+  const days     = week.days ?? [];
   const startDay = days[0]?.day ?? 1;
   const endDay   = days[days.length - 1]?.day ?? startDay + days.length - 1;
 
-  const notesHtml = (week.weekly_notes ?? []).length
-    ? `<ul class="ns-list">${(week.weekly_notes ?? []).map((n) => `<li>${esc(n)}</li>`).join('')}</ul>`
-    : `<ul class="ns-list"><li>Drink at least 3L water daily.</li><li>Avoid sugary drinks and deep-fried foods.</li><li>Eat mindfully and stop when 80% full.</li></ul>`;
+  // ── Macro target pills ────────────────────────────────────────────────
+  const macros = [
+    { path: '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 3z"/>',         color: C.gold,    label: 'CALORIES', val: plan.calorie_range ? plan.calorie_range.replace('/day', '').trim() : null },
+    { path: '<path d="M6.5 6.5h.01M17.5 6.5h.01M6.5 17.5h.01M17.5 17.5h.01M3 12h3m12 0h3M6 6H3v12h3M21 6h-3v12h3M9 6v12M15 6v12"/>', color: C.brand,   label: 'PROTEIN',  val: plan.protein_target_g != null ? `${plan.protein_target_g} g` : null },
+    { path: '<path d="M6 2v20M18 2v20M6 7h12M6 12h12M6 17h12"/>',                                                                        color: '#d97706', label: 'CARBS',    val: plan.carbs_target_g   != null ? `${plan.carbs_target_g} g`   : null },
+    { path: '<circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/><circle cx="17" cy="17" r="1"/>', color: '#dc2626', label: 'FAT',      val: plan.fat_target_g     != null ? `${plan.fat_target_g} g`     : null },
+  ].filter((m) => m.val);
 
-  const whatToExpect = week.what_to_expect
-    ? `<div class="ns-expect"><b style="color:${C.brand};">What to expect: </b>${esc(week.what_to_expect)}</div>`
+  const macrosHtml = macros.length ? `
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      ${macros.map((m) => `
+        <div style="flex:1;background:${C.card};border-radius:10px;padding:6px 11px;display:flex;align-items:center;gap:8px;">
+          <span style="width:24px;height:24px;border-radius:50%;background:${C.soft};display:flex;align-items:center;justify-content:center;flex-shrink:0;color:${m.color};">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="${m.color}">${m.path}</svg>
+          </span>
+          <div>
+            <div style="font-size:8.5px;color:${C.sub};font-weight:700;letter-spacing:0.3px;">${m.label}</div>
+            <div style="font-size:11.5px;font-weight:800;color:${C.dark};">${esc(m.val!)}</div>
+          </div>
+        </div>`).join('')}
+    </div>` : '';
+
+  // ── Weekly notes ──────────────────────────────────────────────────────
+  const wnotes = week.weekly_notes ?? [];
+  const notesListHtml = (wnotes.length ? wnotes : ['Drink at least 3L water daily.', 'Avoid sugary drinks and deep-fried foods.', 'Eat mindfully and stop when 80% full.'])
+    .map((n) => `<li>${esc(n)}</li>`).join('');
+  const expectHtml = week.what_to_expect
+    ? `<div style="margin-top:6px;background:${C.soft};border-radius:8px;padding:6px 9px;font-size:9.5px;color:${C.ink};line-height:1.35;"><b style="color:${C.brand};">What to expect: </b>${esc(week.what_to_expect)}</div>`
     : '';
 
-  const swaps = (week.smart_swaps ?? []).slice(0, 6);
+  // ── Smart swaps ───────────────────────────────────────────────────────
+  const swaps = (week.smart_swaps ?? []).slice(0, 5);
+  const xCircle9    = iSvg(9,  '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 13.59L15.59 17 12 13.41 8.41 17 7 15.59 10.59 12 7 8.41 8.41 7 12 10.59 15.59 7 17 8.41 13.41 12 17 15.59z"/>', '#c0392b');
+  const checkCircle9 = iSvg(9, '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14l-4-4 1.41-1.41L10 13.17l6.59-6.59L18 8l-8 8z"/>', C.brand);
+  const arrow12     = iSvg(12, '<path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8-8-8z"/>', C.faint);
   const swapsHtml = swaps.length ? `
-    <div class="swap-header">
-      <span style="flex:1;">INSTEAD OF</span>
-      <span style="flex:1;">CHOOSE THIS</span>
+    <div style="display:flex;font-size:9px;font-weight:800;margin-bottom:4px;">
+      <span style="flex:1;color:#c0392b;">INSTEAD OF</span>
+      <span style="width:22px;flex-shrink:0;"></span>
+      <span style="flex:1;color:${C.brand};">CHOOSE THIS</span>
     </div>
     ${swaps.map((s) => `
-      <div class="swap-row">
-        <span class="swap-x">${esc(s.instead_of)}</span>
-        <span class="swap-ok">→ ${esc(s.choose)}</span>
+      <div style="display:flex;align-items:center;font-size:9.5px;padding:3px 0;border-bottom:1px solid ${C.line};line-height:1.25;">
+        <span style="flex:1;color:${C.sub};display:flex;align-items:center;gap:4px;">${xCircle9} ${esc(s.instead_of)}</span>
+        <span style="margin:0 5px;flex-shrink:0;">${arrow12}</span>
+        <span style="flex:1;color:${C.brand};font-weight:600;display:flex;align-items:center;gap:4px;">${checkCircle9} ${esc(s.choose)}</span>
       </div>`).join('')}`
-    : `<div style="font-size:11px;color:${C.faint};">No swaps listed.</div>`;
+    : `<div style="font-size:10px;color:${C.faint};">No swaps listed.</div>`;
+
+  // ── Section header icons ──────────────────────────────────────────────
+  const noteIcon13 = iSvg(13, '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/>', C.brand, true);
+  const swapIcon13 = iSvg(13, '<path d="M7 16V4m0 0L3 8m4-4 4 4M17 8v12m0 0 4-4m-4 4-4-4"/>', C.brand, true);
+  const bullseye11 = iSvg(11, '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>', C.brand);
+
+  const logoSrc = img('meridiet-logo-primary.png');
 
   return `
 <div class="dp-page" style="padding:30px;position:relative;overflow:hidden;">
 
   <!-- Header: Logo + Goal chip -->
   <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-    ${(() => { const logoSrc = img('meridiet-logo-primary.png'); return logoSrc ? `<img src="${logoSrc}" alt="MeriDiet" style="height:46px;width:auto;display:block;" />` : `<span style="font-size:22px;font-weight:900;color:${C.dark};">MeriDiet</span>`; })()}
-    <span style="background:${C.soft};color:${C.brand};border-radius:20px;padding:6px 16px;font-size:12px;font-weight:700;display:inline-flex;align-items:center;gap:6px;">
-      🎯 Goal: ${esc(humanize(plan.primary_goal ?? ''))}
+    ${logoSrc ? `<img src="${logoSrc}" alt="MeriDiet" style="height:46px;width:auto;display:block;" />` : `<span style="font-size:22px;font-weight:900;color:${C.dark};">MeriDiet</span>`}
+    <span style="background:${C.soft};color:${C.brand};border-radius:20px;padding:3px 11px;font-size:12px;font-weight:700;display:inline-flex;align-items:center;gap:5px;">
+      ${bullseye11} Goal: ${esc(humanize(plan.primary_goal ?? ''))}
     </span>
   </div>
 
-  <!-- Title + subtitle -->
-  ${pageTitle(`WEEK ${week.week} –`, 'SAMPLE MEAL PLAN', 28)}
-  <p style="font-size:12px;color:${C.sub};margin:2px 0 14px;">
+  ${pageTitle(`WEEK ${week.week} –`, 'SAMPLE MEAL PLAN')}
+  <p style="font-size:12.5px;color:${C.sub};margin:2px 0 10px;">
     Days ${startDay}–${endDay} structured nutrition plan${week.title ? ` — ${esc(week.title)}.` : '.'}
   </p>
 
-  <!-- 3-column day cards grid -->
+  ${macrosHtml}
+
+  <!-- 4-column day cards grid -->
   <div class="days-grid">${dayCards}</div>
 
   <!-- Weekly Notes + Smart Swaps -->
-  <div class="notes-swaps" style="margin-bottom:76px;">
-    <div class="ns-box">
-      <div class="ns-title"><span style="font-size:15px;">📝</span> WEEKLY NOTES</div>
-      ${notesHtml}
-      ${whatToExpect}
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;">
+    <div style="background:${C.card};border-radius:14px;padding:10px 13px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        ${noteIcon13}
+        <div style="font-size:14px;font-weight:800;color:${C.dark};letter-spacing:0.3px;white-space:nowrap;">WEEKLY NOTES</div>
+      </div>
+      <ul style="margin:0;padding-left:15px;font-size:9.5px;color:${C.sub};line-height:1.45;">${notesListHtml}</ul>
+      ${expectHtml}
     </div>
-    <div class="ns-box">
-      <div class="ns-title"><span style="font-size:15px;">🔄</span> SMART SWAPS</div>
+    <div style="background:${C.card};border-radius:14px;padding:10px 13px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        ${swapIcon13}
+        <div style="font-size:14px;font-weight:800;color:${C.dark};letter-spacing:0.3px;white-space:nowrap;">SMART SWAPS</div>
+      </div>
       ${swapsHtml}
     </div>
   </div>
@@ -974,43 +1020,58 @@ const weekPage = (week: WeekPlan, plan: DietPlan, page: number): string => {
 // ── Recipes page ──────────────────────────────────────────────────────────
 const recipesPage = (plan: DietPlan, page: number): string => {
   const recipes = (plan.featured_recipes ?? []) as FeaturedRecipe[];
+  const weeksCount = ((plan.weeks ?? []) as WeekPlan[]).length || 4;
 
-  const recipeCards = recipes.slice(0, 4).map((r, idx) => `
-    <div style="background:${C.card};border-radius:12px;padding:12px;border:1px solid ${C.line};">
-      <!-- numbered badge + name -->
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-        <span style="background:${C.brand};color:#fff;border-radius:8px;padding:2px 9px;font-size:12px;font-weight:800;">${String(idx + 1).padStart(2, '0')}</span>
-        <span style="font-weight:800;font-size:13px;color:${C.dark};">${esc(r.name)}</span>
+  // ── Meta icons (9px) ──────────────────────────────────────────────────
+  const clockSvg9   = iSvg(9, '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>', C.brand, true);
+  const utenSvg9    = iSvg(9, '<path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2M7 2v20M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3v7"/>', C.brand, true);
+  const fireSvg9    = iSvg(9, '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 3z"/>', C.gold);
+
+  // ── Macro icons (9px, brand — all use currentColor via fill) ─────────
+  const RECIPE_MACROS: { path: string; label: string; key: keyof FeaturedRecipe['macros'] }[] = [
+    { path: '<path d="M6 2v20M18 2v20M6 7h12M6 12h12M6 17h12"/>',                                    label: 'Carbs',   key: 'carbs_g'   },
+    { path: '<path d="M6.5 6.5h.01M17.5 6.5h.01M6.5 17.5h.01M17.5 17.5h.01M3 12h3m12 0h3M6 6H3v12h3M21 6h-3v12h3M9 6v12M15 6v12"/>', label: 'Protein', key: 'protein_g' },
+    { path: '<circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/><circle cx="17" cy="17" r="1"/>', label: 'Fat',     key: 'fat_g'    },
+    { path: '<path d="M7 20h10M10 20c5.5-2.5.8-6.4 3-10"/><path d="M9.5 9.4c1.1.8 1.8 2 2 3.3"/>',  label: 'Fiber',   key: 'fiber_g'   },
+  ];
+
+  // ── Recipe cards (2-col grid, matches React RecipeCard) ──────────────
+  const recipeCards = recipes.slice(0, 4).map((r) => `
+    <div style="background:${C.white};border-radius:12px;padding:9px 12px;border:1px solid ${C.line};display:flex;flex-direction:column;">
+      <div style="font-weight:800;font-size:13px;color:${C.brand};line-height:1.15;margin-bottom:3px;">${esc(r.name)}</div>
+      <div style="display:flex;flex-wrap:nowrap;gap:12px;font-size:9.5px;color:${C.sub};margin-bottom:7px;white-space:nowrap;">
+        ${r.cook_time ? `<span style="display:flex;align-items:center;gap:4px;flex-shrink:0;">${clockSvg9} ${esc(r.cook_time)}</span>` : ''}
+        ${r.servings  ? `<span style="display:flex;align-items:center;gap:4px;flex-shrink:0;">${utenSvg9} ${esc(r.servings)} Serving${Number(r.servings) !== 1 ? 's' : ''}</span>` : ''}
+        ${r.calories  ? `<span style="display:flex;align-items:center;gap:4px;flex-shrink:0;">${fireSvg9} ${esc(r.calories)} kcal</span>` : ''}
       </div>
-      <!-- emoji meta row -->
-      <div style="display:flex;gap:8px;font-size:10px;color:${C.sub};margin-bottom:8px;">
-        ${r.cook_time ? `<span>⏱ ${esc(r.cook_time)}</span>` : ''}
-        ${r.servings  ? `<span>🍽 ${esc(r.servings)} Serving${Number(r.servings) !== 1 ? 's' : ''}</span>` : ''}
-        ${r.calories  ? `<span>🔥 ${esc(r.calories)} kcal</span>` : ''}
-      </div>
-      <!-- ingredients + how to make -->
-      <div style="display:grid;grid-template-columns:1fr 1.1fr;gap:8px;">
+      <div style="display:grid;grid-template-columns:1fr 1.05fr;gap:13px;flex:1;">
         <div>
-          <div style="font-size:9.5px;font-weight:800;color:${C.brand};margin-bottom:3px;">Ingredients</div>
-          <ul style="margin:0;padding-left:12px;font-size:9.5px;color:${C.sub};line-height:1.4;">
+          <div style="font-size:9.5px;font-weight:800;color:${C.dark};margin-bottom:2px;">Ingredients</div>
+          <ul style="margin:0;padding-left:13px;font-size:9px;color:${C.sub};line-height:1.3;">
             ${(r.ingredients ?? []).slice(0, 7).map((i) => `<li>${esc(i)}</li>`).join('')}
           </ul>
         </div>
         <div>
-          <div style="font-size:9.5px;font-weight:800;color:${C.brand};margin-bottom:3px;">How to make</div>
-          <div style="font-size:9.5px;color:${C.sub};line-height:1.4;">${esc((r.steps ?? []).slice(0, 4).join(' '))}</div>
+          <div style="font-size:9.5px;font-weight:800;color:${C.dark};margin-bottom:2px;">How to make</div>
+          <div style="font-size:9px;color:${C.sub};line-height:1.4;">${esc((r.steps ?? []).slice(0, 6).join(' '))}</div>
         </div>
       </div>
-      <!-- macros coloured text -->
       ${r.macros ? `
-      <div style="display:flex;gap:10px;margin-top:8px;padding-top:6px;border-top:1px solid ${C.line};font-size:9.5px;font-weight:700;">
-        <span style="color:${C.gold};">Carbs ${esc(r.macros.carbs_g ?? '—')}g</span>
-        <span style="color:${C.brand};">Protein ${esc(r.macros.protein_g ?? '—')}g</span>
-        <span style="color:#c0392b;">Fat ${esc(r.macros.fat_g ?? '—')}g</span>
-        <span style="color:${C.sub};">Fiber ${esc(r.macros.fiber_g ?? '—')}g</span>
+      <div style="display:flex;justify-content:space-between;margin-top:7px;padding-top:6px;border-top:1px solid ${C.line};">
+        ${RECIPE_MACROS.map(({ path, label, key }) => `
+          <div style="display:flex;align-items:center;gap:4px;">
+            <span style="width:18px;height:18px;border-radius:50%;background:${C.soft};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+              ${iSvg(9, path, C.brand)}
+            </span>
+            <div style="line-height:1.05;">
+              <div style="font-size:7.5px;color:${C.faint};font-weight:700;">${label}</div>
+              <div style="font-size:10px;font-weight:800;color:${C.dark};">${esc(String(r.macros[key] ?? '—'))}g</div>
+            </div>
+          </div>`).join('')}
       </div>` : ''}
     </div>`).join('');
 
+  // ── Cooking tips & portion guide ──────────────────────────────────────
   const cookingTips = [
     'Use minimal oil for cooking.',
     'Steam or boil vegetables to retain nutrients.',
@@ -1018,54 +1079,89 @@ const recipesPage = (plan: DietPlan, page: number): string => {
     'Add more herbs & spices for flavor.',
     'Stay consistent with portion sizes.',
   ];
-  const portionGuide = [
-    '1 cup cooked grains',
-    '1 cup vegetables',
-    '1 palm protein (paneer, dal, chana, etc.)',
-    '1 thumb healthy fats (nuts, seeds, oil)',
+  const checkSvg11  = iSvg(11, '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14l-4-4 1.41-1.41L10 13.17l6.59-6.59L18 8l-8 8z"/>', C.brand);
+  const heartSvg8   = iSvg(8,  '<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z"/>', C.brand);
+
+  const portions: { path: string; text: string }[] = [
+    { path: '<path d="M6 2v20M18 2v20M6 7h12M6 12h12M6 17h12"/>',                                                          text: '1 cup cooked grains' },
+    { path: '<path d="M12 2a3 3 0 0 0-3 3c0 1.5 1 3 2 4l-4 8h10l-4-8c1-1 2-2.5 2-4a3 3 0 0 0-3-3z"/>',                    text: '1 cup vegetables' },
+    { path: '<path d="M6.5 6.5h.01M17.5 6.5h.01M6.5 17.5h.01M17.5 17.5h.01M3 12h3m12 0h3M6 6H3v12h3M21 6h-3v12h3M9 6v12M15 6v12"/>', text: '1 palm protein (paneer, dal, chana, etc.)' },
+    { path: '<path d="M7 20h10M10 20c5.5-2.5.8-6.4 3-10"/><path d="M9.5 9.4c1.1.8 1.8 2 2 3.3"/>',                          text: '1 thumb healthy fats (nuts, seeds, oil)' },
   ];
+
+  // ── Header icons ──────────────────────────────────────────────────────
+  const chefSvg14   = iSvg(14, '<path d="M6 13.87A4 4 0 0 1 7.41 6a5.11 5.11 0 0 1 1.05-1.54 5 5 0 0 1 7.08 0A5.11 5.11 0 0 1 16.59 6 4 4 0 0 1 18 13.87V21H6z"/><line x1="6" x2="18" y1="17" y2="17"/>', C.brand, true);
+  const scaleSvg13  = iSvg(13, '<path d="M16 16l3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1z"/><path d="M2 16l3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1z"/><path d="M7 21H17"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/>', C.brand, true);
+  const bulbSvg14   = iSvg(14, '<path d="M9 21h6M12 3a6 6 0 0 1 6 6c0 2.22-1.21 4.16-3 5.2V18H9v-3.8C7.21 13.16 6 11.22 6 9a6 6 0 0 1 6-6z"/>', C.brand, true);
 
   return `
 <div class="dp-page" style="padding:30px;">
 
   ${pageHeader(plan.calorie_range)}
 
-  <div style="margin-top:10px;">
-    ${pageTitle('FEATURED', 'RECIPES', 28)}
-    <p style="font-size:12px;color:${C.sub};margin:2px 0 14px;">Simple, delicious &amp; nutritious recipes from your meal plan.</p>
+  <!-- Title row: heading + hint box -->
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
+    <div>
+      ${pageTitle('FEATURED RECIPES', undefined, 27)}
+      <p style="font-size:12.5px;color:${C.sub};margin:2px 0 10px;">Simple, delicious &amp; nutritious recipes from your ${weeksCount}-week meal plan.</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;background:${C.soft};border-radius:10px;padding:8px 12px;max-width:230px;margin-top:8px;flex-shrink:0;">
+      ${bulbSvg14}
+      <span style="font-size:10px;color:${C.sub};line-height:1.35;">All recipes are home-style, easy to make &amp; calorie-conscious.</span>
+    </div>
   </div>
 
-  <!-- 3-column recipe cards grid -->
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px;">
+  <!-- 2-column recipe cards grid -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
     ${recipeCards}
   </div>
 
   <!-- Cooking Tips + Portion Guide -->
-  <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:14px;margin-bottom:76px;">
+  <div style="display:grid;grid-template-columns:1.6fr 1fr;gap:12px;margin-top:11px;">
 
-    <!-- Cooking Tips SectionCard -->
-    <div style="background:${C.card};border-radius:14px;padding:14px 16px;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-        <span style="font-size:15px;">👩‍🍳</span>
-        <span style="font-size:13px;font-weight:800;color:${C.dark};letter-spacing:0.3px;">COOKING TIPS</span>
+    <!-- Cooking Tips -->
+    <div style="background:${C.card};border-radius:14px;padding:10px 13px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        ${chefSvg14}
+        <div style="font-size:14px;font-weight:800;color:${C.dark};letter-spacing:0.3px;white-space:nowrap;">COOKING TIPS</div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;">
-        ${cookingTips.map((t) => `
-          <div style="font-size:11px;color:${C.ink};display:flex;gap:6px;align-items:flex-start;">
-            <span style="color:${C.brand};font-weight:700;flex-shrink:0;">✔</span>${esc(t)}
-          </div>`).join('')}
+      <div style="display:flex;gap:14px;align-items:stretch;">
+        <!-- Tips list -->
+        <div style="flex:1;display:flex;flex-direction:column;gap:7px;justify-content:center;">
+          ${cookingTips.map((t) => `
+            <div style="font-size:9.5px;color:${C.ink};display:flex;align-items:center;gap:7px;white-space:nowrap;">
+              ${checkSvg11}${esc(t)}
+            </div>`).join('')}
+        </div>
+        <!-- Remember card -->
+        <div style="width:165px;flex-shrink:0;background:${C.soft};border-radius:12px;padding:10px 13px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;">
+          ${leafSvg(15, C.brand)}
+          <div style="font-family:'Segoe Script','Brush Script MT',cursive;font-style:italic;font-size:18px;color:${C.brand};margin:0 0 3px;line-height:1;">Remember</div>
+          <div style="font-size:9.5px;color:${C.ink};line-height:1.35;">Good food choices today create a healthier you tomorrow.</div>
+          <div style="display:flex;align-items:center;gap:6px;margin-top:5px;">
+            <div style="width:24px;height:1px;background:${C.line};"></div>
+            ${heartSvg8}
+            <div style="width:24px;height:1px;background:${C.line};"></div>
+          </div>
+        </div>
       </div>
     </div>
 
-    <!-- Portion Guide SectionCard -->
-    <div style="background:${C.card};border-radius:14px;padding:14px 16px;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-        <span style="font-size:15px;">🍽️</span>
-        <span style="font-size:13px;font-weight:800;color:${C.dark};letter-spacing:0.3px;">PORTION GUIDE (1 SERVING)</span>
+    <!-- Portion Guide -->
+    <div style="background:${C.card};border-radius:14px;padding:10px 13px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        ${scaleSvg13}
+        <div style="font-size:14px;font-weight:800;color:${C.dark};letter-spacing:0.3px;white-space:nowrap;">PORTION GUIDE (1 SERVING)</div>
       </div>
-      <ol style="margin:0;padding-left:16px;font-size:11px;color:${C.sub};line-height:1.6;">
-        ${portionGuide.map((p) => `<li>${esc(p)}</li>`).join('')}
-      </ol>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${portions.map(({ path, text }) => `
+          <div style="font-size:9.5px;color:${C.ink};display:flex;align-items:center;gap:8px;">
+            <span style="width:18px;height:18px;border-radius:50%;background:${C.soft};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+              ${iSvg(9, path, C.brand)}
+            </span>
+            ${esc(text)}
+          </div>`).join('')}
+      </div>
     </div>
 
   </div>
@@ -1123,31 +1219,35 @@ const hydrationPage = (plan: DietPlan, page: number): string => {
   ];
   const tips = generalTips.length ? generalTips : fallbackTips;
 
-  const sectionCard = (icon_: string, title: string, body: string) => `
-    <div style="background:${C.card};border-radius:14px;padding:14px 16px;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-        <span style="font-size:15px;">${icon_}</span>
-        <span style="font-size:13px;font-weight:800;color:${C.dark};letter-spacing:0.3px;">${title}</span>
+  // ── Section card helper (matches React SectionCard exactly) ────────────
+  const sectionCard = (iconSvg: string, title: string, body: string) => `
+    <div style="background:${C.card};border-radius:14px;padding:11px 14px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <span style="font-size:16px;display:flex;align-items:center;">${iconSvg}</span>
+        <div style="font-size:14px;font-weight:800;color:${C.dark};letter-spacing:0.3px;white-space:nowrap;">${title}</div>
       </div>
       ${body}
     </div>`;
+
+  // ── Section header icons (14px) ──────────────────────────────────────
+  const exchangeSvg14 = iSvg(14, '<path d="M7 16V4m0 0L3 8m4-4 4 4M17 8v12m0 0 4-4m-4 4-4-4"/>', C.brand, true);
+  const tintSvg14     = iSvg(14, '<path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>', C.brand);
+  const stethoSvg14   = iSvg(14, '<path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3"/><path d="M8 15v1a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6v-4"/><circle cx="20" cy="10" r="2"/>', C.brand, true);
+  const checkSvg14    = iSvg(14, '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14l-4-4 1.41-1.41L10 13.17l6.59-6.59L18 8l-8 8z"/>', C.brand);
+  const checkSvg9     = iSvg(9,  '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14l-4-4 1.41-1.41L10 13.17l6.59-6.59L18 8l-8 8z"/>', C.brand);
 
   return `
 <div class="dp-page" style="padding:30px;">
 
   ${pageHeader(plan.calorie_range)}
 
-  <div style="margin-top:10px;">
-    ${pageTitle('SMART SWAPS &', 'HYDRATION GUIDE', 26)}
-    <p style="font-size:13px;color:${C.sub};margin:2px 0 16px;">Small swaps today. Big transformation tomorrow.</p>
-  </div>
+  ${pageTitle('SMART SWAPS &', 'HYDRATION GUIDE')}
+  <p style="font-size:13px;color:${C.sub};margin:2px 0 16px;">Small swaps today. Big transformation tomorrow.</p>
 
   <!-- Two-column main section -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px;">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
 
-    <!-- LEFT: Smart Swaps SectionCard -->
-    ${sectionCard('🔄', 'SMART SWAPS FOR BETTER CHOICES', `
-      <!-- header row -->
+    ${sectionCard(exchangeSvg14, 'SMART SWAPS FOR BETTER CHOICES', `
       <div style="display:flex;font-size:10px;font-weight:800;color:${C.brand};padding:4px 0;border-bottom:1px solid ${C.line};">
         <span style="flex:1;">INSTEAD OF</span>
         <span style="flex:1;">CHOOSE THIS</span>
@@ -1160,11 +1260,8 @@ const hydrationPage = (plan: DietPlan, page: number): string => {
         </div>`).join('')}
     `)}
 
-    <!-- RIGHT: Hydration Guide SectionCard -->
-    ${sectionCard('💧', 'HYDRATION GUIDE', `
-      <div style="font-size:11.5px;color:${C.sub};margin-bottom:8px;">
-        ${esc(plan.hydration_guide ?? 'Water is essential for fat loss, metabolism, digestion and glowing skin.')}
-      </div>
+    ${sectionCard(tintSvg14, 'HYDRATION GUIDE', `
+      <div style="font-size:11.5px;color:${C.sub};margin-bottom:8px;">${esc(plan.hydration_guide ?? 'Water is essential for fat loss, metabolism, digestion and glowing skin.')}</div>
       <div style="background:${C.soft};border-radius:8px;padding:8px 12px;text-align:center;font-weight:800;color:${C.brand};font-size:12px;margin-bottom:10px;">
         DAILY GOAL: 8–10 GLASSES (2.5–3 LITRES)
       </div>
@@ -1181,19 +1278,21 @@ const hydrationPage = (plan: DietPlan, page: number): string => {
   </div>
 
   <!-- Three-column bottom section -->
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:76px;">
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:14px;">
 
-    ${sectionCard('💧', 'BENEFITS OF HYDRATION',
-      `<div style="font-size:10.5px;color:${C.sub};line-height:1.7;">
-        Boosts Metabolism • Detoxifies Body • Improves Digestion • Enhances Skin Health • Improves Energy Levels
+    ${sectionCard(tintSvg14, 'BENEFITS OF HYDRATION',
+      `<div style="display:flex;flex-direction:column;gap:6px;">
+        ${['Boosts Metabolism', 'Detoxifies Body', 'Improves Digestion', 'Enhances Skin Health', 'Improves Energy Levels'].map((b) =>
+          `<div style="font-size:10.5px;color:${C.sub};display:flex;align-items:center;gap:7px;">${checkSvg9} ${esc(b)}</div>`
+        ).join('')}
       </div>`)}
 
-    ${sectionCard('🩺', 'GENERAL TIPS',
+    ${sectionCard(stethoSvg14, 'GENERAL TIPS',
       `<ul style="margin:0;padding-left:14px;font-size:10px;color:${C.sub};line-height:1.45;">
         ${tips.map((t) => `<li>${esc(t)}</li>`).join('')}
       </ul>`)}
 
-    ${sectionCard('✅', 'HYDRATION CHECKLIST',
+    ${sectionCard(checkSvg14, 'HYDRATION CHECKLIST',
       `<div style="font-size:10.5px;color:${C.sub};line-height:1.7;">
         ✓ Drank 8–10 glasses today<br/>
         ✓ Avoided sugary drinks<br/>
@@ -1211,131 +1310,233 @@ const hydrationPage = (plan: DietPlan, page: number): string => {
 const progressPage = (plan: DietPlan, page: number): string => {
   const weeks     = (plan.weeks ?? []) as WeekPlan[];
   const weekCount = Math.max(weeks.length || 4, 4);
-  const wkLabels  = Array.from({ length: weekCount }, (_, i) => `Week ${i + 1}`);
+  const wk        = Array.from({ length: weekCount }, (_, i) => `Week ${i + 1}`);
 
-  const th = (txt: string) =>
-    `<th style="color:${C.brand};padding:5px 8px;text-align:left;font-size:9.5px;font-weight:700;border-bottom:1px solid ${C.line};">${esc(txt)}</th>`;
-  const thC = (txt: string) =>
-    `<th style="color:${C.sub};padding:5px 8px;text-align:center;font-size:9.5px;font-weight:700;">${esc(txt)}</th>`;
-  const td = (txt: string, align = 'center') =>
-    `<td style="padding:6px 8px;text-align:${align};font-size:9px;color:${C.sub};border-bottom:1px solid ${C.line};">${txt}</td>`;
-
-  const trackAreas = ['Followed Meal Plan', 'Stayed Hydrated', 'Worked Out', 'Slept Well', 'Stress Managed'];
-  const trackerRows = trackAreas.map((area) => `
-    <tr>
-      <td style="padding:5px 8px;font-size:10px;color:${C.ink};border-bottom:1px solid ${C.line};">${esc(area)}</td>
-      ${wkLabels.map(() => `<td style="text-align:center;padding:5px 4px;font-size:9px;color:${C.faint};border-bottom:1px solid ${C.line};">① ② ③ ④ ⑤</td>`).join('')}
-    </tr>`).join('');
-
-  const weightRows = wkLabels.map((w) => `
-    <tr>
-      <td style="padding:7px 10px;font-size:9.5px;color:${C.ink};border-bottom:1px solid ${C.line};">${esc(w)}</td>
-      ${td('____')}${td('____')}${td('____')}${td('____')}
-    </tr>`).join('');
-
-  const measurements = ['Weight (kg)', 'Waist (cm)', 'Hips (cm)', 'Chest (cm)', 'Arms (cm)', 'Thighs (cm)'];
-  const measureRows = measurements.map((m) => `
-    <tr>
-      <td style="padding:6px 8px;font-size:9.5px;color:${C.ink};border-bottom:1px solid ${C.line};">${esc(m)}</td>
-      ${wkLabels.map(() => td('____')).join('')}
-      ${td('____')}
-    </tr>`).join('');
-
-  const sectionCard = (icon_: string, title: string, body: string, style = '') => `
-    <div style="background:${C.card};border-radius:14px;padding:14px 16px;${style}">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-        <span style="font-size:15px;">${icon_}</span>
-        <span style="font-size:13px;font-weight:800;color:${C.dark};letter-spacing:0.3px;">${title}</span>
+  // ── Section card helper (matches React SectionCard) ───────────────────
+  const sc = (iconSvg: string, title: string, body: string, extraStyle = '') => `
+    <div style="background:${C.card};border-radius:14px;padding:11px 13px;${extraStyle}">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+        <span style="display:flex;align-items:center;">${iconSvg}</span>
+        <div style="font-size:14px;font-weight:800;color:${C.dark};letter-spacing:0.3px;white-space:nowrap;">${title}</div>
       </div>
       ${body}
     </div>`;
 
-  const nonScaleVictories = [
-    '✓ More energy through the day',
-    '✓ Better sleep quality',
-    '✓ Improved digestion',
-    '✓ Clearer skin',
-    '✓ Better mood &amp; focus',
-    '✓ Reduced cravings',
-    '✓ More confidence',
-    '✓ Healthy habits stick!',
+  // ── Brand table header row ────────────────────────────────────────────
+  const brandTh = (label: string, align: 'left' | 'center', first: boolean, last: boolean, fs = 9) =>
+    `<th style="color:#fff;background:${C.brand};padding:5px ${align === 'left' ? 8 : 3}px;text-align:${align};font-size:${fs}px;white-space:nowrap;${first ? `border-top-left-radius:6px;border-bottom-left-radius:6px;` : ''}${last ? `border-top-right-radius:6px;border-bottom-right-radius:6px;` : ''}">${esc(label)}</th>`;
+
+  const tdCell = (txt: string, align = 'center', pad = '5px 3px') =>
+    `<td style="text-align:${align};padding:${pad};color:${C.faint};border-bottom:1px solid ${C.line};font-size:8.5px;">${txt}</td>`;
+
+  // ── Track areas with icons ────────────────────────────────────────────
+  const trackAreas = [
+    { path: '<path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2M7 2v20M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3v7"/>', t: 'Followed Meal Plan',  sub: '(80% or more)',       stroke: true  },
+    { path: '<path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>',                                                        t: 'Stayed Hydrated',    sub: '(8-10 glasses/day)', stroke: false },
+    { path: '<path d="M6.5 6.5h.01M17.5 6.5h.01M6.5 17.5h.01M17.5 17.5h.01M3 12h3m12 0h3M6 6H3v12h3M21 6h-3v12h3M9 6v12M15 6v12"/>', t: 'Worked Out', sub: '(3-5 times/week)', stroke: true },
+    { path: '<path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/>', t: 'Slept Well', sub: '(7-8 hours/night)', stroke: false },
+    { path: '<circle cx="12" cy="8" r="4"/><path d="M6 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/>',                      t: 'Stress Managed',     sub: '(Mindful & Positive)', stroke: true },
+  ];
+  const trackerRows = trackAreas.map(({ path, t, sub, stroke }) => `
+    <tr>
+      <td style="padding:3.5px 8px;color:${C.ink};white-space:nowrap;border-bottom:1px solid ${C.line};">
+        <div style="display:flex;align-items:center;gap:6px;">
+          ${iSvg(11, path, C.brand, stroke)}
+          <div><div style="font-weight:600;font-size:9px;">${esc(t)}</div><div style="font-size:7.5px;color:${C.faint};">${esc(sub)}</div></div>
+        </div>
+      </td>
+      ${wk.map(() => tdCell('① ② ③ ④ ⑤')).join('')}
+    </tr>`).join('');
+
+  const notesGrid = `
+    <div style="margin-top:9px;background:${C.soft};border-radius:8px;padding:8px 10px;">
+      <div style="font-size:9px;font-weight:800;color:${C.dark};margin-bottom:6px;">NOTES: <span style="font-weight:400;color:${C.sub};">Write down what went well and what you can improve next week.</span></div>
+      <div style="display:grid;grid-template-columns:${wk.map(() => '1fr').join(' ')};gap:10px;">
+        ${wk.map((w) => `
+          <div>
+            <div style="font-size:8px;font-weight:700;color:${C.brand};margin-bottom:6px;text-align:center;">${esc(w.toUpperCase())}</div>
+            <div style="border-bottom:1px solid ${C.faint};height:11px;"></div>
+            <div style="border-bottom:1px solid ${C.faint};height:11px;"></div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+
+  // ── Weight tracker ────────────────────────────────────────────────────
+  const weightRows = wk.map((w) => `
+    <tr>
+      <td style="padding:3px 8px;color:${C.ink};border-bottom:1px solid ${C.line};font-size:9px;">${esc(w)}</td>
+      <td style="padding:3px 8px;text-align:center;color:${C.faint};border-bottom:1px solid ${C.line};font-size:9px;">____</td>
+      <td style="padding:3px 8px;text-align:center;color:${C.faint};border-bottom:1px solid ${C.line};font-size:9px;">____</td>
+      <td style="padding:3px 8px;text-align:center;color:${C.faint};border-bottom:1px solid ${C.line};font-size:9px;">____</td>
+    </tr>`).join('');
+
+  const graphW = 320; const graphH = 150;
+  const graphSvg = `
+    <svg viewBox="0 0 ${graphW} ${graphH}" preserveAspectRatio="none" style="width:100%;height:104px;display:block;">
+      ${[0,1,2,3,4].map((g) => `<line x1="30" y1="${14 + g*28}" x2="314" y2="${14 + g*28}" stroke="${C.line}" stroke-width="1"/>`).join('')}
+      <line x1="30" y1="14" x2="30" y2="126" stroke="${C.faint}" stroke-width="1"/>
+      <line x1="30" y1="126" x2="314" y2="126" stroke="${C.faint}" stroke-width="1"/>
+      ${[90,85,80,75,70].map((v, g) => `<text x="25" y="${17 + g*28}" text-anchor="end" font-size="8" fill="${C.faint}">${v}</text>`).join('')}
+      ${wk.map((w, i) => `<text x="${30 + (i + 0.5) * (284 / wk.length)}" y="139" text-anchor="middle" font-size="8" fill="${C.sub}">${esc(w)}</text>`).join('')}
+      <text x="9" y="70" font-size="8" fill="${C.sub}" transform="rotate(-90 9 70)" text-anchor="middle">Weight (kg)</text>
+    </svg>`;
+
+  // ── Measurements ──────────────────────────────────────────────────────
+  const measures = [
+    { path: '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 4a6 6 0 1 1 0 12A6 6 0 0 1 12 6z"/>',               t: 'Weight (kg)' },
+    { path: '<circle cx="12" cy="12" r="10"/>',                                                                         t: 'Waist (cm)' },
+    { path: '<path d="M3 3h18M3 21h18M3 12h18"/>',                                                                     t: 'Hips (cm)' },
+    { path: '<path d="M4 4h16v16H4z"/>',                                                                                t: 'Chest (cm)' },
+    { path: '<path d="M18 11V6a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v5m14 0v8H4v-8m14 0H4"/>',                               t: 'Arms (cm)' },
+    { path: '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/>', t: 'Thighs (cm)' },
+  ];
+  const measureRows = measures.map(({ path, t }) => `
+    <tr>
+      <td style="padding:5px 6px;color:${C.ink};border-bottom:1px solid ${C.line};white-space:nowrap;">
+        <span style="display:inline-flex;align-items:center;gap:6px;">${iSvg(10, path, C.brand)} ${esc(t)}</span>
+      </td>
+      ${wk.map(() => `<td style="text-align:center;color:${C.faint};border-bottom:1px solid ${C.line};padding:5px 6px;font-size:9px;">____</td>`).join('')}
+      <td style="text-align:center;color:${C.faint};border-bottom:1px solid ${C.line};padding:5px 6px;font-size:9px;">____</td>
+    </tr>`).join('');
+
+  const howTo = [
+    { path: '<circle cx="12" cy="12" r="10"/>',          t: 'Waist',  d: 'Measure around the narrowest part of your waist.' },
+    { path: '<path d="M3 3h18M3 21h18M3 12h18"/>',       t: 'Hips',   d: 'Measure around the widest part of your hips.' },
+    { path: '<path d="M4 4h16v16H4z"/>',                  t: 'Chest',  d: 'Measure around the fullest part of your chest.' },
+    { path: '<path d="M18 11V6a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v5m14 0v8H4v-8m14 0H4"/>', t: 'Arms', d: 'Measure around the relaxed bicep.' },
+    { path: '<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/>', t: 'Thighs', d: 'Measure around the thickest part of your thigh.' },
   ];
 
-  const photoPlaceholders = wkLabels.map((w) => `
-    <div style="flex:1;min-height:54px;background:${C.soft};border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:9px;color:${C.faint};">
-      📷<span style="margin-top:2px;">${esc(w)}</span>
-    </div>`).join('');
+  // ── Bottom row ────────────────────────────────────────────────────────
+  const victories = [
+    'More energy throughout the day', 'Stronger and fitter body',
+    'Better sleep quality',           'Better mood &amp; focus',
+    'Improved digestion',             'Reduced cravings',
+    'Fitting into old clothes',       'More confidence',
+    'Clearer skin',                   'Healthy habits stick!',
+  ];
+  const checkSvg9  = iSvg(9,  '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14l-4-4 1.41-1.41L10 13.17l6.59-6.59L18 8l-8 8z"/>', C.brand);
+  const camSvg12   = iSvg(12, '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>', C.faint, true);
+
+  // ── Header icons ──────────────────────────────────────────────────────
+  const chartBarSvg  = iSvg(14, '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>', C.brand, true);
+  const weightSvg14  = iSvg(14, '<path d="M6 2h12l1 6H5L6 2zM3 8h18v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8z"/>', C.brand, true);
+  const rulerSvg14   = iSvg(14, '<path d="M3 3h18M3 21h18"/><path d="M3 8h4M3 13h4M3 18h4M17 8h4M17 13h4M17 18h4"/>', C.brand, true);
+  const rulerHowSvg  = iSvg(14, '<path d="M3 3h18M3 21h18"/>', C.brand, true);
+  const starSvg14    = iSvg(14, '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>', C.brand);
+  const camSvg14     = iSvg(14, '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>', C.brand, true);
+  const trophySvg12  = iSvg(12, '<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2z"/>', C.gold, true);
 
   return `
 <div class="dp-page" style="padding:30px;">
 
   ${pageHeader(plan.calorie_range)}
 
-  <div style="margin-top:10px;">
-    ${pageTitle('PROGRESS TRACKER &', 'MEASUREMENTS', 26)}
-    <p style="font-size:12px;color:${C.sub};margin:2px 0 16px;">Track your journey. Celebrate small wins. Stay consistent!</p>
-  </div>
+  ${pageTitle('PROGRESS TRACKER &', 'MEASUREMENTS')}
+  <p style="font-size:12.5px;color:${C.sub};margin:2px 0 12px;">Track your journey. Celebrate small wins. Stay consistent!</p>
 
-  <!-- Top 2-column -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+  <!-- Row 1: Weekly Progress + Weight Tracker -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
 
-    <!-- Weekly Progress Tracker SectionCard -->
-    ${sectionCard('📊', 'WEEKLY PROGRESS TRACKER', `
-      <div style="font-size:10px;color:${C.sub};margin-bottom:8px;">Rate each week on a scale of 1–5 &nbsp;(1 = Needs Improvement, 5 = Excellent)</div>
-      <table style="width:100%;border-collapse:collapse;">
+    ${sc(chartBarSvg, 'WEEKLY PROGRESS TRACKER', `
+      <div style="font-size:9px;color:${C.sub};margin-bottom:7px;">Rate your progress each week on a scale of 1–5<br/>(1 = Needs Improvement, 5 = Excellent)</div>
+      <table style="width:100%;border-collapse:collapse;font-size:9.5px;">
         <thead>
-          <tr>
-            ${th('AREAS')}
-            ${wkLabels.map((w) => thC(w)).join('')}
+          <tr style="background:${C.brand};">
+            ${brandTh('AREAS TO TRACK', 'left', true, false)}
+            ${wk.map((w, i) => brandTh(w, 'center', false, i === wk.length - 1)).join('')}
           </tr>
         </thead>
         <tbody>${trackerRows}</tbody>
       </table>
+      ${notesGrid}
     `)}
 
-    <!-- Weight Tracker SectionCard -->
-    ${sectionCard('⚖️', 'WEIGHT TRACKER', `
-      <table style="width:100%;border-collapse:collapse;">
+    ${sc(weightSvg14, 'WEIGHT TRACKER', `
+      <div style="font-size:9px;color:${C.sub};margin-bottom:7px;">Track your weight trend over ${wk.length} weeks.</div>
+      <table style="width:100%;border-collapse:collapse;font-size:9.5px;table-layout:fixed;">
         <thead>
-          <tr>
-            ${['Week','Date','Weight (kg)','Change (kg)'].map((h) => `<th style="color:${C.brand};padding:5px 10px;text-align:left;font-size:9.5px;font-weight:700;border-bottom:1px solid ${C.line};">${h}</th>`).join('')}
+          <tr style="background:${C.brand};">
+            ${['Week','Date','Weight (kg)','Change (kg)'].map((h, i) => brandTh(h, i === 0 ? 'left' : 'center', i === 0, i === 3)).join('')}
           </tr>
         </thead>
         <tbody>${weightRows}</tbody>
       </table>
-      <div style="margin-top:10px;background:${C.soft};border-radius:8px;padding:8px 10px;font-size:10.5px;color:${C.ink};">
-        🏆 Remember: Progress is progress, no matter how small. You're becoming a better version of you!
+      <div style="margin-top:9px;">
+        <div style="font-size:8.5px;font-weight:800;color:${C.dark};text-align:center;margin-bottom:3px;">WEIGHT PROGRESS GRAPH</div>
+        ${graphSvg}
+      </div>
+      <div style="margin-top:8px;background:${C.soft};border-radius:8px;padding:7px 10px;font-size:9.5px;color:${C.ink};display:flex;align-items:center;gap:7px;">
+        ${trophySvg12}<span><b style="color:${C.brand};">Remember:</b> Progress is progress, no matter how small. You're becoming a better version of you!</span>
       </div>
     `)}
 
   </div>
 
-  <!-- Full-width Measurements Tracker -->
-  ${sectionCard('📏', 'MEASUREMENTS TRACKER', `
-    <table style="width:100%;border-collapse:collapse;">
-      <thead>
-        <tr>
-          ${th('MEASUREMENTS')}
-          ${wkLabels.map((w) => thC(w)).join('')}
-          ${thC('Change')}
-        </tr>
-      </thead>
-      <tbody>${measureRows}</tbody>
-    </table>
-  `, 'margin-bottom:14px;')}
+  <!-- Row 2: Measurements + How to Measure -->
+  <div style="display:grid;grid-template-columns:3fr 1fr;gap:12px;margin-top:12px;">
 
-  <!-- Bottom 2-column -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:76px;">
+    ${sc(rulerSvg14, 'MEASUREMENTS TRACKER', `
+      <div style="font-size:9px;color:${C.sub};margin-bottom:8px;">Track your body measurements to see real changes beyond the scale.</div>
+      <table style="width:100%;border-collapse:collapse;font-size:9.5px;table-layout:fixed;">
+        <colgroup>
+          <col style="width:23%;"/>
+          ${wk.map(() => `<col style="width:${Math.floor(52 / wk.length)}%;"/>`).join('')}
+          <col style="width:25%;"/>
+        </colgroup>
+        <thead>
+          <tr style="background:${C.brand};">
+            ${['MEASUREMENTS', ...wk, `Change (W1-W${wk.length})`].map((h, i, arr) =>
+              brandTh(h, i === 0 ? 'left' : 'center', i === 0, i === arr.length - 1, 8)).join('')}
+          </tr>
+        </thead>
+        <tbody>${measureRows}</tbody>
+      </table>
+    `)}
 
-    ${sectionCard('⭐', 'NON-SCALE VICTORIES', `
-      <div style="font-size:10.5px;color:${C.sub};line-height:1.7;">
-        ${nonScaleVictories.join('<br/>')}
+    ${sc(rulerHowSvg, 'HOW TO MEASURE?', `
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        ${howTo.map(({ path, t, d }) => `
+          <div style="display:flex;gap:8px;align-items:flex-start;">
+            <span style="width:20px;height:20px;border-radius:50%;background:${C.soft};display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;">${iSvg(10, path, C.brand)}</span>
+            <div>
+              <div style="font-size:10px;font-weight:800;color:${C.dark};line-height:1.2;">${esc(t)}</div>
+              <div style="font-size:9px;color:${C.sub};line-height:1.3;">${esc(d)}</div>
+            </div>
+          </div>`).join('')}
       </div>
     `)}
 
-    ${sectionCard('📸', 'PHOTOS SPEAK LOUDER!', `
-      <div style="font-size:10.5px;color:${C.sub};margin-bottom:8px;">Click your progress photos once a week and see the amazing transformation.</div>
-      <div style="display:flex;gap:8px;">${photoPlaceholders}</div>
+  </div>
+
+  <!-- Row 3: Non-Scale Victories + Quote + Photos -->
+  <div style="display:grid;grid-template-columns:1.3fr 0.8fr 1.1fr;gap:12px;margin-top:12px;">
+
+    ${sc(starSvg14, 'NON-SCALE VICTORIES', `
+      <div style="font-size:8.5px;color:${C.sub};margin-bottom:6px;">Celebrate the changes that truly matter!</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px 10px;">
+        ${victories.map((v) => `
+          <div style="font-size:9px;color:${C.ink};display:flex;align-items:center;gap:6px;">
+            ${checkSvg9}${v}
+          </div>`).join('')}
+      </div>
+    `)}
+
+    <!-- Quote card -->
+    <div style="background:${C.soft};border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:${C.brand};">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="${C.brand}" style="opacity:0.55;align-self:flex-start;"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"/></svg>
+      <div style="font-family:'Segoe Script','Brush Script MT',cursive;font-style:italic;font-size:13.5px;line-height:1.35;margin:3px 0;">It's not about being perfect. It's about being consistent.</div>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="${C.brand}" style="opacity:0.55;align-self:flex-end;"><path d="M21 3c-3 0-7 1-7 8v8c0 1.25.757 2.017 2 2h4c1.25 0 2-.75 2-1.972V13c0-1.25-.75-2-2-2h-.75C19.25 8.75 19 7 22 7V4c0-1 0-1-1-1z"/><path d="M9 3c-3 0-7 1-7 8v8c0 1.25.757 2.017 2 2h4c1.25 0 2-.75 2-1.972V13c0-1.25-.75-2-2-2H7.25C7.25 8.75 7 7 10 7V4c0-1 0-1-1-1z"/></svg>
+    </div>
+
+    ${sc(camSvg14, 'PHOTOS SPEAK LOUDER!', `
+      <div style="font-size:8.5px;color:${C.sub};margin-bottom:7px;">Click your progress photos once a week and see the amazing transformation.</div>
+      <div style="display:flex;gap:6px;">
+        ${wk.map((w) => `
+          <div style="flex:1;height:46px;background:${C.soft};border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:7.5px;color:${C.faint};">
+            ${camSvg12}<span>${esc(w)}</span>
+          </div>`).join('')}
+      </div>
     `)}
 
   </div>
@@ -1346,92 +1547,147 @@ const progressPage = (plan: DietPlan, page: number): string => {
 
 // ── Dietitians page ───────────────────────────────────────────────────────
 const dietitiansPage = (plan: DietPlan, page: number): string => {
-  const dietitians = [
-    { name: 'Dt. Priya Sharma', role: 'Clinical Dietitian & Nutritionist', exp: '6+ Years of Experience', sp: 'Weight Management, PCOS, Gut Health',          photo: 'dietitian-priya.jpg' },
-    { name: 'Dt. Neha Verma',   role: 'Sports Nutritionist',               exp: '5+ Years of Experience', sp: 'Sports Nutrition, Muscle Gain, Fat Loss',       photo: 'dietitian-neha.jpg' },
-    { name: 'Dt. Anjali Mehta', role: 'Holistic Nutritionist',             exp: '7+ Years of Experience', sp: 'Hormonal Health, Thyroid, Weight Loss',         photo: 'dietitian-anjali.jpg' },
-    { name: 'Dt. Rahul Gupta',  role: 'Nutrition Consultant',              exp: '4+ Years of Experience', sp: 'Diabetes Care, Heart Health, Family Nutrition',  photo: 'dietitian-rahul.png' },
+  const docs = [
+    { photo: 'dietitian-priya.jpg',  name: 'Dt. Priya Sharma', role: 'Clinical Dietitian &amp; Nutritionist', pts: ['6+ Years of Experience', 'Specialization: Weight Management, PCOS, Gut Health', 'Helps clients build a healthy relationship with food.'] },
+    { photo: 'dietitian-neha.jpg',   name: 'Dt. Neha Verma',   role: 'Sports Nutritionist',                   pts: ['5+ Years of Experience', 'Specialization: Sports Nutrition, Muscle Gain, Fat Loss', 'Passionate about performance fueling and recovery.'] },
+    { photo: 'dietitian-anjali.jpg', name: 'Dt. Anjali Mehta', role: 'Holistic Nutritionist',                 pts: ['7+ Years of Experience', 'Specialization: Hormonal Health, Thyroid, Weight Loss', 'Believes in healing through balanced nutrition.'] },
+    { photo: 'dietitian-rahul.png',  name: 'Dt. Rahul Gupta',  role: 'Nutrition Consultant',                  pts: ['4+ Years of Experience', 'Specialization: Diabetes Care, Heart Health, Family Nutrition', 'Focused on long-term health and disease reversal.'] },
   ];
 
-  const dtCards = dietitians.map((d) => {
+  const about = [
+    'Personalized diet plans based on your goals',
+    'Expert guidance from certified dietitians',
+    'Science-backed nutrition for real results',
+    'Thousands of success stories across India',
+  ];
+
+  // Why section — inline SVG icons (16px) in 38×38 soft circles
+  const why = [
+    { path: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>',  stroke: true,  t: 'One-on-one expert attention' },
+    { path: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',                                                                                                                                       stroke: true,  t: 'Personalized advice based on your progress' },
+    { path: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',                                                                                                                       stroke: true,  t: 'Faster results with professional support' },
+    { path: '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12" fill="none" stroke="${C.brand}" stroke-width="2"/>',                            stroke: false, t: 'Sustainable habits that last a lifetime' },
+    { path: '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',                                                                                                                    stroke: true,  t: 'Track, adjust &amp; achieve your goals' },
+  ];
+
+  // Dietitian cards — full-width photo banner (110px) + text below
+  const checkSvg8 = iSvg(8, '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14l-4-4 1.41-1.41L10 13.17l6.59-6.59L18 8l-8 8z"/>', C.brand);
+
+  const dtCards = docs.map((d) => {
     const photoSrc = img(d.photo);
-    const avatar = photoSrc
-      ? `<img src="${photoSrc}" style="width:70px;height:70px;border-radius:50%;object-fit:cover;border:3px solid ${C.brand};margin:0 auto 8px;display:block;" alt="${esc(d.name)}" />`
-      : `<div style="width:70px;height:70px;border-radius:50%;margin:0 auto 8px;background:linear-gradient(135deg,${C.brand},#7bd389);display:flex;align-items:center;justify-content:center;font-size:30px;">👩‍⚕️</div>`;
+    const photoBanner = photoSrc
+      ? `<div style="width:100%;height:110px;background-image:url('${photoSrc}');background-size:cover;background-position:center top;"></div>`
+      : `<div style="width:100%;height:110px;background:linear-gradient(135deg,${C.brand},#7bd389);display:flex;align-items:center;justify-content:center;font-size:40px;">👩‍⚕️</div>`;
     return `
-    <div style="background:${C.card};border-radius:12px;padding:12px;text-align:center;">
-      ${avatar}
-      <div style="font-weight:800;font-size:12.5px;color:${C.dark};">${esc(d.name)}</div>
-      <div style="font-size:10px;color:${C.brand};margin-bottom:6px;">${esc(d.role)}</div>
-      <div style="font-size:9.5px;color:${C.sub};line-height:1.4;">✓ ${esc(d.exp)}<br/>✓ ${esc(d.sp)}</div>
+    <div style="background:${C.card};border-radius:12px;border:1px solid ${C.line};overflow:hidden;">
+      ${photoBanner}
+      <div style="padding:9px 10px 10px;">
+        <div style="font-weight:800;font-size:12px;color:${C.dark};">${esc(d.name)}</div>
+        <div style="font-size:9.5px;color:${C.brand};margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid ${C.line};">${d.role}</div>
+        <div style="display:flex;flex-direction:column;gap:4px;">
+          ${d.pts.map((p) => `<div style="font-size:8.5px;color:${C.sub};line-height:1.3;display:flex;gap:5px;">${checkSvg8}<span>${esc(p)}</span></div>`).join('')}
+        </div>
+      </div>
     </div>`;
   }).join('');
 
-  const why = [
-    ['🎧', 'One-on-one expert attention'],
-    ['📋', 'Personalized advice based on progress'],
-    ['🎯', 'Faster results with professional support'],
-    ['🌱', 'Sustainable habits that last a lifetime'],
-    ['📈', 'Track, adjust & achieve your goals'],
-  ];
+  // CTA icons
+  const videoSvg30 = `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" style="flex-shrink:0;opacity:0.9;"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>`;
+  const globeSvg13 = iSvg(13, '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>', C.brand, true);
+  const arrowSvg11 = iSvg(11, '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>', '#fff', true);
+
+  // QR code
+  const qrSrc = img('qr-meridiet.png');
+  const qrEl = qrSrc
+    ? `<img src="${qrSrc}" alt="QR — meridiet.in" style="width:62px;height:62px;background:#fff;padding:4px;border-radius:8px;border:1px solid ${C.line};display:block;" />`
+    : '';
+
+  // Heart-leaf icon
+  const heartLeafSrc = img('heart-leaf.png');
+  const heartLeafEl = heartLeafSrc
+    ? `<img src="${heartLeafSrc}" alt="" style="width:22px;height:22px;flex-shrink:0;" />`
+    : leafSvg(22);
 
   return `
 <div class="dp-page" style="padding:30px;">
 
   ${pageHeader(plan.calorie_range)}
 
-  <!-- Two-line title -->
-  <div style="margin:16px 0 2px;font-size:32px;font-weight:800;color:${C.dark};letter-spacing:-0.3px;">WE'RE HERE TO GUIDE YOU,</div>
-  <div style="margin:0 0 0;font-size:32px;font-weight:800;color:${C.gold};letter-spacing:-0.3px;">EVERY STEP OF THE WAY.</div>
-  <p style="font-size:12.5px;color:${C.sub};margin:10px 0 18px;max-width:520px;">
-    At MeriDiet, we believe that the right guidance makes all the difference. Our expert dietitians are here to help you eat better, feel better and live better.
-  </p>
+  <!-- Title row: heading left + About MeriDiet card right -->
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px;margin-top:12px;">
+    <div style="flex:1;">
+      <div style="font-size:30px;font-weight:800;color:${C.dark};line-height:1.1;">WE'RE HERE TO GUIDE YOU,</div>
+      <div style="font-size:30px;font-weight:800;color:${C.gold};line-height:1.1;">EVERY STEP OF THE WAY.</div>
+      <p style="font-size:12px;color:${C.sub};margin:12px 0 0;max-width:360px;line-height:1.5;">At MeriDiet, we believe that the right guidance makes all the difference. Our expert dietitians are here to help you eat better, feel better and live better.</p>
+    </div>
+    <div style="width:250px;flex-shrink:0;background:${C.card};border:1px solid ${C.line};border-radius:14px;padding:13px 15px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;">
+        ${heartLeafEl}
+        <div style="font-weight:800;font-size:12.5px;color:${C.dark};">ABOUT MERIDIET</div>
+      </div>
+      <div style="font-size:10px;color:${C.sub};line-height:1.45;margin-bottom:8px;">MeriDiet is India's trusted online nutrition platform that makes healthy living simple, sustainable and personalized.</div>
+      <div style="display:flex;flex-direction:column;gap:5px;">
+        ${about.map((a) => `
+          <div style="font-size:9.5px;color:${C.ink};display:flex;align-items:flex-start;gap:6px;">
+            ${iSvg(9, '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14l-4-4 1.41-1.41L10 13.17l6.59-6.59L18 8l-8 8z"/>', C.brand)}
+            <span style="margin-top:1.5px;">${esc(a)}</span>
+          </div>`).join('')}
+      </div>
+    </div>
+  </div>
 
-  <!-- MEET heading -->
-  <div style="text-align:center;font-size:18px;font-weight:800;color:${C.brand};margin:0 0 14px;">🌿 MEET OUR EXPERT DIETITIANS 🌿</div>
+  <!-- MEET heading with leaf icons -->
+  <div style="text-align:center;font-size:16px;font-weight:800;color:${C.brand};margin:16px 0 12px;display:flex;align-items:center;justify-content:center;gap:9px;">
+    ${leafSvg(15)} MEET OUR EXPERT DIETITIANS ${leafSvg(15)}
+  </div>
 
   <!-- 4 dietitian cards -->
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;">
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:11px;">
     ${dtCards}
   </div>
 
-  <!-- CTA banner -->
-  <div style="background:${C.banner};border-radius:14px;padding:18px 22px;color:#fff;display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-    <div>
-      <div style="font-weight:800;font-size:18px;line-height:1.3;">TAKE PERSONALIZED SESSIONS</div>
-      <div style="font-weight:800;font-size:18px;line-height:1.3;">WITH OUR EXPERT DIETITIANS</div>
-      <div style="font-size:12px;opacity:0.9;margin-top:4px;">Get clarity. Get guidance. Get results.</div>
+  <!-- Sessions banner -->
+  <div style="background:${C.banner};border-radius:14px;padding:16px 22px;color:#fff;display:flex;justify-content:space-between;align-items:center;margin:14px 0;">
+    <div style="display:flex;align-items:center;gap:16px;">
+      ${videoSvg30}
+      <div>
+        <div style="font-weight:800;font-size:17px;">TAKE PERSONALIZED SESSIONS</div>
+        <div style="font-weight:800;font-size:17px;">WITH OUR EXPERT DIETITIANS</div>
+        <div style="font-size:11.5px;opacity:0.9;margin-top:3px;">Get clarity. Get guidance. Get results.</div>
+      </div>
     </div>
-    <!-- Gold price box -->
-    <div style="background:${C.gold};border-radius:12px;padding:12px 20px;text-align:center;color:${C.dark};flex-shrink:0;">
-      <div style="font-size:10px;font-weight:700;">ONLY</div>
-      <div style="font-size:30px;font-weight:900;line-height:1;">₹2499</div>
-      <div style="font-size:9px;font-weight:700;">FOR 2 SESSIONS IN A MONTH</div>
+    <div style="background:${C.gold};border-radius:12px;padding:12px 18px;color:${C.dark};flex-shrink:0;min-width:190px;">
+      <div style="font-size:10px;font-weight:800;letter-spacing:0.5px;margin-bottom:2px;">✦ 1-on-1 Expert Session</div>
+      <div style="font-size:13px;font-weight:900;line-height:1.2;margin-bottom:4px;">Start Your Health Journey</div>
+      <div style="font-size:8.5px;font-weight:500;opacity:0.8;margin-bottom:8px;line-height:1.3;">Personalised consultation with a verified dietitian</div>
+      <div style="border-top:1px solid rgba(0,0,0,0.15);padding-top:7px;">
+        <div style="font-size:9px;font-weight:700;opacity:0.75;">Starting from</div>
+        <div style="font-size:26px;font-weight:900;line-height:1.1;">₹1,499</div>
+        <div style="font-size:8px;font-weight:600;opacity:0.7;margin-top:1px;">Price set by each dietitian</div>
+      </div>
     </div>
   </div>
 
   <!-- Why take sessions -->
-  <div style="text-align:center;font-size:14px;font-weight:800;color:${C.dark};margin:0 0 12px;">WHY TAKE DIETITIAN SESSIONS?</div>
-  <div style="display:flex;justify-content:space-between;margin-bottom:16px;">
-    ${why.map(([emoji, text]) => `
-      <div style="text-align:center;width:130px;">
-        <div style="font-size:24px;margin-bottom:4px;">${emoji}</div>
-        <div style="font-size:10px;color:${C.sub};line-height:1.35;">${esc(text)}</div>
+  <div style="text-align:center;font-size:14px;font-weight:800;color:${C.dark};margin:22px 0 16px;">WHY TAKE DIETITIAN SESSIONS?</div>
+  <div style="display:flex;justify-content:space-between;margin:0 0 34px;gap:8px;">
+    ${why.map(({ path, stroke, t }) => `
+      <div style="text-align:center;flex:1;">
+        <div style="width:38px;height:38px;border-radius:50%;margin:0 auto 6px;background:${C.soft};display:flex;align-items:center;justify-content:center;">
+          ${iSvg(16, path, C.brand, stroke)}
+        </div>
+        <div style="font-size:9.5px;color:${C.sub};line-height:1.35;">${t}</div>
       </div>`).join('')}
   </div>
 
-  <!-- Bottom soft CTA -->
-  <div style="background:${C.soft};border-radius:12px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-    <div>
-      <div style="font-weight:800;font-size:13px;color:${C.dark};">🌐 Ready to Transform Your Health?</div>
-      <div style="font-size:11px;color:${C.sub};">Book your personalized sessions now on our website</div>
+  <!-- Bottom CTA with QR -->
+  <div style="background:${C.soft};border-radius:12px;padding:13px 18px;display:flex;align-items:center;justify-content:space-between;gap:16px;">
+    <div style="flex:1;">
+      <div style="font-weight:800;font-size:13px;color:${C.dark};display:flex;align-items:center;gap:7px;">${globeSvg13} Ready to Transform Your Health?</div>
+      <div style="font-size:11px;color:${C.sub};margin:2px 0 9px;">Book your personalized sessions now on our website</div>
+      <div style="background:${C.brand};color:#fff;border-radius:20px;padding:8px 24px;font-weight:800;font-size:13px;display:inline-flex;align-items:center;gap:7px;">www.meridiet.com ${arrowSvg11}</div>
     </div>
-    <div style="background:${C.brand};color:#fff;border-radius:20px;padding:8px 22px;font-weight:800;font-size:13px;flex-shrink:0;">www.meridiet.in</div>
-  </div>
-
-  <!-- Italic closing quote -->
-  <div style="text-align:center;font-style:italic;color:${C.brand};font-size:18px;margin-top:8px;">
-    You don't have to do it alone. We're here for you! ♡
+    ${qrEl ? `<div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">${qrEl}<div style="font-size:8.5px;color:${C.sub};line-height:1.4;max-width:70px;">Scan to visit meridiet.com</div></div>` : ''}
   </div>
 
   ${pageFooter(page)}

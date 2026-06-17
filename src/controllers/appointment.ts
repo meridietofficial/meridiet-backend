@@ -31,9 +31,19 @@ import {
   updateCallEnded,
   updateRecordingUrl,
   findAppointmentByChannelName,
+  findFollowUpsByAppointmentId,
+  findAppointmentDetailById,
+  saveUserReview,
+  saveDietitianReview,
+  getDietitianReviews,
+  updateDietitianNotes,
+  rescheduleAppointment,
+  markAppointmentMissedWithType,
+  MissedType,
 } from '../models/Appointment';
 import { buildAvailableDates } from '../utils/availability';
 import { successResponse, errorResponse } from '../utils/response';
+import { createRescheduleHistory, getRescheduleHistory } from '../models/AppointmentRescheduleHistory';
 
 // GET /api/v1/appointments/slots/:dietitianId?days=14
 export const getAvailableSlots = async (req: Request, res: Response) => {
@@ -310,6 +320,29 @@ export const getMyAppointments = async (req: Request, res: Response) => {
   }
 };
 
+// GET /api/v1/appointments/:id
+// Dietitian only — returns a single appointment only if it belongs to them.
+// Returns avatar_url from users table; email and phone are excluded.
+export const getAppointmentById = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const id = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const appointment = await findAppointmentDetailById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+    if (appointment.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
+
+    return successResponse(res, 200, 'Appointment fetched', appointment);
+  } catch (err) {
+    console.error('Get appointment by ID error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
 // GET /api/v1/appointments/dietitian?page=1&limit=10&status=confirmed
 export const getDietitianAppointments = async (req: Request, res: Response) => {
   try {
@@ -349,7 +382,7 @@ export const updateAppointmentStatusHandler = async (req: Request, res: Response
     if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
 
     const { status } = req.body as { status?: string };
-    const allowed = ['confirmed', 'completed', 'cancelled'] as const;
+    const allowed = ['confirmed', 'completed', 'cancelled', 'missed'] as const;
     if (!status || !allowed.includes(status as typeof allowed[number])) {
       return errorResponse(res, 400, `status must be one of: ${allowed.join(', ')}`);
     }
@@ -383,16 +416,6 @@ const toAmPm = (slot: string) => {
   return `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
 };
 
-const getDateLabel = (dateStr: string) => {
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
-  const toYMD = (d: Date) => d.toISOString().slice(0, 10);
-  if (dateStr === toYMD(today)) return 'Today';
-  if (dateStr === toYMD(tomorrow)) return 'Tomorrow';
-  const d = new Date(dateStr + 'T00:00:00');
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-};
-
 // GET /api/v1/appointments/dietitian/sessions
 export const getDietitianSessions = async (req: Request, res: Response) => {
   try {
@@ -402,7 +425,7 @@ export const getDietitianSessions = async (req: Request, res: Response) => {
     const search = typeof req.query.search === 'string' && req.query.search.trim()
       ? req.query.search.trim() : undefined;
 
-    const allowed = ['all', 'upcoming', 'completed', 'cancelled'] as const;
+    const allowed = ['all', 'upcoming', 'completed', 'cancelled', 'missed'] as const;
     const tab = allowed.includes(req.query.tab as typeof allowed[number])
       ? req.query.tab as typeof allowed[number]
       : 'all';
@@ -412,13 +435,12 @@ export const getDietitianSessions = async (req: Request, res: Response) => {
 
     const { summary, rows, total } = await getDietitianSessionsList(dietitian.id, tab, search, page, limit);
 
-    // Group rows by date
-    const dateMap = new Map<string, { date: string; label: string; count: number; sessions: unknown[] }>();
+    // Group rows by date — label is computed on the frontend in local timezone
+    const dateMap = new Map<string, { date: string; count: number; sessions: unknown[] }>();
     for (const row of rows) {
       if (!dateMap.has(row.appointment_date)) {
         dateMap.set(row.appointment_date, {
           date: row.appointment_date,
-          label: getDateLabel(row.appointment_date),
           count: 0,
           sessions: [],
         });
@@ -426,15 +448,17 @@ export const getDietitianSessions = async (req: Request, res: Response) => {
       const group = dateMap.get(row.appointment_date)!;
       group.count++;
       group.sessions.push({
-        id:             row.id,
-        time:           toAmPm(row.slot),
-        slot:           row.slot,
-        duration:       row.duration,
-        session_type:   row.session_type,
-        status:         row.status,
-        payment_status: row.payment_status,
-        notes:          row.notes,
-        session_number: Number(row.session_number),
+        id:                   row.id,
+        time:                 toAmPm(row.slot),
+        slot:                 row.slot,
+        duration:             row.duration,
+        session_type:         row.session_type,
+        status:               row.status,
+        payment_status:       row.payment_status,
+        notes:                row.notes,
+        session_number:       Number(row.session_number),
+        user_review_done:     Boolean(row.user_review_done),
+        dietitian_review_done: Boolean(row.dietitian_review_done),
         client: {
           user_id:    row.user_id,
           name:       row.client_name,
@@ -548,6 +572,128 @@ export const cancelMyAppointment = async (req: Request, res: Response) => {
     return successResponse(res, 200, 'Appointment cancelled successfully', { id, status: 'cancelled' });
   } catch (err) {
     console.error('Cancel appointment error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// ── Reviews ───────────────────────────────────────────────────────────────────
+
+// POST /api/v1/appointments/:id/review
+// User or dietitian. Submit a rating (1-5) + optional review text for a completed appointment.
+// Body: { rating: 1-5, review?: string }
+export const submitReview = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const role   = req.user!.role;
+    const id     = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+
+    if (appointment.status !== 'completed') {
+      return errorResponse(res, 400, 'Reviews can only be submitted for completed appointments');
+    }
+
+    const { rating, review } = req.body as { rating?: number; review?: string };
+    if (rating === undefined || rating === null) return errorResponse(res, 400, 'rating is required');
+    if (!Number.isInteger(Number(rating)) || Number(rating) < 1 || Number(rating) > 5) {
+      return errorResponse(res, 400, 'rating must be a number between 1 and 5');
+    }
+
+    if (role === 'dietitian') {
+      const dietitian = await findDietitianByUserId(userId);
+      if (!dietitian || dietitian.id !== appointment.dietitian_id)
+        return errorResponse(res, 403, 'Access denied');
+      if (appointment.dietitian_rating !== null)
+        return errorResponse(res, 409, 'You have already submitted a review for this appointment');
+      await saveDietitianReview(id, Number(rating), review?.trim() || null);
+    } else {
+      if (appointment.user_id !== userId) return errorResponse(res, 403, 'Access denied');
+      if (appointment.user_rating !== null)
+        return errorResponse(res, 409, 'You have already submitted a review for this appointment');
+      await saveUserReview(id, Number(rating), review?.trim() || null);
+    }
+
+    const updated = await findAppointmentById(id);
+    return successResponse(res, 201, 'Review submitted successfully', {
+      user_review_done:      updated?.user_rating !== null,
+      dietitian_review_done: updated?.dietitian_rating !== null,
+    });
+  } catch (err) {
+    console.error('Submit review error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// GET /api/v1/appointments/:id/reviews
+// User or dietitian. Fetch both reviews for an appointment.
+export const getAppointmentReviews = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const role   = req.user!.role;
+    const id     = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+
+    if (role === 'dietitian') {
+      const dietitian = await findDietitianByUserId(userId);
+      if (!dietitian || dietitian.id !== appointment.dietitian_id)
+        return errorResponse(res, 403, 'Access denied');
+    } else {
+      if (appointment.user_id !== userId) return errorResponse(res, 403, 'Access denied');
+    }
+
+    return successResponse(res, 200, 'Reviews fetched', {
+      user_review_done:      appointment.user_rating !== null,
+      dietitian_review_done: appointment.dietitian_rating !== null,
+      reviews: {
+        user: appointment.user_rating !== null ? {
+          rating:      appointment.user_rating,
+          review:      appointment.user_review,
+          reviewed_at: appointment.user_reviewed_at,
+        } : null,
+        dietitian: appointment.dietitian_rating !== null ? {
+          rating:      appointment.dietitian_rating,
+          review:      appointment.dietitian_review,
+          reviewed_at: appointment.dietitian_reviewed_at,
+        } : null,
+      },
+    });
+  } catch (err) {
+    console.error('Get reviews error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// GET /api/v1/appointments/dietitian/reviews?page=1&limit=10&rating=5&search=...
+// Dietitian only. Returns all user reviews across their appointments with summary stats.
+export const getDietitianReviewsList = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const page   = Math.max(1, Number(req.query.page)  || 1);
+    const limit  = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+    const rating = req.query.rating ? Number(req.query.rating) : undefined;
+    const search = req.query.search ? String(req.query.search).trim() : undefined;
+
+    if (rating !== undefined && (isNaN(rating) || rating < 1 || rating > 5)) {
+      return errorResponse(res, 400, 'rating filter must be between 1 and 5');
+    }
+
+    const { summary, reviews, total } = await getDietitianReviews(dietitian.id, rating, search, page, limit);
+
+    return successResponse(
+      res, 200, 'Reviews fetched',
+      { summary, reviews },
+      { page, limit, total, totalPages: Math.ceil(total / limit) },
+    );
+  } catch (err) {
+    console.error('Get dietitian reviews error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };
@@ -704,6 +850,432 @@ export const getCallRecording = async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('Get recording error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// ── Reschedule slots ──────────────────────────────────────────────────────────
+
+// GET /api/v1/appointments/:id/reschedule-slots?days=30
+// Dietitian only. Returns the dietitian's available slots for rescheduling a specific appointment.
+// The current appointment's own slot is excluded from the booked set so it appears as selectable.
+// Also returns the appointment's current date/slot so the frontend can highlight it.
+export const getRescheduleSlots = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const id = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+    if (appointment.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
+
+    if (!['confirmed', 'missed'].includes(appointment.status)) {
+      return errorResponse(res, 400, 'Only confirmed or missed appointments can be rescheduled');
+    }
+
+    const days = Math.min(Number(req.query.days) || 30, 60);
+
+    const schedule = typeof dietitian.availability === 'string'
+      ? JSON.parse(dietitian.availability)
+      : (dietitian.availability ?? null);
+
+    const availableDates = buildAvailableDates(schedule, days);
+    if (availableDates.length === 0) {
+      return successResponse(res, 200, 'No available slots', {
+        current: { date: appointment.appointment_date, slot: appointment.slot },
+        available_slots: [],
+      });
+    }
+
+    const fromDate = availableDates[0].date;
+    const booked = await getBookedSlots(dietitian.id, fromDate);
+
+    // Exclude the current appointment's own slot so it shows as selectable
+    const bookedSet = new Set(
+      booked
+        .filter((b) => !(b.appointment_date === appointment.appointment_date && b.slot === appointment.slot))
+        .map((b) => `${b.appointment_date}|${b.slot}`),
+    );
+
+    // Group booked slots by date
+    const bookedByDate = new Map<string, string[]>();
+    for (const b of booked) {
+      if (b.appointment_date === appointment.appointment_date && b.slot === appointment.slot) continue;
+      if (!bookedByDate.has(b.appointment_date)) bookedByDate.set(b.appointment_date, []);
+      bookedByDate.get(b.appointment_date)!.push(b.slot);
+    }
+
+    const available_slots = availableDates
+      .map((d) => ({
+        date: d.date,
+        day: d.day,
+        slots: d.slots.filter((s) => !bookedSet.has(`${d.date}|${s}`)),
+      }))
+      .filter((d) => d.slots.length > 0);
+
+    const booked_slots = [...bookedByDate.entries()]
+      .map(([date, slots]) => {
+        const entry = availableDates.find((d) => d.date === date);
+        return { date, day: entry?.day ?? '', slots };
+      })
+      .filter((d) => d.slots.length > 0);
+
+    return successResponse(res, 200, 'Reschedule slots fetched', {
+      current: {
+        date: appointment.appointment_date,
+        slot: appointment.slot,
+      },
+      available_slots,
+      booked_slots,
+    });
+  } catch (err) {
+    console.error('Get reschedule slots error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// ── Mark missed ───────────────────────────────────────────────────────────────
+
+const VALID_MISSED_TYPES: MissedType[] = [
+  'patient_no_show',
+  'dietitian_no_show',
+  'technical_issue',
+  'network_issue',
+  'other',
+];
+
+// PATCH /api/v1/appointments/:id/mark-missed
+// Dietitian only. Explicitly mark a confirmed appointment as missed with a reason type.
+// Body: { missed_type, missed_reason? }
+export const markMissedHandler = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const id = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+    if (appointment.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
+
+    if (!['confirmed', 'missed'].includes(appointment.status)) {
+      return errorResponse(res, 400, 'Only confirmed or missed appointments can be marked missed');
+    }
+
+    const { missed_type, missed_reason } = req.body as {
+      missed_type?: string;
+      missed_reason?: string;
+    };
+
+    if (!missed_type) return errorResponse(res, 400, 'missed_type is required');
+    if (!VALID_MISSED_TYPES.includes(missed_type as MissedType)) {
+      return errorResponse(
+        res, 400,
+        `missed_type must be one of: ${VALID_MISSED_TYPES.join(', ')}`,
+      );
+    }
+
+    await markAppointmentMissedWithType(
+      id,
+      missed_type as MissedType,
+      missed_reason?.trim() || null,
+    );
+
+    const updated = await findAppointmentById(id);
+
+    return successResponse(res, 200, 'Appointment marked as missed', updated);
+  } catch (err) {
+    console.error('Mark missed error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// ── Reschedule ────────────────────────────────────────────────────────────────
+
+// PATCH /api/v1/appointments/:id/reschedule
+// Dietitian only. Move a missed or confirmed appointment to a new date/slot and restore to confirmed.
+// Body: { appointment_date, slot }
+export const rescheduleAppointmentHandler = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const id = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+    if (appointment.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
+
+    if (!['missed', 'confirmed'].includes(appointment.status)) {
+      return errorResponse(res, 400, 'Only missed or confirmed appointments can be rescheduled');
+    }
+
+    const { appointment_date, slot, reason } = req.body as {
+      appointment_date?: string;
+      slot?: string;
+      reason?: string;
+    };
+
+    if (!appointment_date) return errorResponse(res, 400, 'appointment_date is required');
+    if (!slot) return errorResponse(res, 400, 'slot is required');
+
+    if (!/^\d{2}:\d{2}$/.test(slot)) {
+      return errorResponse(res, 400, 'slot must be in HH:MM format (e.g. "09:30")');
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(appointment_date)) {
+      return errorResponse(res, 400, 'appointment_date must be in YYYY-MM-DD format');
+    }
+
+    const [yr, mo, dy] = appointment_date.split('-').map(Number);
+    const requestedDate = new Date(yr, mo - 1, dy);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (requestedDate < today) {
+      return errorResponse(res, 400, 'appointment_date cannot be in the past');
+    }
+
+    // Check slot availability, excluding the current appointment from the conflict check
+    const taken = await isSlotTaken(dietitian.id, appointment_date, slot, id);
+    if (taken) {
+      return errorResponse(res, 409, 'This slot is already booked. Please choose another.');
+    }
+
+    await createRescheduleHistory({
+      appointment_id: id,
+      rescheduled_by: userId,
+      previous_date: appointment.appointment_date,
+      previous_slot: appointment.slot,
+      new_date: appointment_date,
+      new_slot: slot,
+      reason: reason?.trim() || null,
+    });
+
+    await rescheduleAppointment(id, appointment_date, slot, reason?.trim() || null);
+
+    const updated = await findAppointmentById(id);
+
+    return successResponse(res, 200, 'Appointment rescheduled successfully', updated);
+  } catch (err) {
+    console.error('Reschedule appointment error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// GET /api/v1/appointments/:id/reschedule-history
+// Dietitian or admin — full log of every reschedule for this appointment.
+export const getAppointmentRescheduleHistory = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const role = req.user!.role;
+    const id = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+
+    // Dietitian must own the appointment; admin has unrestricted access
+    if (role === 'dietitian') {
+      const dietitian = await findDietitianByUserId(userId);
+      if (!dietitian || dietitian.id !== appointment.dietitian_id)
+        return errorResponse(res, 403, 'Access denied');
+    } else if (role !== 'admin') {
+      return errorResponse(res, 403, 'Access denied');
+    }
+
+    const history = await getRescheduleHistory(id);
+
+    return successResponse(res, 200, 'Reschedule history fetched', history);
+  } catch (err) {
+    console.error('Get reschedule history error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// ── Dietitian notes ───────────────────────────────────────────────────────────
+
+// PUT /api/v1/appointments/:id/dietitian-notes
+export const saveDietitianNotes = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const id = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const { notes } = req.body as { notes?: string };
+    if (notes === undefined) return errorResponse(res, 400, 'notes is required');
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+    if (appointment.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
+
+    await updateDietitianNotes(id, notes.trim() || null);
+
+    return successResponse(res, 200, 'Notes saved');
+  } catch (err) {
+    console.error('Save dietitian notes error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// GET /api/v1/appointments/:id/dietitian-notes
+export const getDietitianNotes = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const id = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+    if (appointment.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
+
+    return successResponse(res, 200, 'Notes fetched', { notes: appointment.dietitian_notes ?? null });
+  } catch (err) {
+    console.error('Get dietitian notes error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// ── Follow-up appointments ────────────────────────────────────────────────────
+
+// POST /api/v1/appointments/:id/follow-up
+// Dietitian-only. Schedule a follow-up call during or after an active/completed appointment.
+// Body: { appointment_date, slot, duration?, fee?, session_type?, notes? }
+// The follow-up is auto-confirmed (no payment flow); payment can be collected separately.
+export const scheduleFollowUp = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const parentId = Number(req.params.id);
+    if (isNaN(parentId)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const parent = await findAppointmentById(parentId);
+    if (!parent) return errorResponse(res, 404, 'Appointment not found');
+    if (parent.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
+
+    if (!['confirmed', 'completed'].includes(parent.status)) {
+      return errorResponse(res, 400, 'Follow-up can only be scheduled for confirmed or completed appointments');
+    }
+
+    const {
+      appointment_date,
+      slot,
+      duration,
+      fee,
+      session_type,
+      notes,
+    } = req.body as {
+      appointment_date?: string;
+      slot?: string;
+      duration?: number;
+      fee?: number;
+      session_type?: 'video_call' | 'in_person';
+      notes?: string;
+    };
+
+    if (!appointment_date) return errorResponse(res, 400, 'appointment_date is required');
+    if (!slot) return errorResponse(res, 400, 'slot is required');
+
+    if (!/^\d{2}:\d{2}$/.test(slot)) {
+      return errorResponse(res, 400, 'slot must be in HH:MM format (e.g. "09:30")');
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(appointment_date)) {
+      return errorResponse(res, 400, 'appointment_date must be in YYYY-MM-DD format');
+    }
+
+    const [yr, mo, dy] = appointment_date.split('-').map(Number);
+    const requestedDate = new Date(yr, mo - 1, dy);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (requestedDate < today) {
+      return errorResponse(res, 400, 'appointment_date cannot be in the past');
+    }
+
+    const taken = await isSlotTaken(dietitian.id, appointment_date, slot);
+    if (taken) {
+      return errorResponse(res, 409, 'This slot is already booked. Please choose another.');
+    }
+
+    const followUpFee = fee ?? parent.fee;
+
+    const followUp = await createAppointment({
+      dietitian_id: dietitian.id,
+      user_id: parent.user_id,
+      name: parent.name,
+      email: parent.email,
+      phone: parent.phone,
+      appointment_date,
+      slot,
+      duration: duration ?? parent.duration,
+      session_type: session_type ?? parent.session_type,
+      fee: followUpFee,
+      currency: parent.currency,
+      notes: notes ?? null,
+      parent_appointment_id: parentId,
+      is_follow_up: true,
+    });
+
+    if (!followUp) return errorResponse(res, 500, 'Failed to create follow-up appointment');
+
+    // Auto-confirm since the dietitian is scheduling it directly
+    await updateAppointmentStatus(followUp.id, 'confirmed');
+
+    const confirmed = await findAppointmentById(followUp.id);
+
+    return successResponse(res, 201, 'Follow-up appointment scheduled successfully', confirmed);
+  } catch (err: unknown) {
+    if ((err as { code?: string }).code === 'ER_DUP_ENTRY') {
+      return errorResponse(res, 409, 'This slot is already booked. Please choose another.');
+    }
+    console.error('Schedule follow-up error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// GET /api/v1/appointments/:id/follow-ups
+// Authenticated: dietitian or the patient of the original appointment.
+export const getAppointmentFollowUps = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const role = req.user!.role;
+    const parentId = Number(req.params.id);
+    if (isNaN(parentId)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const parent = await findAppointmentById(parentId);
+    if (!parent) return errorResponse(res, 404, 'Appointment not found');
+
+    if (role === 'dietitian') {
+      const dietitian = await findDietitianByUserId(userId);
+      if (!dietitian || dietitian.id !== parent.dietitian_id)
+        return errorResponse(res, 403, 'Access denied');
+    } else {
+      if (parent.user_id !== userId) return errorResponse(res, 403, 'Access denied');
+    }
+
+    const followUps = await findFollowUpsByAppointmentId(parentId);
+
+    // Never expose dietitian_notes to the patient
+    const data = role === 'dietitian'
+      ? followUps
+      : followUps.map(({ dietitian_notes: _dn, ...rest }) => rest);
+
+    return successResponse(res, 200, 'Follow-up appointments fetched', data);
+  } catch (err) {
+    console.error('Get follow-ups error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

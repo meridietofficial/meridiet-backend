@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { app } from './app';
 import { connectDatabase } from './config/database';
 import { env } from './config/env';
+import { startMissedAppointmentJob } from './jobs/missedAppointments';
 
 const startServer = async () => {
   const server = app.listen(env.PORT, () => {
@@ -11,6 +12,7 @@ const startServer = async () => {
 
   try {
     await connectDatabase();
+    startMissedAppointmentJob();
   } catch (err) {
     console.error('❌ DB connection failed:', (err as Error).message);
   }

@@ -8,6 +8,13 @@ import {
   listDietitianPlans,
   getDietitianPlan,
 } from '../controllers/dietitianDietPlan';
+import {
+  getEarningsSummaryHandler,
+  getMonthlyRevenueHandler,
+  getEarningsByPlanHandler,
+  getPayoutInfoHandler,
+  getEarningsTransactionsHandler,
+} from '../controllers/earnings';
 import { authenticate, authorize } from '../middlewares/authenticate';
 
 export const dietitianRouter = Router();
@@ -45,6 +52,23 @@ dietitianRouter.post('/diet-plans/:id/generate', authenticate, authorize('dietit
 
 // PUT  /api/v1/dietitian/diet-plans/:id/archive  — archive a plan
 dietitianRouter.put('/diet-plans/:id/archive', authenticate, authorize('dietitian'), archivePlan);
+
+// ── Earnings (dietitian only) ──────────────────────────────────────────────────
+
+// GET /api/v1/dietitian/earnings/summary?period=week|month|quarter|year
+dietitianRouter.get('/earnings/summary', authenticate, authorize('dietitian'), getEarningsSummaryHandler);
+
+// GET /api/v1/dietitian/earnings/monthly-revenue?months=6
+dietitianRouter.get('/earnings/monthly-revenue', authenticate, authorize('dietitian'), getMonthlyRevenueHandler);
+
+// GET /api/v1/dietitian/earnings/by-plan
+dietitianRouter.get('/earnings/by-plan', authenticate, authorize('dietitian'), getEarningsByPlanHandler);
+
+// GET /api/v1/dietitian/earnings/payout
+dietitianRouter.get('/earnings/payout', authenticate, authorize('dietitian'), getPayoutInfoHandler);
+
+// GET /api/v1/dietitian/earnings/transactions?status=all|paid|pending|refunded&search=&page=1&limit=10
+dietitianRouter.get('/earnings/transactions', authenticate, authorize('dietitian'), getEarningsTransactionsHandler);
 
 // GET /api/v1/dietitian/:id  — any dietitian by ID (authenticated users)
 dietitianRouter.get('/:id', authenticate, getDietitianById);
