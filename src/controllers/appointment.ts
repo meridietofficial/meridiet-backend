@@ -39,11 +39,16 @@ import {
   updateDietitianNotes,
   rescheduleAppointment,
   markAppointmentMissedWithType,
+  hasScheduledFollowUp,
+  getFollowUpListSummary,
+  listFollowUpAppointments,
   MissedType,
+  type FollowUpListTab,
 } from '../models/Appointment';
 import { buildAvailableDates } from '../utils/availability';
 import { successResponse, errorResponse } from '../utils/response';
 import { createRescheduleHistory, getRescheduleHistory } from '../models/AppointmentRescheduleHistory';
+import { creditDietitianForAppointment } from '../models/DietitianWallet';
 
 // GET /api/v1/appointments/slots/:dietitianId?days=14
 export const getAvailableSlots = async (req: Request, res: Response) => {
@@ -394,7 +399,29 @@ export const updateAppointmentStatusHandler = async (req: Request, res: Response
     if (!appointment) return errorResponse(res, 404, 'Appointment not found');
     if (appointment.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
 
+    // Completing an appointment requires a follow-up to be scheduled first
+    if (status === 'completed') {
+      const followUpExists = await hasScheduledFollowUp(id);
+      if (!followUpExists) {
+        return errorResponse(res, 400, 'A follow-up call must be scheduled before marking this appointment as completed');
+      }
+    }
+
     await updateAppointmentStatus(id, status as 'confirmed' | 'completed' | 'cancelled');
+
+    // Credit dietitian wallet when manually marked completed and payment was collected
+    if (status === 'completed' && appointment.payment_status === 'paid') {
+      try {
+        const result = await creditDietitianForAppointment(dietitian.id, id, appointment.fee);
+        if (!result.credited) {
+          console.warn(`Dietitian wallet credit skipped for appointment ${id}: ${result.reason}`);
+        }
+      } catch (err) {
+        // Appointment is already marked completed — do not reverse it.
+        // Log clearly so this can be fixed manually if needed.
+        console.error(`CRITICAL: Dietitian wallet credit FAILED for appointment ${id} (dietitian ${dietitian.id}, fee ${appointment.fee}). Manual fix required.`, err);
+      }
+    }
 
     return successResponse(res, 200, 'Appointment status updated', { id, status });
   } catch (err) {
@@ -457,6 +484,8 @@ export const getDietitianSessions = async (req: Request, res: Response) => {
         payment_status:       row.payment_status,
         notes:                row.notes,
         session_number:       Number(row.session_number),
+        is_follow_up:         Boolean(row.is_follow_up),
+        parent_appointment_id: row.parent_appointment_id ?? null,
         user_review_done:     Boolean(row.user_review_done),
         dietitian_review_done: Boolean(row.dietitian_review_done),
         client: {
@@ -1177,6 +1206,7 @@ export const scheduleFollowUp = async (req: Request, res: Response) => {
       duration,
       fee,
       session_type,
+      follow_up_type,
       notes,
     } = req.body as {
       appointment_date?: string;
@@ -1184,6 +1214,7 @@ export const scheduleFollowUp = async (req: Request, res: Response) => {
       duration?: number;
       fee?: number;
       session_type?: 'video_call' | 'in_person';
+      follow_up_type?: string;
       notes?: string;
     };
 
@@ -1227,12 +1258,28 @@ export const scheduleFollowUp = async (req: Request, res: Response) => {
       notes: notes ?? null,
       parent_appointment_id: parentId,
       is_follow_up: true,
+      follow_up_type: follow_up_type?.trim() || null,
     });
 
     if (!followUp) return errorResponse(res, 500, 'Failed to create follow-up appointment');
 
     // Auto-confirm since the dietitian is scheduling it directly
     await updateAppointmentStatus(followUp.id, 'confirmed');
+
+    // Auto-complete the parent appointment now that a follow-up is scheduled
+    await updateAppointmentStatus(parentId, 'completed');
+
+    // Credit dietitian wallet for the parent appointment if payment was collected
+    if (parent.payment_status === 'paid') {
+      try {
+        const result = await creditDietitianForAppointment(dietitian.id, parentId, parent.fee);
+        if (!result.credited) {
+          console.warn(`Dietitian wallet credit skipped for appointment ${parentId}: ${result.reason}`);
+        }
+      } catch (err) {
+        console.error(`CRITICAL: Dietitian wallet credit FAILED for appointment ${parentId} (dietitian ${dietitian.id}, fee ${parent.fee}). Manual fix required.`, err);
+      }
+    }
 
     const confirmed = await findAppointmentById(followUp.id);
 
@@ -1242,6 +1289,39 @@ export const scheduleFollowUp = async (req: Request, res: Response) => {
       return errorResponse(res, 409, 'This slot is already booked. Please choose another.');
     }
     console.error('Schedule follow-up error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// GET /api/v1/follow-ups?tab=all&search=&page=1&limit=20
+// Dietitian only. Returns all follow-up appointments across all clients with summary stats.
+export const getFollowUpsList = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const VALID_TABS: FollowUpListTab[] = ['all', 'due_today', 'upcoming', 'completed', 'missed'];
+    const tab = VALID_TABS.includes(req.query.tab as FollowUpListTab)
+      ? (req.query.tab as FollowUpListTab)
+      : 'all';
+    const search = typeof req.query.search === 'string' && req.query.search.trim()
+      ? req.query.search.trim() : undefined;
+    const page  = Math.max(1, Number(req.query.page)  || 1);
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
+
+    const [summary, { rows, total }] = await Promise.all([
+      getFollowUpListSummary(dietitian.id),
+      listFollowUpAppointments(dietitian.id, tab, search, page, limit),
+    ]);
+
+    return successResponse(
+      res, 200, 'Follow-ups fetched',
+      { summary, follow_ups: rows },
+      { page, limit, total, totalPages: Math.ceil(total / limit) },
+    );
+  } catch (err) {
+    console.error('Get follow-ups list error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

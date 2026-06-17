@@ -14,7 +14,19 @@ import {
   getEarningsByPlanHandler,
   getPayoutInfoHandler,
   getEarningsTransactionsHandler,
+  getWalletTransactionsHandler,
+  getWalletOverviewHandler,
 } from '../controllers/earnings';
+import {
+  listAccountsHandler,
+  addAccountHandler,
+  setPrimaryAccountHandler,
+  deleteAccountHandler,
+} from '../controllers/paymentAccounts';
+import {
+  requestWithdrawalHandler,
+  listWithdrawalsHandler,
+} from '../controllers/withdrawal';
 import { authenticate, authorize } from '../middlewares/authenticate';
 
 export const dietitianRouter = Router();
@@ -55,6 +67,9 @@ dietitianRouter.put('/diet-plans/:id/archive', authenticate, authorize('dietitia
 
 // ── Earnings (dietitian only) ──────────────────────────────────────────────────
 
+// GET /api/v1/dietitian/earnings/wallet
+dietitianRouter.get('/earnings/wallet', authenticate, authorize('dietitian'), getWalletOverviewHandler);
+
 // GET /api/v1/dietitian/earnings/summary?period=week|month|quarter|year
 dietitianRouter.get('/earnings/summary', authenticate, authorize('dietitian'), getEarningsSummaryHandler);
 
@@ -67,8 +82,33 @@ dietitianRouter.get('/earnings/by-plan', authenticate, authorize('dietitian'), g
 // GET /api/v1/dietitian/earnings/payout
 dietitianRouter.get('/earnings/payout', authenticate, authorize('dietitian'), getPayoutInfoHandler);
 
+// GET /api/v1/dietitian/earnings/wallet-transactions?page=1&limit=10
+dietitianRouter.get('/earnings/wallet-transactions', authenticate, authorize('dietitian'), getWalletTransactionsHandler);
+
 // GET /api/v1/dietitian/earnings/transactions?status=all|paid|pending|refunded&search=&page=1&limit=10
 dietitianRouter.get('/earnings/transactions', authenticate, authorize('dietitian'), getEarningsTransactionsHandler);
+
+// ── Payment Accounts (dietitian only) ─────────────────────────────────────────
+
+// GET    /api/v1/dietitian/accounts
+dietitianRouter.get('/accounts', authenticate, authorize('dietitian'), listAccountsHandler);
+
+// POST   /api/v1/dietitian/accounts
+dietitianRouter.post('/accounts', authenticate, authorize('dietitian'), addAccountHandler);
+
+// PATCH  /api/v1/dietitian/accounts/:id/set-primary
+dietitianRouter.patch('/accounts/:id/set-primary', authenticate, authorize('dietitian'), setPrimaryAccountHandler);
+
+// DELETE /api/v1/dietitian/accounts/:id
+dietitianRouter.delete('/accounts/:id', authenticate, authorize('dietitian'), deleteAccountHandler);
+
+// ── Withdrawals (dietitian only) ──────────────────────────────────────────────
+
+// POST /api/v1/dietitian/withdraw
+dietitianRouter.post('/withdraw', authenticate, authorize('dietitian'), requestWithdrawalHandler);
+
+// GET  /api/v1/dietitian/withdrawals?page=1&limit=10
+dietitianRouter.get('/withdrawals', authenticate, authorize('dietitian'), listWithdrawalsHandler);
 
 // GET /api/v1/dietitian/:id  — any dietitian by ID (authenticated users)
 dietitianRouter.get('/:id', authenticate, getDietitianById);

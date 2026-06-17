@@ -37,3 +37,20 @@ export async function execute(sql: string, params?: any[]) {
   const [result] = await pool.execute(sql, params);
   return result as mysql.ResultSetHeader;
 }
+
+// Run multiple operations inside a single DB transaction.
+// Rolls back automatically on any error.
+export async function withTransaction<T>(fn: (conn: mysql.PoolConnection) => Promise<T>): Promise<T> {
+  const conn = await pool.getConnection();
+  await conn.beginTransaction();
+  try {
+    const result = await fn(conn);
+    await conn.commit();
+    return result;
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}

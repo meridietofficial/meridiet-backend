@@ -12,6 +12,8 @@ import { contactRouter } from './contact';
 import { appointmentRouter } from './appointment';
 import { webhookRouter } from './webhook';
 import { walletRouter } from './wallet';
+import { banksRouter } from './banks';
+import { followUpsRouter } from './followUps';
 
 export const router = Router();
 
@@ -27,4 +29,6 @@ router.use('/wallet', walletRouter);
 router.use('/contact', contactRouter);
 router.use('/appointments', appointmentRouter);
 router.use('/webhooks', webhookRouter);
+router.use('/banks', banksRouter);
+router.use('/follow-ups', followUpsRouter);
 router.use('/', settingsRouter);

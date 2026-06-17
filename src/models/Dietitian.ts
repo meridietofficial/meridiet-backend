@@ -38,6 +38,7 @@ export interface Dietitian {
   is_online: boolean;
   appointment_fee: number;
   appointment_currency: string;
+  earnings_balance: number;
   created_at: Date;
   updated_at: Date;
 }

@@ -29,6 +29,7 @@ export interface Appointment {
   dietitian_reviewed_at: Date | null;
   parent_appointment_id: number | null;
   is_follow_up: boolean;
+  follow_up_type?: string | null;
   // Agora video call fields
   agora_channel_name: string | null;
   agora_resource_id: string | null;
@@ -59,6 +60,7 @@ export interface CreateAppointmentData {
   notes?: string | null;
   parent_appointment_id?: number | null;
   is_follow_up?: boolean;
+  follow_up_type?: string | null;
 }
 
 // Columns selected in every read query — normalises TIME -> "HH:MM" and DATE -> "YYYY-MM-DD"
@@ -80,8 +82,8 @@ const APPOINTMENT_SELECT = `
 export const createAppointment = async (data: CreateAppointmentData) => {
   const result = await execute(
     `INSERT INTO appointments
-       (dietitian_id, user_id, name, email, phone, appointment_date, slot, duration, session_type, fee, currency, order_id, notes, parent_appointment_id, is_follow_up)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (dietitian_id, user_id, name, email, phone, appointment_date, slot, duration, session_type, fee, currency, order_id, notes, parent_appointment_id, is_follow_up, follow_up_type)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.dietitian_id,
       data.user_id ?? null,
@@ -98,6 +100,7 @@ export const createAppointment = async (data: CreateAppointmentData) => {
       data.notes ?? null,
       data.parent_appointment_id ?? null,
       data.is_follow_up ? 1 : 0,
+      data.follow_up_type ?? null,
     ],
   );
   const rows = await query<Appointment>(
@@ -129,14 +132,34 @@ export const findAppointmentDetailById = async (id: number) => {
        a.notes, a.dietitian_notes, a.missed_reason, a.missed_type,
        a.user_rating, a.user_review, a.user_reviewed_at,
        a.dietitian_rating, a.dietitian_review, a.dietitian_reviewed_at,
-       a.parent_appointment_id, a.is_follow_up,
+       a.parent_appointment_id, a.is_follow_up, a.follow_up_type,
        a.agora_channel_name, a.agora_resource_id, a.agora_recording_sid, a.agora_recording_uid,
        a.video_call_status, a.recording_url,
        a.call_started_at, a.call_ended_at, a.call_duration_seconds,
        a.created_at, a.updated_at,
        COALESCE(u.avatar_url, '')                   AS avatar_url,
        IF(a.user_rating IS NOT NULL, 1, 0)          AS user_review_done,
-       IF(a.dietitian_rating IS NOT NULL, 1, 0)     AS dietitian_review_done
+       IF(a.dietitian_rating IS NOT NULL, 1, 0)     AS dietitian_review_done,
+       (SELECT fu.id FROM appointments fu
+        WHERE fu.parent_appointment_id = a.id
+          AND fu.status <> 'cancelled'
+        ORDER BY fu.appointment_date ASC, fu.slot ASC
+        LIMIT 1)                                    AS follow_up_id,
+       (SELECT DATE_FORMAT(fu.appointment_date, '%Y-%m-%d') FROM appointments fu
+        WHERE fu.parent_appointment_id = a.id
+          AND fu.status <> 'cancelled'
+        ORDER BY fu.appointment_date ASC, fu.slot ASC
+        LIMIT 1)                                    AS follow_up_date,
+       (SELECT TIME_FORMAT(fu.slot, '%H:%i') FROM appointments fu
+        WHERE fu.parent_appointment_id = a.id
+          AND fu.status <> 'cancelled'
+        ORDER BY fu.appointment_date ASC, fu.slot ASC
+        LIMIT 1)                                    AS follow_up_slot,
+       (SELECT fu.status FROM appointments fu
+        WHERE fu.parent_appointment_id = a.id
+          AND fu.status <> 'cancelled'
+        ORDER BY fu.appointment_date ASC, fu.slot ASC
+        LIMIT 1)                                    AS follow_up_status
      FROM appointments a
      LEFT JOIN users u ON a.user_id = u.id AND u.is_delete = 0
      WHERE a.id = ?
@@ -144,11 +167,20 @@ export const findAppointmentDetailById = async (id: number) => {
     [id],
   );
   if (!rows[0]) return null;
-  const r = rows[0];
+  const r = rows[0] as typeof rows[0] & {
+    follow_up_id: number | null;
+    follow_up_date: string | null;
+    follow_up_slot: string | null;
+    follow_up_status: string | null;
+  };
+  const { follow_up_id, follow_up_date, follow_up_slot, follow_up_status, ...rest } = r;
   return {
-    ...r,
+    ...rest,
     user_review_done:      Boolean(r.user_review_done),
     dietitian_review_done: Boolean(r.dietitian_review_done),
+    follow_up: follow_up_id
+      ? { id: follow_up_id, date: follow_up_date, slot: follow_up_slot, status: follow_up_status }
+      : null,
   };
 };
 
@@ -240,6 +272,7 @@ export const findAppointmentsByUserId = async (userId: number, page = 1, limit =
     dietitian_reviewed_at: null,
     parent_appointment_id: r.parent_appointment_id,
     is_follow_up: r.is_follow_up,
+    follow_up_type: r.follow_up_type ?? null,
     agora_channel_name: r.agora_channel_name,
     agora_resource_id: r.agora_resource_id,
     agora_recording_sid: r.agora_recording_sid,
@@ -470,6 +503,8 @@ export interface SessionRow {
   session_number: number;
   user_review_done: number;
   dietitian_review_done: number;
+  is_follow_up: number;
+  parent_appointment_id: number | null;
 }
 
 export const getDietitianSessionsList = async (
@@ -528,7 +563,9 @@ export const getDietitianSessionsList = async (
            ELSE 1
          END                                         AS session_number,
          IF(a.user_rating IS NOT NULL, 1, 0)         AS user_review_done,
-         IF(a.dietitian_rating IS NOT NULL, 1, 0)    AS dietitian_review_done
+         IF(a.dietitian_rating IS NOT NULL, 1, 0)    AS dietitian_review_done,
+         a.is_follow_up,
+         a.parent_appointment_id
        FROM appointments a
        LEFT JOIN users u ON a.user_id = u.id AND u.is_delete = 0
        WHERE a.dietitian_id = ?
@@ -826,6 +863,147 @@ export const findFollowUpsByAppointmentId = async (parentId: number) => {
      ORDER BY appointment_date ASC, slot ASC`,
     [parentId],
   );
+};
+
+export type FollowUpListTab = 'all' | 'due_today' | 'upcoming' | 'completed' | 'missed';
+
+export interface FollowUpListRow {
+  id: number;
+  parent_appointment_id: number;
+  dietitian_id: number;
+  user_id: number | null;
+  client_name: string;
+  client_avatar: string | null;
+  follow_up_type: string | null;
+  goal: string | null;
+  appointment_date: string;
+  slot: string;
+  duration: number;
+  session_type: string;
+  status: string;
+  payment_status: string;
+  notes: string | null;
+  display_status: 'due_today' | 'upcoming' | 'completed' | 'missed';
+}
+
+// Auto-mark overdue follow-up appointments (confirmed + past date) as missed
+const markOverdueFollowUps = (dietitianId: number) =>
+  execute(
+    `UPDATE appointments
+     SET status = 'missed'
+     WHERE dietitian_id = ?
+       AND is_follow_up = 1
+       AND status = 'confirmed'
+       AND appointment_date < CURDATE()`,
+    [dietitianId],
+  );
+
+export const getFollowUpListSummary = async (dietitianId: number) => {
+  await markOverdueFollowUps(dietitianId);
+
+  const [row] = await query<{
+    due_today: number;
+    upcoming: number;
+    completed: number;
+    missed: number;
+  }>(
+    `SELECT
+       SUM(status = 'confirmed' AND appointment_date = CURDATE()) AS due_today,
+       SUM(status = 'confirmed' AND appointment_date > CURDATE()) AS upcoming,
+       SUM(status = 'completed')                                  AS completed,
+       SUM(status = 'missed')                                     AS missed
+     FROM appointments
+     WHERE dietitian_id = ? AND is_follow_up = 1`,
+    [dietitianId],
+  );
+
+  return {
+    due_today:  Number(row?.due_today  ?? 0),
+    upcoming:   Number(row?.upcoming   ?? 0),
+    completed:  Number(row?.completed  ?? 0),
+    missed:     Number(row?.missed     ?? 0),
+  };
+};
+
+export const listFollowUpAppointments = async (
+  dietitianId: number,
+  tab: FollowUpListTab,
+  search: string | undefined,
+  page: number,
+  limit: number,
+) => {
+  await markOverdueFollowUps(dietitianId);
+
+  const offset = (page - 1) * limit;
+
+  const tabCond =
+    tab === 'due_today'  ? "AND a.status = 'confirmed' AND a.appointment_date = CURDATE()"
+    : tab === 'upcoming'  ? "AND a.status = 'confirmed' AND a.appointment_date > CURDATE()"
+    : tab === 'completed' ? "AND a.status = 'completed'"
+    : tab === 'missed'    ? "AND a.status = 'missed'"
+    : '';
+
+  const searchCond  = search ? "AND COALESCE(u.full_name, a.name) LIKE ?" : '';
+  const searchParam = search ? [`%${search}%`] : [];
+
+  const baseParams: unknown[] = [dietitianId, ...searchParam];
+
+  const [rows, countRows] = await Promise.all([
+    query<FollowUpListRow>(
+      `SELECT
+         a.id,
+         a.parent_appointment_id,
+         a.dietitian_id,
+         a.user_id,
+         COALESCE(u.full_name, a.name)              AS client_name,
+         u.avatar_url                               AS client_avatar,
+         a.follow_up_type,
+         dp.primary_goal                            AS goal,
+         DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS appointment_date,
+         TIME_FORMAT(a.slot, '%H:%i')               AS slot,
+         a.duration,
+         a.session_type,
+         a.status,
+         a.payment_status,
+         a.notes,
+         CASE
+           WHEN a.status = 'confirmed' AND a.appointment_date = CURDATE() THEN 'due_today'
+           WHEN a.status = 'confirmed' AND a.appointment_date > CURDATE() THEN 'upcoming'
+           ELSE a.status
+         END                                        AS display_status
+       FROM appointments a
+       LEFT JOIN users     u  ON a.user_id = u.id AND u.is_delete = 0
+       LEFT JOIN diet_plans dp ON dp.appointment_id = a.parent_appointment_id
+       WHERE a.dietitian_id = ?
+         AND a.is_follow_up = 1
+         ${tabCond} ${searchCond}
+       ORDER BY
+         CASE a.status WHEN 'confirmed' THEN 0 WHEN 'missed' THEN 1 ELSE 2 END ASC,
+         a.appointment_date ASC, a.slot ASC
+       LIMIT ${limit} OFFSET ${offset}`,
+      [...baseParams],
+    ),
+    query<{ total: number }>(
+      `SELECT COUNT(*) AS total
+       FROM appointments a
+       LEFT JOIN users u ON a.user_id = u.id AND u.is_delete = 0
+       WHERE a.dietitian_id = ?
+         AND a.is_follow_up = 1
+         ${tabCond} ${searchCond}`,
+      [...baseParams],
+    ),
+  ]);
+
+  return { rows, total: Number(countRows[0]?.total ?? 0) };
+};
+
+export const hasScheduledFollowUp = async (appointmentId: number) => {
+  const rows = await query<{ cnt: number }>(
+    `SELECT COUNT(*) AS cnt FROM appointments
+     WHERE parent_appointment_id = ? AND status NOT IN ('cancelled', 'missed')`,
+    [appointmentId],
+  );
+  return Number(rows[0]?.cnt ?? 0) > 0;
 };
 
 export const updateAppointmentStatusAndPayment = async (

@@ -28,9 +28,15 @@ const envSchema = z.object({
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(900_000),
   RATE_LIMIT_MAX: z.coerce.number().default(100),
 
-  // Razorpay
+  // Razorpay — payment gateway
   RAZORPAY_KEY_ID: z.string().min(1, 'RAZORPAY_KEY_ID is required'),
   RAZORPAY_KEY_SECRET: z.string().min(1, 'RAZORPAY_KEY_SECRET is required'),
+
+  // Razorpay X — payouts (separate product, separate keys)
+  RAZORPAY_X_KEY_ID: z.string().default(''),
+  RAZORPAY_X_KEY_SECRET: z.string().default(''),
+  RAZORPAY_X_WEBHOOK_SECRET: z.string().default(''),
+  RAZORPAY_X_ACCOUNT_NUMBER: z.string().default(''),
 
   // Plans
   PLAN_1_WEEK_LABEL: z.string().default('1 Week'),
@@ -65,6 +71,12 @@ const envSchema = z.object({
   MSG91_OTP_TEMPLATE_ID: z.string().min(1, 'MSG91_OTP_TEMPLATE_ID is required'),
   MSG91_OTP_EXPIRY_MINUTES: z.coerce.number().default(5),
   MSG91_OTP_LENGTH: z.coerce.number().default(4),
+
+  // Encryption — AES-256-GCM key for sensitive fields (account numbers)
+  // Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  ACCOUNT_ENCRYPTION_KEY: z
+    .string()
+    .length(64, 'ACCOUNT_ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)'),
 
   // Agora — 1-to-1 video calls with cloud recording
   AGORA_APP_ID: z.string().default(''),

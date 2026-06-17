@@ -6,9 +6,11 @@ import {
   getEarningsByPlan,
   getPayoutInfo,
   getEarningsTransactions,
+  getWalletOverview,
   EarningsPeriod,
   TransactionStatus,
 } from '../models/Earnings';
+import { getDietitianWalletTransactions } from '../models/DietitianWallet';
 import { successResponse, errorResponse } from '../utils/response';
 
 const VALID_PERIODS: EarningsPeriod[] = ['week', 'month', 'quarter', 'year'];
@@ -87,6 +89,43 @@ export const getPayoutInfoHandler = async (req: Request, res: Response) => {
     return successResponse(res, 200, 'Payout info fetched', payout);
   } catch (err) {
     console.error('getPayoutInfo error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// GET /api/v1/dietitian/earnings/wallet
+export const getWalletOverviewHandler = async (req: Request, res: Response) => {
+  try {
+    const dietitianId = await resolveDietitianId(req, res);
+    if (!dietitianId) return;
+
+    const overview = await getWalletOverview(dietitianId);
+    return successResponse(res, 200, 'Wallet overview fetched', overview);
+  } catch (err) {
+    console.error('getWalletOverview error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// GET /api/v1/dietitian/earnings/wallet-transactions?page=1&limit=10
+export const getWalletTransactionsHandler = async (req: Request, res: Response) => {
+  try {
+    const page  = Math.max(Number(req.query.page)  || 1, 1);
+    const limit = Math.min(Number(req.query.limit) || 10, 50);
+
+    const dietitianId = await resolveDietitianId(req, res);
+    if (!dietitianId) return;
+
+    const result = await getDietitianWalletTransactions(dietitianId, page, limit);
+
+    return successResponse(res, 200, 'Wallet transactions fetched', result, {
+      page,
+      limit,
+      total: result.total,
+      totalPages: Math.ceil(result.total / limit),
+    });
+  } catch (err) {
+    console.error('getWalletTransactions error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

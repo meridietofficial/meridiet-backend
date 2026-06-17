@@ -49,6 +49,8 @@ function applyCommission(gross: number, pct: number) {
 export interface EarningsSummary {
   period: EarningsPeriod;
   platform_commission_pct: number;
+  // Actual wallet balance — credited after each completed appointment
+  earnings_balance: number;
   // Completed sessions in the selected period
   gross_earnings: number;
   platform_commission: number;
@@ -60,8 +62,6 @@ export interface EarningsSummary {
   pending_booking_gross: number;
   pending_booking_commission: number;
   pending_booking_net: number;
-  // All-time net balance the dietitian can withdraw
-  pending_withdrawal: number;
 }
 
 export const getEarningsSummary = async (
@@ -73,7 +73,7 @@ export const getEarningsSummary = async (
 
   const completedFilter = `dietitian_id = ? AND status = 'completed' AND payment_status = 'paid'`;
 
-  const [currentRows, previousRows, pendingBookingRows, withdrawalRows] = await Promise.all([
+  const [currentRows, previousRows, pendingBookingRows, balanceRows] = await Promise.all([
     query<{ total: number; count: number }>(
       `SELECT COALESCE(SUM(fee), 0) AS total, COUNT(*) AS count
        FROM appointments
@@ -94,22 +94,19 @@ export const getEarningsSummary = async (
          AND payment_status = 'paid'`,
       [dietitianId],
     ),
-    query<{ amount: number }>(
-      `SELECT COALESCE(SUM(fee), 0) AS amount
-       FROM appointments
-       WHERE dietitian_id = ?
-         AND status = 'completed'
-         AND payment_status = 'paid'`,
+    // Actual wallet balance from dietitians table — source of truth
+    query<{ earnings_balance: number }>(
+      `SELECT earnings_balance FROM dietitians WHERE id = ? LIMIT 1`,
       [dietitianId],
     ),
   ]);
 
-  const curGross   = Number(currentRows[0]?.total  ?? 0);
-  const curCount   = Number(currentRows[0]?.count  ?? 0);
-  const prevGross  = Number(previousRows[0]?.total ?? 0);
-  const prevCount  = Number(previousRows[0]?.count ?? 0);
-  const pendGross  = Number(pendingBookingRows[0]?.amount ?? 0);
-  const allGross   = Number(withdrawalRows[0]?.amount ?? 0);
+  const curGross        = Number(currentRows[0]?.total  ?? 0);
+  const curCount        = Number(currentRows[0]?.count  ?? 0);
+  const prevGross       = Number(previousRows[0]?.total ?? 0);
+  const prevCount       = Number(previousRows[0]?.count ?? 0);
+  const pendGross       = Number(pendingBookingRows[0]?.amount ?? 0);
+  const earningsBalance = Number(balanceRows[0]?.earnings_balance ?? 0);
 
   const cur  = applyCommission(curGross, commPct);
   const pend = applyCommission(pendGross, commPct);
@@ -117,6 +114,7 @@ export const getEarningsSummary = async (
   return {
     period,
     platform_commission_pct:       commPct,
+    earnings_balance:              earningsBalance,
     gross_earnings:                cur.gross,
     platform_commission:           cur.commission,
     net_earnings:                  cur.net,
@@ -126,7 +124,6 @@ export const getEarningsSummary = async (
     pending_booking_gross:         pend.gross,
     pending_booking_commission:    pend.commission,
     pending_booking_net:           pend.net,
-    pending_withdrawal:            applyCommission(allGross, commPct).net,
   };
 };
 
@@ -304,6 +301,103 @@ export const getPayoutInfo = async (
     net_paid_this_month:            paid.net,
     pending_booking_gross:          pend.gross,
     pending_booking_net:            pend.net,
+  };
+};
+
+// ── Wallet Overview ───────────────────────────────────────────────────────────
+
+export interface WalletOverview {
+  available_balance: number;
+  platform_commission_pct: number;
+  // Confirmed upcoming sessions net amount — will be credited once completed
+  pending_payout: number;
+  // Earned this month (net) + % change vs last month
+  earned_this_month: number;
+  earned_this_month_change_pct: number | null;
+  // All-time total withdrawn (from wallet debits)
+  total_withdrawn: number;
+  withdrawn_ytd_label: string; // e.g. "Jun 2026 YTD"
+}
+
+export const getWalletOverview = async (dietitianId: number): Promise<WalletOverview> => {
+  const commPct = await fetchCommissionPct();
+
+  const [
+    balanceRows,
+    pendingRows,
+    thisMonthRows,
+    lastMonthRows,
+    withdrawnRows,
+  ] = await Promise.all([
+    // Actual wallet balance
+    query<{ earnings_balance: number }>(
+      `SELECT earnings_balance FROM dietitians WHERE id = ? LIMIT 1`,
+      [dietitianId],
+    ),
+    // Pending payout = confirmed + paid appointments net (not yet completed)
+    query<{ gross: number }>(
+      `SELECT COALESCE(SUM(fee), 0) AS gross
+       FROM appointments
+       WHERE dietitian_id = ?
+         AND status = 'confirmed'
+         AND payment_status = 'paid'`,
+      [dietitianId],
+    ),
+    // Earned this month = completed + paid net
+    query<{ gross: number }>(
+      `SELECT COALESCE(SUM(fee), 0) AS gross
+       FROM appointments
+       WHERE dietitian_id = ?
+         AND status = 'completed'
+         AND payment_status = 'paid'
+         AND YEAR(appointment_date)  = YEAR(CURDATE())
+         AND MONTH(appointment_date) = MONTH(CURDATE())`,
+      [dietitianId],
+    ),
+    // Last month — for % change
+    query<{ gross: number }>(
+      `SELECT COALESCE(SUM(fee), 0) AS gross
+       FROM appointments
+       WHERE dietitian_id = ?
+         AND status = 'completed'
+         AND payment_status = 'paid'
+         AND YEAR(appointment_date)  = YEAR(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))
+         AND MONTH(appointment_date) = MONTH(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))`,
+      [dietitianId],
+    ),
+    // Total withdrawn = sum of all debit wallet transactions
+    query<{ total: number }>(
+      `SELECT COALESCE(SUM(net_amount), 0) AS total
+       FROM dietitian_wallet_transactions
+       WHERE dietitian_id = ?
+         AND type = 'debit'
+         AND source = 'withdrawal'`,
+      [dietitianId],
+    ),
+  ]);
+
+  const availableBalance  = Number(balanceRows[0]?.earnings_balance  ?? 0);
+  const pendingGross      = Number(pendingRows[0]?.gross             ?? 0);
+  const thisMonthGross    = Number(thisMonthRows[0]?.gross           ?? 0);
+  const lastMonthGross    = Number(lastMonthRows[0]?.gross           ?? 0);
+  const totalWithdrawn    = Number(withdrawnRows[0]?.total           ?? 0);
+
+  const pendingNet        = applyCommission(pendingGross, commPct).net;
+  const thisMonthNet      = applyCommission(thisMonthGross, commPct).net;
+  const lastMonthNet      = applyCommission(lastMonthGross, commPct).net;
+
+  const now = new Date();
+  const monthName = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][now.getMonth()];
+  const ytdLabel = `${monthName} ${now.getFullYear()} YTD`;
+
+  return {
+    available_balance:            availableBalance,
+    platform_commission_pct:      commPct,
+    pending_payout:               pendingNet,
+    earned_this_month:            thisMonthNet,
+    earned_this_month_change_pct: changePct(thisMonthNet, lastMonthNet),
+    total_withdrawn:              totalWithdrawn,
+    withdrawn_ytd_label:          ytdLabel,
   };
 };
 
