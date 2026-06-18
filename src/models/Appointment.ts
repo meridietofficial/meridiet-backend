@@ -304,6 +304,7 @@ export const findAppointmentsByDietitianId = async (
 ) => {
   const offset = (page - 1) * limit;
   const whereStatus = status ? 'AND a.status = ?' : '';
+  const countWhereStatus = status ? 'AND status = ?' : '';
   const countParams: unknown[] = status ? [dietitianId, status] : [dietitianId];
 
   const [rows, countRows] = await Promise.all([
@@ -333,7 +334,7 @@ export const findAppointmentsByDietitianId = async (
       `SELECT COUNT(*) AS total FROM appointments
        WHERE dietitian_id = ?
          AND (payment_status <> 'unpaid' OR status = 'confirmed')
-         ${whereStatus}`,
+         ${countWhereStatus}`,
       countParams,
     ),
   ]);
