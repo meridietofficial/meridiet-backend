@@ -26,6 +26,8 @@ import {
   submitReview,
   getAppointmentReviews,
   getDietitianReviewsList,
+  getAppointmentDietForm,
+  getFollowUpSlots,
 } from '../controllers/appointment';
 import { authenticate, authorize } from '../middlewares/authenticate';
 import { optionalAuth } from '../middlewares/optionalAuth';
@@ -62,11 +64,15 @@ appointmentRouter.get('/:id/reschedule-history', authenticate, authorize('dietit
 appointmentRouter.put('/:id/dietitian-notes', authenticate, authorize('dietitian'), saveDietitianNotes);
 appointmentRouter.get('/:id/dietitian-notes', authenticate, authorize('dietitian'), getDietitianNotes);
 
+// Diet form — dietitian only
+appointmentRouter.get('/:id/diet-form', authenticate, authorize('dietitian'), getAppointmentDietForm);
+
 // Reviews — user or dietitian
 appointmentRouter.post('/:id/review', authenticate, submitReview);
 appointmentRouter.get('/:id/reviews', authenticate, getAppointmentReviews);
 
 // Follow-up appointments
+appointmentRouter.get('/:id/follow-up-slots', authenticate, authorize('dietitian'), getFollowUpSlots);
 appointmentRouter.post('/:id/follow-up', authenticate, authorize('dietitian'), scheduleFollowUp);
 appointmentRouter.get('/:id/follow-ups', authenticate, getAppointmentFollowUps);
 

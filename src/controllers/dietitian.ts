@@ -1,8 +1,9 @@
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
-import { createUser, findUserByEmail, findUserById, checkPassword, updateUserPassword } from '../models/User';
+import { createUser, findUserByEmail, findUserById, checkPassword, updateUserPassword, softDeleteUser } from '../models/User';
 import { createDietitian, findDietitianByRegistrationNumber, findDietitianByUserId, findDietitianById, updateDietitian, setDietitianOnlineStatus, formatDietitianRow } from '../models/Dietitian';
 import { updateUser } from '../models/User';
+import { query } from '../config/database';
 import { env } from '../config/env';
 import { successResponse, errorResponse } from '../utils/response';
 import { sendEmail } from '../services/email';
@@ -360,6 +361,55 @@ export const updateOnlineStatus = async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('Update online status error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// DELETE /api/v1/dietitian/account
+// Soft-deletes the logged-in dietitian's account.
+// Requires password confirmation and blocks if any upcoming appointments exist.
+export const deleteMyAccount = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user?.sub);
+    const { password } = req.body as { password?: string };
+
+    if (!password) {
+      return errorResponse(res, 400, 'password is required to confirm account deletion');
+    }
+
+    const user = await findUserById(userId);
+    if (!user) return errorResponse(res, 404, 'User not found');
+
+    const isValid = await checkPassword(password, user.password);
+    if (!isValid) return errorResponse(res, 401, 'Incorrect password');
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    // Block deletion if upcoming confirmed or pending appointments exist
+    const upcomingRows = await query<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM appointments
+       WHERE dietitian_id = ?
+         AND status IN ('confirmed', 'pending')
+         AND appointment_date >= CURDATE()`,
+      [dietitian.id],
+    );
+    const upcomingCount = Number(upcomingRows[0]?.count ?? 0);
+    if (upcomingCount > 0) {
+      return errorResponse(
+        res,
+        400,
+        `You have ${upcomingCount} upcoming appointment(s). Please cancel or complete them before deleting your account.`,
+      );
+    }
+
+    // Take offline, then soft-delete
+    await setDietitianOnlineStatus(dietitian.id, false);
+    await softDeleteUser(userId);
+
+    return successResponse(res, 200, 'Account deleted successfully');
+  } catch (err) {
+    console.error('Delete dietitian account error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

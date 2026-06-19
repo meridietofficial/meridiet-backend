@@ -5,6 +5,7 @@ import { findUserById } from '../models/User';
 import { createDietForm, updateDietForm } from '../models/DietForm';
 import {
   findDietPlanById,
+  findDietPlanWithFormById,
   findDietPlansByDietitianId,
   createDraftDietPlan,
   updateDietPlanStatus,
@@ -207,6 +208,8 @@ export const listDietitianPlans = async (req: Request, res: Response) => {
 };
 
 // ── GET /api/v1/dietitian/diet-plans/:id ──────────────────────────────────────
+// Returns the plan + the full diet form data filled for the patient.
+// Use this for both preview (status=draft) and viewing the complete plan (status=completed).
 export const getDietitianPlan = async (req: Request, res: Response) => {
   try {
     const userId = Number(req.user?.sub);
@@ -216,8 +219,9 @@ export const getDietitianPlan = async (req: Request, res: Response) => {
     const dietitian = await getDietitianOrFail(userId, res);
     if (!dietitian) return;
 
-    const plan = await getOwnedPlanOrFail(planId, dietitian.id, res);
-    if (!plan) return;
+    const plan = await findDietPlanWithFormById(planId);
+    if (!plan) return errorResponse(res, 404, 'Diet plan not found');
+    if (plan.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
 
     return successResponse(res, 200, 'Diet plan fetched', { plan });
   } catch (err) {

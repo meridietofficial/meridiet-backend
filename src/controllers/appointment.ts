@@ -39,7 +39,6 @@ import {
   updateDietitianNotes,
   rescheduleAppointment,
   markAppointmentMissedWithType,
-  hasScheduledFollowUp,
   getFollowUpListSummary,
   listFollowUpAppointments,
   MissedType,
@@ -49,6 +48,8 @@ import { buildAvailableDates } from '../utils/availability';
 import { successResponse, errorResponse } from '../utils/response';
 import { createRescheduleHistory, getRescheduleHistory } from '../models/AppointmentRescheduleHistory';
 import { creditDietitianForAppointment } from '../models/DietitianWallet';
+import { findDietFormByAppointmentId } from '../models/DietForm';
+import { findDietPlanByAppointmentId } from '../models/DietPlan';
 
 // GET /api/v1/appointments/slots/:dietitianId?days=14
 export const getAvailableSlots = async (req: Request, res: Response) => {
@@ -199,6 +200,9 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
     // --- End availability check ---
 
     const fee = Number(dietitian.appointment_fee ?? 0);
+    if (fee <= 0) {
+      return errorResponse(res, 400, 'This dietitian has not set a valid appointment fee');
+    }
     const currency = (dietitian.appointment_currency as string) || 'INR';
     const userId = req.user?.sub ? Number(req.user.sub) : null;
 
@@ -274,6 +278,10 @@ export const verifyAppointmentPayment = async (req: Request, res: Response) => {
       return errorResponse(res, 409, 'Payment already verified');
     }
 
+    if (appointment.status === 'cancelled') {
+      return errorResponse(res, 409, 'This appointment slot was cancelled. Please book again.');
+    }
+
     await updateAppointmentPayment(razorpay_order_id, razorpay_payment_id, 'paid', 'pending');
 
     return successResponse(res, 200, 'Payment verified. Awaiting dietitian confirmation.', {
@@ -341,7 +349,17 @@ export const getAppointmentById = async (req: Request, res: Response) => {
     if (!appointment) return errorResponse(res, 404, 'Appointment not found');
     if (appointment.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
 
-    return successResponse(res, 200, 'Appointment fetched', appointment);
+    const dietPlan = await findDietPlanByAppointmentId(id);
+    const diet_plan = dietPlan
+      ? {
+          id:         dietPlan.id,
+          form_id:    dietPlan.form_id,
+          status:     dietPlan.status,
+          pdf_url:    dietPlan.pdf_url ?? null,
+        }
+      : null;
+
+    return successResponse(res, 200, 'Appointment fetched', { ...appointment, diet_plan });
   } catch (err) {
     console.error('Get appointment by ID error:', err);
     return errorResponse(res, 500, 'Something went wrong');
@@ -356,7 +374,7 @@ export const getDietitianAppointments = async (req: Request, res: Response) => {
     const limit = Math.min(Number(req.query.limit) || 10, 50);
     const status = req.query.status as string | undefined;
 
-    const allowedStatuses = ['pending', 'confirmed', 'cancelled', 'completed'];
+    const allowedStatuses = ['pending', 'confirmed', 'cancelled', 'completed', 'missed'];
     if (status && !allowedStatuses.includes(status)) {
       return errorResponse(res, 400, `status must be one of: ${allowedStatuses.join(', ')}`);
     }
@@ -398,14 +416,6 @@ export const updateAppointmentStatusHandler = async (req: Request, res: Response
     const appointment = await findAppointmentById(id);
     if (!appointment) return errorResponse(res, 404, 'Appointment not found');
     if (appointment.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
-
-    // Completing an appointment requires a follow-up to be scheduled first
-    if (status === 'completed') {
-      const followUpExists = await hasScheduledFollowUp(id);
-      if (!followUpExists) {
-        return errorResponse(res, 400, 'A follow-up call must be scheduled before marking this appointment as completed');
-      }
-    }
 
     await updateAppointmentStatus(id, status as 'confirmed' | 'completed' | 'cancelled');
 
@@ -488,6 +498,9 @@ export const getDietitianSessions = async (req: Request, res: Response) => {
         parent_appointment_id: row.parent_appointment_id ?? null,
         user_review_done:     Boolean(row.user_review_done),
         dietitian_review_done: Boolean(row.dietitian_review_done),
+        diet_plan: row.diet_plan_id
+          ? { id: row.diet_plan_id, form_id: row.diet_plan_form_id, status: row.diet_plan_status }
+          : null,
         client: {
           user_id:    row.user_id,
           name:       row.client_name,
@@ -831,18 +844,20 @@ export const leaveCall = async (req: Request, res: Response) => {
     if (appointment.video_call_status === 'not_started')
       return errorResponse(res, 400, 'Call has not started yet');
 
-    // Save end time + duration immediately (idempotent — won't overwrite if already ended)
+    // Record timing only — call stays 'ongoing' so either party can rejoin.
+    // To permanently end the session, the dietitian must call POST /:id/end-call.
     await markCallLeft(id);
 
     // Re-fetch to return the latest duration to the client
     const updated = await findAppointmentById(id);
 
-    return successResponse(res, 200, 'Call ended', {
+    return successResponse(res, 200, 'You have left the call. You can rejoin if needed.', {
       status:                updated?.status,
       video_call_status:     updated?.video_call_status,
       call_started_at:       updated?.call_started_at,
       call_ended_at:         updated?.call_ended_at,
       call_duration_seconds: updated?.call_duration_seconds,
+      can_rejoin:            updated?.video_call_status === 'ongoing',
     });
   } catch (err) {
     console.error('Leave call error:', err);
@@ -963,6 +978,69 @@ export const getRescheduleSlots = async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('Get reschedule slots error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// GET /api/v1/appointments/:id/follow-up-slots?days=30
+// Dietitian-only. Returns available slots for scheduling a follow-up call.
+// Works for confirmed and completed appointments (no status restriction).
+export const getFollowUpSlots = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const id = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+    if (appointment.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
+
+    if (!['confirmed', 'completed'].includes(appointment.status)) {
+      return errorResponse(res, 400, 'Follow-up can only be scheduled for confirmed or completed appointments');
+    }
+
+    const days = Math.min(Number(req.query.days) || 30, 60);
+
+    const schedule = typeof dietitian.availability === 'string'
+      ? JSON.parse(dietitian.availability)
+      : (dietitian.availability ?? null);
+
+    const availableDates = buildAvailableDates(schedule, days);
+    if (availableDates.length === 0) {
+      return successResponse(res, 200, 'No available slots', { available_slots: [] });
+    }
+
+    const fromDate = availableDates[0].date;
+    const booked = await getBookedSlots(dietitian.id, fromDate);
+    const bookedSet = new Set(booked.map((b) => `${b.appointment_date}|${b.slot}`));
+
+    const bookedByDate = new Map<string, string[]>();
+    for (const b of booked) {
+      if (!bookedByDate.has(b.appointment_date)) bookedByDate.set(b.appointment_date, []);
+      bookedByDate.get(b.appointment_date)!.push(b.slot);
+    }
+
+    const available_slots = availableDates
+      .map((d) => ({
+        date: d.date,
+        day: d.day,
+        slots: d.slots.filter((s) => !bookedSet.has(`${d.date}|${s}`)),
+      }))
+      .filter((d) => d.slots.length > 0);
+
+    const booked_slots = [...bookedByDate.entries()]
+      .map(([date, slots]) => {
+        const entry = availableDates.find((d) => d.date === date);
+        return { date, day: entry?.day ?? '', slots };
+      })
+      .filter((d) => d.slots.length > 0);
+
+    return successResponse(res, 200, 'Follow-up slots fetched', { available_slots, booked_slots });
+  } catch (err) {
+    console.error('Get follow-up slots error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };
@@ -1177,6 +1255,31 @@ export const getDietitianNotes = async (req: Request, res: Response) => {
   }
 };
 
+// GET /api/v1/appointments/:id/diet-form
+// Dietitian-only. Returns the diet form filled for the patient linked to this appointment.
+export const getAppointmentDietForm = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const id     = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+    if (appointment.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
+
+    const form = await findDietFormByAppointmentId(id);
+    if (!form) return errorResponse(res, 404, 'No diet form found for this appointment');
+
+    return successResponse(res, 200, 'Diet form fetched successfully', form);
+  } catch (err) {
+    console.error('Get appointment diet form error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
 // ── Follow-up appointments ────────────────────────────────────────────────────
 
 // POST /api/v1/appointments/:id/follow-up
@@ -1265,21 +1368,6 @@ export const scheduleFollowUp = async (req: Request, res: Response) => {
 
     // Auto-confirm since the dietitian is scheduling it directly
     await updateAppointmentStatus(followUp.id, 'confirmed');
-
-    // Auto-complete the parent appointment now that a follow-up is scheduled
-    await updateAppointmentStatus(parentId, 'completed');
-
-    // Credit dietitian wallet for the parent appointment if payment was collected
-    if (parent.payment_status === 'paid') {
-      try {
-        const result = await creditDietitianForAppointment(dietitian.id, parentId, parent.fee);
-        if (!result.credited) {
-          console.warn(`Dietitian wallet credit skipped for appointment ${parentId}: ${result.reason}`);
-        }
-      } catch (err) {
-        console.error(`CRITICAL: Dietitian wallet credit FAILED for appointment ${parentId} (dietitian ${dietitian.id}, fee ${parent.fee}). Manual fix required.`, err);
-      }
-    }
 
     const confirmed = await findAppointmentById(followUp.id);
 
@@ -1383,11 +1471,11 @@ interface AgoraWebhookBody {
 // POST /webhooks/agora  (no auth — called by Agora's notification service)
 //
 // Two events we care about:
-//   32 — recorder_leave  → call ended; mark appointment completed + save duration (no URL yet)
+//   32 — recorder_leave  → call ended; save duration (video_call_status → ended). Status NOT changed here.
 //   31 — file_infos      → recording uploaded to S3; save recording URL
 //
+// Appointment status is set to 'completed' only by the dietitian via PATCH /:id/status.
 // Agora fires 32 first (almost immediately when idle), then 31 after the upload finishes.
-// Handling both ensures the appointment is always marked completed even if S3 upload is slow.
 export const agoraWebhook = async (req: Request, res: Response) => {
   try {
     const body = req.body as AgoraWebhookBody;
@@ -1404,8 +1492,7 @@ export const agoraWebhook = async (req: Request, res: Response) => {
     if (!appointment) return res.status(200).json({ success: true });
 
     if (body.eventType === AGORA_EVENT_RECORDER_LEAVE) {
-      // Recorder left → the call is over. Mark appointment completed + compute duration.
-      // recording_url stays null here; event 31 fills it in once the file is uploaded.
+      // Recorder left → save call duration. Status stays as-is; dietitian marks completed via API.
       if (appointment.video_call_status !== 'ended') {
         await updateCallEnded(appointment.id, null);
       }

@@ -381,6 +381,7 @@ export const isSlotTaken = async (
     `SELECT id FROM appointments
       WHERE dietitian_id = ? AND appointment_date = ? AND slot = ?
         AND status NOT IN ('cancelled', 'missed')
+        AND (payment_status <> 'unpaid' OR status = 'confirmed')
         ${excludeCond}
       LIMIT 1`,
     params,
@@ -506,6 +507,9 @@ export interface SessionRow {
   dietitian_review_done: number;
   is_follow_up: number;
   parent_appointment_id: number | null;
+  diet_plan_id: number | null;
+  diet_plan_status: string | null;
+  diet_plan_form_id: number | null;
 }
 
 export const getDietitianSessionsList = async (
@@ -566,9 +570,13 @@ export const getDietitianSessionsList = async (
          IF(a.user_rating IS NOT NULL, 1, 0)         AS user_review_done,
          IF(a.dietitian_rating IS NOT NULL, 1, 0)    AS dietitian_review_done,
          a.is_follow_up,
-         a.parent_appointment_id
+         a.parent_appointment_id,
+         dp.id                                       AS diet_plan_id,
+         dp.status                                   AS diet_plan_status,
+         dp.form_id                                  AS diet_plan_form_id
        FROM appointments a
-       LEFT JOIN users u ON a.user_id = u.id AND u.is_delete = 0
+       LEFT JOIN users u        ON a.user_id = u.id AND u.is_delete = 0
+       LEFT JOIN diet_plans dp  ON dp.appointment_id = a.id
        WHERE a.dietitian_id = ?
          AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed')
          ${tabCond} ${searchCond}
@@ -673,23 +681,37 @@ export const getBookedSlots = async (dietitian_id: number, fromDate: string) => 
        TIME_FORMAT(slot, '%H:%i')                AS slot
      FROM appointments
      WHERE dietitian_id = ? AND appointment_date >= ?
-       AND status <> 'cancelled'`,
+       AND status NOT IN ('cancelled', 'missed')
+       AND (payment_status <> 'unpaid' OR status = 'confirmed')`,
     [dietitian_id, fromDate],
   );
 };
 
 // ── Agora video call helpers ──────────────────────────────────────────────────
 
-// Called immediately when a participant clicks "End Call" — saves duration right away.
-// The Agora webhook will later fill in recording_url without overwriting call_ended_at.
+// Called when a participant leaves the call (including accidental disconnects).
+// Only records timing so the other participant (or this one) can still rejoin.
+// Does NOT end the call or complete the appointment — use endCallSession for that.
 export const markCallLeft = async (id: number) => {
   await execute(
     `UPDATE appointments
-     SET status                = 'completed',
-         video_call_status     = 'ended',
-         call_ended_at         = COALESCE(call_ended_at, NOW()),
+     SET call_ended_at         = COALESCE(call_ended_at, NOW()),
          call_duration_seconds = TIMESTAMPDIFF(SECOND, call_started_at, COALESCE(call_ended_at, NOW()))
      WHERE id = ? AND video_call_status = 'ongoing'`,
+    [id],
+  );
+};
+
+// Called when the dietitian explicitly ends the session.
+// Marks the call as ended so no one can rejoin, but does NOT auto-complete the appointment
+// (the dietitian still needs to schedule a follow-up or mark it completed separately).
+export const endCallSession = async (id: number) => {
+  await execute(
+    `UPDATE appointments
+     SET video_call_status     = 'ended',
+         call_ended_at         = COALESCE(call_ended_at, NOW()),
+         call_duration_seconds = TIMESTAMPDIFF(SECOND, call_started_at, COALESCE(call_ended_at, NOW()))
+     WHERE id = ?`,
     [id],
   );
 };
@@ -722,8 +744,7 @@ export const updateRecordingStarted = async (
 export const updateCallEnded = async (id: number, recordingUrl: string | null) => {
   await execute(
     `UPDATE appointments
-     SET status                = 'completed',
-         video_call_status     = 'ended',
+     SET video_call_status     = 'ended',
          call_ended_at         = COALESCE(call_ended_at, NOW()),
          call_duration_seconds = TIMESTAMPDIFF(SECOND, call_started_at, COALESCE(call_ended_at, NOW())),
          recording_url         = COALESCE(?, recording_url)

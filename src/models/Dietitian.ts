@@ -268,10 +268,17 @@ export const findDietitianById = async (id: number) => {
   return rows[0] ?? null;
 };
 
-// Public lookup — only an approved (verified) and active dietitian by id
+// Public lookup — only a verified, active dietitian who has set a fee and availability
 export const findPublicDietitianById = async (id: number) => {
   const rows = await query<DietitianWithUser>(
-    `${DIETITIAN_USER_SELECT} AND d.id = ? AND d.is_verified = 1 AND u.is_active = 1 LIMIT 1`,
+    `${DIETITIAN_USER_SELECT}
+      AND d.id = ?
+      AND d.is_verified = 1
+      AND u.is_active = 1
+      AND d.appointment_fee > 0
+      AND d.availability IS NOT NULL
+      AND JSON_LENGTH(d.availability) > 0
+     LIMIT 1`,
     [id],
   );
   return rows[0] ?? null;
@@ -295,7 +302,12 @@ export interface DietitianListFilters {
 
 // Public listing of approved dietitians with server-side search / filters / sort / pagination
 export const listPublicDietitians = async (filters: DietitianListFilters) => {
-  const conditions: string[] = ['d.is_verified = 1', 'u.is_active = 1'];
+  const conditions: string[] = [
+    'd.is_verified = 1',
+    'u.is_active = 1',
+    'd.appointment_fee > 0',
+    'd.availability IS NOT NULL AND JSON_LENGTH(d.availability) > 0',
+  ];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const params: any[] = [];
 
@@ -382,6 +394,8 @@ export const getDistinctSpecializations = async () => {
        JOIN users u ON d.user_id = u.id
        JOIN JSON_TABLE(d.specialization, '$[*]' COLUMNS (value VARCHAR(200) PATH '$')) spec
       WHERE u.is_delete = 0 AND d.is_verified = 1 AND u.is_active = 1
+        AND d.appointment_fee > 0
+        AND d.availability IS NOT NULL AND JSON_LENGTH(d.availability) > 0
         AND spec.value IS NOT NULL AND spec.value <> ''
       GROUP BY spec.value
       ORDER BY count DESC, name ASC`,

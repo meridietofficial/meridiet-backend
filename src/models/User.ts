@@ -90,7 +90,7 @@ export const updateUser = async (id: number, data: UpdateUserData) => {
 };
 
 export const softDeleteUser = async (id: number) => {
-  await execute('UPDATE users SET is_delete = 1 WHERE id = ?', [id]);
+  await execute('UPDATE users SET is_delete = 1, is_active = 0 WHERE id = ?', [id]);
 };
 
 export const updateUserPassword = async (id: number, newPassword: string) => {

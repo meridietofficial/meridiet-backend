@@ -94,6 +94,18 @@ export const findDietFormById = async (id: number) => {
   return rows[0] ? parse(rows[0]) : null;
 };
 
+export const findDietFormByAppointmentId = async (appointmentId: number) => {
+  const rows = await query<DietForm>(
+    `SELECT f.* FROM diet_forms f
+     JOIN diet_plans dp ON dp.form_id = f.id
+     WHERE dp.appointment_id = ?
+     ORDER BY dp.created_at DESC
+     LIMIT 1`,
+    [appointmentId],
+  );
+  return rows[0] ? parse(rows[0]) : null;
+};
+
 export const findDietFormByUserId = async (user_id: number) => {
   const rows = await query<DietForm>('SELECT * FROM diet_forms WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [user_id]);
   return rows[0] ? parse(rows[0]) : null;

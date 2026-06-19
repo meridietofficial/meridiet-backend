@@ -166,9 +166,128 @@ export const findDietPlanByFormId = async (form_id: number) => {
   return rows[0] ? parse(rows[0]) : null;
 };
 
+export const findDietPlanByAppointmentId = async (appointment_id: number) => {
+  const rows = await query<DietPlan>(
+    'SELECT * FROM diet_plans WHERE appointment_id = ? ORDER BY created_at DESC LIMIT 1',
+    [appointment_id],
+  );
+  return rows[0] ? parse(rows[0]) : null;
+};
+
 export const findDietPlanById = async (id: number) => {
   const rows = await query<DietPlan>('SELECT * FROM diet_plans WHERE id = ? LIMIT 1', [id]);
   return rows[0] ? parse(rows[0]) : null;
+};
+
+export interface DietPlanWithForm extends DietPlan {
+  form: {
+    id: number;
+    full_name: string | null;
+    age: number | null;
+    gender: string | null;
+    dob: string | null;
+    height: string | null;
+    height_unit: string | null;
+    weight: number | null;
+    weight_unit: string | null;
+    goals: string[] | null;
+    activity_level: string | null;
+    work_type: string | null;
+    workout_type: string | null;
+    diet_type: string | null;
+    cuisine_preference: string[] | null;
+    food_allergies: string[] | null;
+    foods_dislike: string | null;
+    favorite_foods: string | null;
+    medical_conditions: string[] | null;
+    other_condition: string | null;
+    on_medication: string | null;
+    medications: string | null;
+    digestive_health: string | null;
+    smoke_alcohol: string | null;
+    health_notes: string | null;
+    plan_type: number | null;
+  } | null;
+}
+
+export const findDietPlanWithFormById = async (id: number): Promise<DietPlanWithForm | null> => {
+  const rows = await query<DietPlan & {
+    f_id: number | null; f_full_name: string | null; f_age: number | null;
+    f_gender: string | null; f_dob: string | null; f_height: string | null;
+    f_height_unit: string | null; f_weight: number | null; f_weight_unit: string | null;
+    f_goals: string | null; f_activity_level: string | null; f_work_type: string | null;
+    f_workout_type: string | null; f_diet_type: string | null;
+    f_cuisine_preference: string | null; f_food_allergies: string | null;
+    f_foods_dislike: string | null; f_favorite_foods: string | null;
+    f_medical_conditions: string | null; f_other_condition: string | null;
+    f_on_medication: string | null; f_medications: string | null;
+    f_digestive_health: string | null; f_smoke_alcohol: string | null;
+    f_health_notes: string | null; f_plan_type: number | null;
+  }>(
+    `SELECT dp.*,
+       f.id            AS f_id,
+       f.full_name     AS f_full_name,
+       f.age           AS f_age,
+       f.gender        AS f_gender,
+       f.dob           AS f_dob,
+       f.height        AS f_height,
+       f.height_unit   AS f_height_unit,
+       f.weight        AS f_weight,
+       f.weight_unit   AS f_weight_unit,
+       f.goals         AS f_goals,
+       f.activity_level       AS f_activity_level,
+       f.work_type            AS f_work_type,
+       f.workout_type         AS f_workout_type,
+       f.diet_type            AS f_diet_type,
+       f.cuisine_preference   AS f_cuisine_preference,
+       f.food_allergies       AS f_food_allergies,
+       f.foods_dislike        AS f_foods_dislike,
+       f.favorite_foods       AS f_favorite_foods,
+       f.medical_conditions   AS f_medical_conditions,
+       f.other_condition      AS f_other_condition,
+       f.on_medication        AS f_on_medication,
+       f.medications          AS f_medications,
+       f.digestive_health     AS f_digestive_health,
+       f.smoke_alcohol        AS f_smoke_alcohol,
+       f.health_notes         AS f_health_notes,
+       f.plan_type            AS f_plan_type
+     FROM diet_plans dp
+     LEFT JOIN diet_forms f ON f.id = dp.form_id
+     WHERE dp.id = ? LIMIT 1`,
+    [id],
+  );
+  if (!rows[0]) return null;
+  const r = rows[0];
+  const plan = parse(r as unknown as DietPlan) as DietPlanWithForm;
+  plan.form = r.f_id == null ? null : {
+    id:                  r.f_id,
+    full_name:           r.f_full_name,
+    age:                 r.f_age,
+    gender:              r.f_gender,
+    dob:                 r.f_dob,
+    height:              r.f_height,
+    height_unit:         r.f_height_unit,
+    weight:              r.f_weight,
+    weight_unit:         r.f_weight_unit,
+    goals:               parseJson<string[]>(r.f_goals),
+    activity_level:      r.f_activity_level,
+    work_type:           r.f_work_type,
+    workout_type:        r.f_workout_type,
+    diet_type:           r.f_diet_type,
+    cuisine_preference:  parseJson<string[]>(r.f_cuisine_preference),
+    food_allergies:      parseJson<string[]>(r.f_food_allergies),
+    foods_dislike:       r.f_foods_dislike,
+    favorite_foods:      r.f_favorite_foods,
+    medical_conditions:  parseJson<string[]>(r.f_medical_conditions),
+    other_condition:     r.f_other_condition,
+    on_medication:       r.f_on_medication,
+    medications:         r.f_medications,
+    digestive_health:    r.f_digestive_health,
+    smoke_alcohol:       r.f_smoke_alcohol,
+    health_notes:        r.f_health_notes,
+    plan_type:           r.f_plan_type,
+  };
+  return plan;
 };
 
 export const saveDietPlanPdfUrl = async (id: number, pdf_url: string) => {
