@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/authenticate';
-import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDietFormRequests, getDietChartDetails, previewDietPlan } from '../controllers/admin';
+import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDietFormRequests, getDietChartDetails, previewDietPlan, getDashboardStats, getDashboardRevenue, getDashboardUserGrowth, getDashboardConsultations, getSystemOverview } from '../controllers/admin';
 
 export const adminRouter = Router();
 
@@ -32,3 +32,10 @@ adminRouter.get('/existing-users', authenticate, authorize('admin'), getUserList
 adminRouter.get('/user/:id', authenticate, authorize('admin'), getUserDetails);
 adminRouter.patch('/toggle-block-user', authenticate, authorize('admin'), toggleBlockUser);
 adminRouter.delete('/delete-user', authenticate, authorize('admin'), deleteUser);
+
+// Dashboard analytics
+adminRouter.get('/dashboard-stats',        authenticate, authorize('admin'), getDashboardStats);
+adminRouter.get('/dashboard-revenue',      authenticate, authorize('admin'), getDashboardRevenue);
+adminRouter.get('/dashboard-user-growth',  authenticate, authorize('admin'), getDashboardUserGrowth);
+adminRouter.get('/dashboard-consultations',authenticate, authorize('admin'), getDashboardConsultations);
+adminRouter.get('/system-overview',        authenticate, authorize('admin'), getSystemOverview);

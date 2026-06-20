@@ -7,7 +7,7 @@ import { dietFormConfirmationEmail } from '../services/emails/dietFormConfirmati
 import { generateAndDeliverDietPlan } from '../services/dietPlanDelivery';
 
 const PLAN_DURATION_LABELS: Record<number, string> = {
-  1: '2 Weeks',
+  1: '1 Week',
   2: '1 Month',
   3: '3 Months',
 };
@@ -53,7 +53,7 @@ export const finalizeDietForm = async (req: Request, res: Response) => {
         {
           goals:        (form.goals as string[]) ?? [],
           dietType:     form.diet_type ?? null,
-          planDuration: PLAN_DURATION_LABELS[form.plan_type ?? 1] ?? '2 Weeks',
+          planDuration: PLAN_DURATION_LABELS[form.plan_type ?? 1] ?? '1 Week',
         },
       );
       void sendEmail({ to: recipientEmail, subject, html, text }).catch((err) => {

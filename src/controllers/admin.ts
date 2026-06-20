@@ -293,23 +293,38 @@ export const deleteUser = async (req: Request, res: Response) => {
   }
 };
 
-// GET /api/v1/admin/diet-form-requests?page=1&limit=10&status=completed
+// GET /api/v1/admin/diet-form-requests?page=1&limit=10&status=completed&plan_type=1&from=YYYY-MM-DD&to=YYYY-MM-DD
 export const getDietFormRequests = async (req: Request, res: Response) => {
   try {
-    const page   = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 10));
-    const status = req.query.status as string | undefined;
-    const offset = (page - 1) * limit;
+    const page      = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit     = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 10));
+    const status    = req.query.status    as string | undefined;
+    const plan_type = req.query.plan_type as string | undefined;
+    const from      = req.query.from      as string | undefined;
+    const to        = req.query.to        as string | undefined;
+    const offset    = (page - 1) * limit;
+
+    const validStatuses  = ['pending', 'generating', 'completed', 'failed'];
+    const validPlanTypes = ['1', '2', '3'];
 
     // 'pending' = a request form with no generated plan yet
-    const validStatuses = ['pending', 'generating', 'completed', 'failed'];
     const statusFilter  = status && validStatuses.includes(status)
-      ? (status === 'pending'
-          ? `AND dp.id IS NULL`
-          : `AND dp.status = '${status}'`)
+      ? (status === 'pending' ? `AND dp.id IS NULL` : `AND dp.status = '${status}'`)
       : '';
 
-    // All columns from diet_forms (df.*) plus the latest plan id/status for context
+    const planFilter = plan_type && validPlanTypes.includes(plan_type)
+      ? `AND df.plan_type = ${parseInt(plan_type)}`
+      : '';
+
+    const queryParams: string[] = [];
+    let dateFilter = '';
+    if (from && to) {
+      dateFilter = 'AND df.created_at BETWEEN ? AND ?';
+      queryParams.push(`${from} 00:00:00`, `${to} 23:59:59`);
+    }
+
+    const baseWhere = `WHERE 1=1 ${statusFilter} ${planFilter} ${dateFilter}`;
+
     const rows = await query<DietForm & { plan_id: number | null; status: string }>(
       `SELECT
         df.*,
@@ -319,9 +334,10 @@ export const getDietFormRequests = async (req: Request, res: Response) => {
        LEFT JOIN diet_plans dp ON dp.id = (
          SELECT id FROM diet_plans WHERE form_id = df.id ORDER BY created_at DESC LIMIT 1
        )
-       WHERE 1=1 ${statusFilter}
+       ${baseWhere}
        ORDER BY df.created_at DESC
        LIMIT ${limit} OFFSET ${offset}`,
+      queryParams,
     );
 
     // Parse JSON-encoded columns stored as strings
@@ -342,7 +358,8 @@ export const getDietFormRequests = async (req: Request, res: Response) => {
          LEFT JOIN diet_plans dp ON dp.id = (
            SELECT id FROM diet_plans WHERE form_id = df.id ORDER BY created_at DESC LIMIT 1
          )
-        WHERE 1=1 ${statusFilter}`,
+       ${baseWhere}`,
+      queryParams,
     );
 
     const total      = countRows[0]?.total ?? 0;
@@ -597,6 +614,359 @@ export const changeAdminPassword = async (req: Request, res: Response) => {
     return successResponse(res, 200, 'Password changed successfully');
   } catch (err) {
     console.error('Change admin password error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// ── Dashboard helpers ─────────────────────────────────────────────────────────
+
+interface DateRange {
+  current: { from: string; to: string };
+  prev:    { from: string; to: string };
+}
+
+const buildDateRange = (from?: string, to?: string): DateRange | null => {
+  if (!from || !to) return null;
+  const fromDate = new Date(from);
+  const toDate   = new Date(to);
+  const days     = Math.round((toDate.getTime() - fromDate.getTime()) / 86_400_000) + 1;
+
+  const prevTo   = new Date(fromDate); prevTo.setDate(prevTo.getDate() - 1);
+  const prevFrom = new Date(fromDate); prevFrom.setDate(prevFrom.getDate() - days);
+
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  return {
+    current: { from: `${from} 00:00:00`,        to: `${to} 23:59:59`              },
+    prev:    { from: `${fmt(prevFrom)} 00:00:00`, to: `${fmt(prevTo)} 23:59:59`   },
+  };
+};
+
+const pctChange = (cur: number, prev: number): { percent: number; direction: 'up' | 'down' } => {
+  if (prev === 0) return { percent: cur > 0 ? 100 : 0, direction: 'up' };
+  const pct = ((cur - prev) / prev) * 100;
+  return { percent: Math.abs(parseFloat(pct.toFixed(1))), direction: pct >= 0 ? 'up' : 'down' };
+};
+
+const fmtPeriodLabel = (period: string, grpKey: string, weekStart?: string): string => {
+  if (period === 'daily') {
+    const d = new Date(`${grpKey}T00:00:00`);
+    return `${d.getDate()} ${d.toLocaleString('en', { month: 'short' })}`;
+  }
+  if (period === 'weekly' && weekStart) {
+    const s = new Date(`${weekStart}T00:00:00`);
+    const e = new Date(s); e.setDate(s.getDate() + 6);
+    const fd = (d: Date) => `${d.getDate()} ${d.toLocaleString('en', { month: 'short' })}`;
+    return `${fd(s)}–${fd(e)}`;
+  }
+  if (period === 'monthly') {
+    const [y, m] = grpKey.split('-');
+    const d = new Date(Number(y), Number(m) - 1, 1);
+    return `${d.toLocaleString('en', { month: 'short' })} ${y}`;
+  }
+  return grpKey; // quarterly ("2025-Q2") and yearly ("2025") returned as-is
+};
+
+// ── 1. Dashboard Summary Stats ────────────────────────────────────────────────
+
+// GET /api/v1/admin/dashboard-stats?from=YYYY-MM-DD&to=YYYY-MM-DD
+export const getDashboardStats = async (req: Request, res: Response) => {
+  try {
+    const { from, to } = req.query as { from?: string; to?: string };
+    const range = buildDateRange(from, to);
+
+    const curFilter = range ? 'AND created_at BETWEEN ? AND ?' : '';
+    const curP      = range ? [range.current.from, range.current.to] : [];
+    const prevP     = range ? [range.prev.from,    range.prev.to]    : [];
+
+    const [usersData, dietitiansData, consultationsData, revenueData, dietChartsData] = await Promise.all([
+      query<{ total: number }>(`SELECT COUNT(*) AS total FROM users WHERE role = 'user' AND is_delete = 0 ${curFilter}`, curP),
+      query<{ total: number }>(`SELECT COUNT(*) AS total FROM dietitians WHERE 1=1 ${curFilter}`, curP),
+      query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE 1=1 ${curFilter}`, curP),
+      query<{ total: number }>(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'paid' ${curFilter}`, curP),
+      query<{ plan_type: number; cnt: number }>(
+        `SELECT df.plan_type, COUNT(*) AS cnt
+           FROM diet_forms df
+           INNER JOIN payments p ON p.diet_form_id = df.id AND p.status = 'paid'
+          WHERE 1=1 ${curFilter.replace('created_at', 'df.created_at')}
+          GROUP BY df.plan_type`, curP),
+    ]);
+
+    const totalUsers         = Number(usersData[0]?.total         ?? 0);
+    const totalDietitians    = Number(dietitiansData[0]?.total    ?? 0);
+    const totalConsultations = Number(consultationsData[0]?.total ?? 0);
+    const totalRevenue       = Number(revenueData[0]?.total       ?? 0);
+
+    const byPlan: Record<string, number> = { '1': 0, '2': 0, '3': 0 };
+    let totalDietCharts = 0;
+    for (const row of dietChartsData) {
+      byPlan[String(row.plan_type)] = Number(row.cnt);
+      totalDietCharts += Number(row.cnt);
+    }
+
+    let changes = null;
+    if (range) {
+      const prevFilter = 'AND created_at BETWEEN ? AND ?';
+      const [pu, pd, pc, pr, pdc] = await Promise.all([
+        query<{ total: number }>(`SELECT COUNT(*) AS total FROM users WHERE role = 'user' AND is_delete = 0 ${prevFilter}`, prevP),
+        query<{ total: number }>(`SELECT COUNT(*) AS total FROM dietitians WHERE 1=1 ${prevFilter}`, prevP),
+        query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE 1=1 ${prevFilter}`, prevP),
+        query<{ total: number }>(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'paid' ${prevFilter}`, prevP),
+        query<{ total: number }>(
+          `SELECT COUNT(*) AS total
+             FROM diet_forms df
+             INNER JOIN payments p ON p.diet_form_id = df.id AND p.status = 'paid'
+            WHERE df.created_at BETWEEN ? AND ?`, prevP),
+      ]);
+      changes = {
+        totalUsers:         pctChange(totalUsers,         Number(pu[0]?.total  ?? 0)),
+        totalDietitians:    pctChange(totalDietitians,    Number(pd[0]?.total  ?? 0)),
+        totalConsultations: pctChange(totalConsultations, Number(pc[0]?.total  ?? 0)),
+        totalRevenue:       pctChange(totalRevenue,       Number(pr[0]?.total  ?? 0)),
+        dietChartRequests:  pctChange(totalDietCharts,    Number(pdc[0]?.total ?? 0)),
+      };
+    }
+
+    return successResponse(res, 200, 'Dashboard stats fetched successfully', {
+      totalUsers,
+      totalDietitians,
+      totalConsultations,
+      totalRevenue,
+      dietChartRequests: { total: totalDietCharts, byPlan },
+      changes,
+    });
+  } catch (err) {
+    console.error('Dashboard stats error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// ── 2. Revenue Overview Chart ─────────────────────────────────────────────────
+
+// GET /api/v1/admin/dashboard-revenue?from=YYYY-MM-DD&to=YYYY-MM-DD&period=daily|weekly|monthly
+export const getDashboardRevenue = async (req: Request, res: Response) => {
+  try {
+    const { from, to } = req.query as { from?: string; to?: string };
+    const period       = ['daily', 'weekly', 'monthly'].includes(req.query.period as string)
+      ? (req.query.period as string) : 'daily';
+    const range = buildDateRange(from, to);
+
+    const dateFilter = range ? 'AND created_at BETWEEN ? AND ?' : '';
+    const curP       = range ? [range.current.from, range.current.to] : [];
+    const prevP      = range ? [range.prev.from,    range.prev.to]    : [];
+
+    interface RevRow { grp_key: string; week_start?: string; revenue: number; }
+
+    let chartSQL: string;
+    if (period === 'weekly') {
+      chartSQL = `
+        SELECT CAST(YEARWEEK(created_at, 1) AS CHAR) AS grp_key,
+               DATE_FORMAT(MIN(created_at), '%Y-%m-%d') AS week_start,
+               COALESCE(SUM(amount), 0) AS revenue
+          FROM payments WHERE status = 'paid' ${dateFilter}
+         GROUP BY YEARWEEK(created_at, 1)
+         ORDER BY YEARWEEK(created_at, 1) ASC`;
+    } else if (period === 'monthly') {
+      chartSQL = `
+        SELECT DATE_FORMAT(created_at, '%Y-%m') AS grp_key,
+               COALESCE(SUM(amount), 0) AS revenue
+          FROM payments WHERE status = 'paid' ${dateFilter}
+         GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+         ORDER BY grp_key ASC`;
+    } else {
+      chartSQL = `
+        SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS grp_key,
+               COALESCE(SUM(amount), 0) AS revenue
+          FROM payments WHERE status = 'paid' ${dateFilter}
+         GROUP BY DATE(created_at)
+         ORDER BY grp_key ASC`;
+    }
+
+    const [chartRows, totalData, prevData] = await Promise.all([
+      query<RevRow>(chartSQL, curP),
+      query<{ total: number }>(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'paid' ${dateFilter}`, curP),
+      range
+        ? query<{ total: number }>(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'paid' AND created_at BETWEEN ? AND ?`, prevP)
+        : Promise.resolve([{ total: 0 }]),
+    ]);
+
+    const total     = Number(totalData[0]?.total ?? 0);
+    const prevTotal = Number(prevData[0]?.total  ?? 0);
+
+    return successResponse(res, 200, 'Dashboard revenue fetched successfully', {
+      total,
+      change: range ? pctChange(total, prevTotal) : null,
+      data: chartRows.map(r => ({ label: fmtPeriodLabel(period, r.grp_key, r.week_start), revenue: Number(r.revenue) })),
+    });
+  } catch (err) {
+    console.error('Dashboard revenue error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// ── 3. User Growth Chart ──────────────────────────────────────────────────────
+
+// GET /api/v1/admin/dashboard-user-growth?from=YYYY-MM-DD&to=YYYY-MM-DD&period=weekly|monthly|quarterly|yearly
+export const getDashboardUserGrowth = async (req: Request, res: Response) => {
+  try {
+    const { from, to } = req.query as { from?: string; to?: string };
+    const period       = ['weekly', 'monthly', 'quarterly', 'yearly'].includes(req.query.period as string)
+      ? (req.query.period as string) : 'monthly';
+    const range = buildDateRange(from, to);
+
+    const dateFilter = range ? 'AND created_at BETWEEN ? AND ?' : '';
+    const curP       = range ? [range.current.from, range.current.to] : [];
+    const prevP      = range ? [range.prev.from,    range.prev.to]    : [];
+
+    interface GrowthRow { grp_key: string; week_start?: string; newUsers: number; }
+
+    let chartSQL: string;
+    if (period === 'weekly') {
+      chartSQL = `
+        SELECT CAST(YEARWEEK(created_at, 1) AS CHAR) AS grp_key,
+               DATE_FORMAT(MIN(created_at), '%Y-%m-%d') AS week_start,
+               COUNT(*) AS newUsers
+          FROM users WHERE role = 'user' AND is_delete = 0 ${dateFilter}
+         GROUP BY YEARWEEK(created_at, 1)
+         ORDER BY YEARWEEK(created_at, 1) ASC`;
+    } else if (period === 'quarterly') {
+      chartSQL = `
+        SELECT CONCAT(YEAR(created_at), '-Q', QUARTER(created_at)) AS grp_key,
+               COUNT(*) AS newUsers
+          FROM users WHERE role = 'user' AND is_delete = 0 ${dateFilter}
+         GROUP BY YEAR(created_at), QUARTER(created_at)
+         ORDER BY YEAR(created_at) ASC, QUARTER(created_at) ASC`;
+    } else if (period === 'yearly') {
+      chartSQL = `
+        SELECT CAST(YEAR(created_at) AS CHAR) AS grp_key,
+               COUNT(*) AS newUsers
+          FROM users WHERE role = 'user' AND is_delete = 0 ${dateFilter}
+         GROUP BY YEAR(created_at)
+         ORDER BY grp_key ASC`;
+    } else {
+      chartSQL = `
+        SELECT DATE_FORMAT(created_at, '%Y-%m') AS grp_key,
+               COUNT(*) AS newUsers
+          FROM users WHERE role = 'user' AND is_delete = 0 ${dateFilter}
+         GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+         ORDER BY grp_key ASC`;
+    }
+
+    const [chartRows, totalData, prevData] = await Promise.all([
+      query<GrowthRow>(chartSQL, curP),
+      query<{ total: number }>(`SELECT COUNT(*) AS total FROM users WHERE role = 'user' AND is_delete = 0 ${dateFilter}`, curP),
+      range
+        ? query<{ total: number }>(`SELECT COUNT(*) AS total FROM users WHERE role = 'user' AND is_delete = 0 AND created_at BETWEEN ? AND ?`, prevP)
+        : Promise.resolve([{ total: 0 }]),
+    ]);
+
+    const total     = Number(totalData[0]?.total ?? 0);
+    const prevTotal = Number(prevData[0]?.total  ?? 0);
+
+    return successResponse(res, 200, 'Dashboard user growth fetched successfully', {
+      total,
+      change: range ? pctChange(total, prevTotal) : null,
+      data: chartRows.map(r => ({ label: fmtPeriodLabel(period, r.grp_key, r.week_start), newUsers: Number(r.newUsers) })),
+    });
+  } catch (err) {
+    console.error('Dashboard user growth error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// ── 4. Consultations Overview Chart ──────────────────────────────────────────
+
+// GET /api/v1/admin/dashboard-consultations?from=YYYY-MM-DD&to=YYYY-MM-DD&period=daily|weekly
+export const getDashboardConsultations = async (req: Request, res: Response) => {
+  try {
+    const { from, to } = req.query as { from?: string; to?: string };
+    const period       = ['daily', 'weekly'].includes(req.query.period as string)
+      ? (req.query.period as string) : 'daily';
+    const range = buildDateRange(from, to);
+
+    const dateFilter = range ? 'AND created_at BETWEEN ? AND ?' : '';
+    const curP       = range ? [range.current.from, range.current.to] : [];
+    const prevP      = range ? [range.prev.from,    range.prev.to]    : [];
+
+    interface ConsRow { grp_key: string; week_start?: string; count: number; }
+
+    const chartSQL = period === 'weekly'
+      ? `SELECT CAST(YEARWEEK(created_at, 1) AS CHAR) AS grp_key,
+                DATE_FORMAT(MIN(created_at), '%Y-%m-%d') AS week_start,
+                COUNT(*) AS count
+           FROM appointments WHERE 1=1 ${dateFilter}
+          GROUP BY YEARWEEK(created_at, 1)
+          ORDER BY YEARWEEK(created_at, 1) ASC`
+      : `SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS grp_key,
+                COUNT(*) AS count
+           FROM appointments WHERE 1=1 ${dateFilter}
+          GROUP BY DATE(created_at)
+          ORDER BY grp_key ASC`;
+
+    const [chartRows, totalData, breakdownData, prevData] = await Promise.all([
+      query<ConsRow>(chartSQL, curP),
+      query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE 1=1 ${dateFilter}`, curP),
+      query<{ status: string; cnt: number }>(`SELECT status, COUNT(*) AS cnt FROM appointments WHERE 1=1 ${dateFilter} GROUP BY status`, curP),
+      range
+        ? query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE created_at BETWEEN ? AND ?`, prevP)
+        : Promise.resolve([{ total: 0 }]),
+    ]);
+
+    const total     = Number(totalData[0]?.total ?? 0);
+    const prevTotal = Number(prevData[0]?.total  ?? 0);
+
+    const statusMap: Record<string, number> = {};
+    for (const row of breakdownData) statusMap[row.status] = Number(row.cnt);
+
+    const completed = statusMap['completed'] ?? 0;
+    const scheduled = (statusMap['pending'] ?? 0) + (statusMap['confirmed'] ?? 0);
+    const cancelled = (statusMap['cancelled'] ?? 0) + (statusMap['missed'] ?? 0);
+    const safePct   = (n: number) => total === 0 ? 0 : parseFloat(((n / total) * 100).toFixed(1));
+
+    return successResponse(res, 200, 'Dashboard consultations fetched successfully', {
+      total,
+      change: range ? pctChange(total, prevTotal) : null,
+      data: chartRows.map(r => ({ label: fmtPeriodLabel(period, r.grp_key, r.week_start), count: Number(r.count) })),
+      breakdown: {
+        completed: { count: completed, percent: safePct(completed) },
+        scheduled: { count: scheduled, percent: safePct(scheduled) },
+        cancelled: { count: cancelled, percent: safePct(cancelled) },
+      },
+    });
+  } catch (err) {
+    console.error('Dashboard consultations error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// ── 6. System Overview ────────────────────────────────────────────────────────
+
+// GET /api/v1/admin/system-overview  (no date filter)
+export const getSystemOverview = async (_req: Request, res: Response) => {
+  try {
+    // DB health check
+    let databaseStatus = 'healthy';
+    try { await query('SELECT 1'); } catch { databaseStatus = 'unhealthy'; }
+
+    const [activeData, ticketsData] = await Promise.all([
+      query<{ total: number }>(`SELECT COUNT(*) AS total FROM users WHERE role = 'user' AND is_active = 1 AND is_delete = 0`),
+      query<{ total: number }>(`SELECT COUNT(*) AS total FROM contact_us WHERE is_read = 0`),
+    ]);
+
+    // Human-readable server uptime
+    const sec  = Math.floor(process.uptime());
+    const days = Math.floor(sec / 86400);
+    const hrs  = Math.floor((sec % 86400) / 3600);
+    const mins = Math.floor((sec % 3600) / 60);
+    const serverUptime = days > 0 ? `${days}d ${hrs}h` : hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+
+    return successResponse(res, 200, 'System overview fetched successfully', {
+      serverUptime,
+      activeUsers:        Number(activeData[0]?.total   ?? 0),
+      databaseStatus,
+      openSupportTickets: Number(ticketsData[0]?.total  ?? 0),
+    });
+  } catch (err) {
+    console.error('System overview error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

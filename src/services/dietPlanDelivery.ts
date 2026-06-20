@@ -20,8 +20,8 @@ import { dietPlanReadyEmail } from './emails/dietPlanReady';
 
 // ── Shared helpers (duplicated from controller to keep service self-contained) ──
 
-const PLAN_LABELS: Record<number, string> = { 1: '2 Weeks', 2: '1 Month (4 Weeks)', 3: '3 Months (12 Weeks)' };
-const PLAN_WEEKS: Record<number, number>  = { 1: 2, 2: 4, 3: 12 };
+const PLAN_LABELS: Record<number, string> = { 1: '1 Week', 2: '1 Month (4 Weeks)', 3: '3 Months (12 Weeks)' };
+const PLAN_WEEKS: Record<number, number>  = { 1: 1, 2: 4, 3: 12 };
 
 const ACTIVITY_MULTIPLIER: Record<string, number> = {
   sedentary: 1.2, lightly_active: 1.375, moderately_active: 1.55,
@@ -66,7 +66,7 @@ const buildClientProfile = (form: DietForm, vitals: ReturnType<typeof calcVitals
     bmr_kcal: vitals.bmr, tdee_kcal: vitals.tdee,
   },
   health_and_fitness_goals: {
-    goals: form.goals ?? [], plan_type: PLAN_LABELS[form.plan_type ?? 1] ?? '2 Weeks',
+    goals: form.goals ?? [], plan_type: PLAN_LABELS[form.plan_type ?? 1] ?? '1 Week',
     health_notes: form.health_notes ?? null, final_notes: form.final_notes ?? null,
   },
   lifestyle_overview: {
@@ -306,8 +306,8 @@ export const generateAndDeliverDietPlan = async (
   // ── Step 1: Generate via Gemini week by week ─────────────────────────────────
   let generatedData: Record<string, unknown> = {};
   const planType = form.plan_type ?? 1;
-  const totalWeeks = weeksOverride ?? PLAN_WEEKS[planType] ?? 2;
-  const duration = weeksOverride === 4 ? '1 Month (4 Weeks)' : (PLAN_LABELS[planType] ?? '2 Weeks');
+  const totalWeeks = weeksOverride ?? PLAN_WEEKS[planType] ?? 1;
+  const duration = weeksOverride === 4 ? '1 Month (4 Weeks)' : (PLAN_LABELS[planType] ?? '1 Week');
 
   try {
     // Week 1 — split into two calls to stay within OpenAI's 16 384-token output limit
