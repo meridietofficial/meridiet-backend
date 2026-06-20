@@ -374,6 +374,80 @@ export const getDietFormRequests = async (req: Request, res: Response) => {
   }
 };
 
+// GET /api/v1/admin/paid-diet-charts?page=1&limit=10&plan_type=1&from=YYYY-MM-DD&to=YYYY-MM-DD
+// Only returns diet forms that are paid AND have a completed PDF generated
+export const getPaidDietCharts = async (req: Request, res: Response) => {
+  try {
+    const page      = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit     = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 10));
+    const plan_type = req.query.plan_type as string | undefined;
+    const from      = req.query.from      as string | undefined;
+    const to        = req.query.to        as string | undefined;
+    const offset    = (page - 1) * limit;
+
+    const validPlanTypes = ['1', '2', '3'];
+
+    const planFilter = plan_type && validPlanTypes.includes(plan_type)
+      ? `AND df.plan_type = ${parseInt(plan_type)}`
+      : '';
+
+    const queryParams: string[] = [];
+    let dateFilter = '';
+    if (from && to) {
+      dateFilter = 'AND df.created_at BETWEEN ? AND ?';
+      queryParams.push(`${from} 00:00:00`, `${to} 23:59:59`);
+    }
+
+    const baseWhere = `WHERE 1=1 ${planFilter} ${dateFilter}`;
+
+    const rows = await query<DietForm & { plan_id: number | null; plan_status: string; pdf_url: string | null; payment_amount: number }>(
+      `SELECT
+        df.*,
+        dp.id          AS plan_id,
+        dp.status      AS plan_status,
+        dp.pdf_url     AS pdf_url,
+        p.amount       AS payment_amount
+       FROM diet_forms df
+       INNER JOIN payments   p  ON p.diet_form_id = df.id AND p.status = 'paid'
+       INNER JOIN diet_plans dp ON dp.form_id     = df.id AND dp.status = 'completed' AND dp.pdf_url IS NOT NULL
+       ${baseWhere}
+       ORDER BY df.created_at DESC
+       LIMIT ${limit} OFFSET ${offset}`,
+      queryParams,
+    );
+
+    const JSON_FIELDS = ['goals', 'cuisine_preference', 'food_allergies', 'medical_conditions', 'delivery_method'];
+    const data = rows.map((row) => {
+      const r = row as unknown as Record<string, unknown>;
+      for (const field of JSON_FIELDS) {
+        if (typeof r[field] === 'string') {
+          try { r[field] = JSON.parse(r[field] as string); } catch { /* leave as-is */ }
+        }
+      }
+      return row;
+    });
+
+    const countRows = await query<{ total: number }>(
+      `SELECT COUNT(*) AS total
+         FROM diet_forms df
+         INNER JOIN payments   p  ON p.diet_form_id = df.id AND p.status = 'paid'
+         INNER JOIN diet_plans dp ON dp.form_id     = df.id AND dp.status = 'completed' AND dp.pdf_url IS NOT NULL
+       ${baseWhere}`,
+      queryParams,
+    );
+
+    const total      = countRows[0]?.total ?? 0;
+    const totalPages = Math.ceil(total / limit);
+
+    return successResponse(res, 200, 'Paid diet charts fetched successfully', data, {
+      page, limit, total, totalPages,
+    });
+  } catch (err) {
+    console.error('Get paid diet charts error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
 // GET /api/v1/admin/diet-form-requests/:form_id/details
 export const getDietChartDetails = async (req: Request, res: Response) => {
   try {
