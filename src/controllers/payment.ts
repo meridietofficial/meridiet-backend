@@ -3,7 +3,7 @@ import type { Request, Response } from 'express';
 import { razorpay, PLANS } from '../config/razorpay';
 import { env } from '../config/env';
 import { createPayment, findPaymentByOrderId, markPaymentPaid, markPaymentFailed } from '../models/Payment';
-import { findDietFormById } from '../models/DietForm';
+import { findDietFormById, updateDietForm } from '../models/DietForm';
 import { successResponse, errorResponse } from '../utils/response';
 import { generateAndDeliverDietPlan } from '../services/dietPlanDelivery';
 
@@ -101,8 +101,15 @@ export const verifyPaymentAndSubmitForm = async (req: Request, res: Response) =>
 
     await markPaymentPaid(razorpay_order_id, razorpay_payment_id, razorpay_signature, payment.diet_form_id);
 
+    // If the form was submitted as a guest (user_id null), back-fill it now using the payment's user_id
+    const userId = form.user_id ?? payment.user_id;
+    if (!form.user_id && userId) {
+      await updateDietForm(form.id, { user_id: userId }).catch((err) => {
+        console.error('[payment] failed to back-fill form user_id:', err);
+      });
+    }
+
     // Background: generate plan → PDF → S3 → cashback/subscription credit → email
-    const userId = form.user_id;
     if (userId) {
       const weeksOverride = payment.plan === '3_months' ? 4 : undefined;
       void generateAndDeliverDietPlan(form.id, userId, weeksOverride).catch((err) => {

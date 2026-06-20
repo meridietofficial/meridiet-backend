@@ -200,15 +200,16 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
     // --- End availability check ---
 
     const fee = Number(dietitian.appointment_fee ?? 0);
-    if (fee <= 0) {
-      return errorResponse(res, 400, 'This dietitian has not set a valid appointment fee');
+    const amountInPaise = Math.round(fee * 100);
+    if (amountInPaise < 100) {
+      return errorResponse(res, 400, 'This dietitian has not set a valid appointment fee (minimum ₹1)');
     }
     const currency = (dietitian.appointment_currency as string) || 'INR';
     const userId = req.user?.sub ? Number(req.user.sub) : null;
 
     // Create Razorpay order only after all checks pass
     const order = await razorpay.orders.create({
-      amount: Math.round(fee * 100),
+      amount: amountInPaise,
       currency,
       receipt: `appt_${Date.now()}`,
     });
