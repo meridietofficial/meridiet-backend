@@ -77,6 +77,12 @@ export const getDietPlan = async (req: Request, res: Response) => {
       status:         plan.status,
       pdf_url:        plan.pdf_url ?? null,
       client_profile: plan.client_profile,
+      vitals: {
+        bmi:          plan.bmi,
+        bmi_category: plan.bmi_category,
+        bmr:          plan.bmr,
+        tdee:         plan.tdee,
+      },
       summary: {
         client_name:      plan.client_name,
         calorie_range:    plan.calorie_range,

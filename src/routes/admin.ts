@@ -1,6 +1,14 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/authenticate';
 import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDietFormRequests, getDietChartDetails, previewDietPlan, getDashboardStats, getDashboardRevenue, getDashboardUserGrowth, getDashboardConsultations, getSystemOverview, getPaidDietCharts } from '../controllers/admin';
+import {
+  getBmiCategories, createBmiCategory, updateBmiCategory, deleteBmiCategory,
+  getActivityMultipliers, updateActivityMultiplier,
+  getGoalSettings, updateGoalSetting,
+  getCalorieFloors, updateCalorieFloor,
+  getMedicalAdjustments, createMedicalAdjustment, updateMedicalAdjustment, deleteMedicalAdjustment,
+  getGeneralSettings, updateGeneralSetting,
+} from '../controllers/nutritionConfig';
 
 export const adminRouter = Router();
 
@@ -40,3 +48,32 @@ adminRouter.get('/dashboard-revenue',      authenticate, authorize('admin'), get
 adminRouter.get('/dashboard-user-growth',  authenticate, authorize('admin'), getDashboardUserGrowth);
 adminRouter.get('/dashboard-consultations',authenticate, authorize('admin'), getDashboardConsultations);
 adminRouter.get('/system-overview',        authenticate, authorize('admin'), getSystemOverview);
+
+// ── Nutrition Config (admin editable calculation settings) ────────────────────
+// BMI categories
+adminRouter.get   ('/nutrition/bmi-categories',      authenticate, authorize('admin'), getBmiCategories);
+adminRouter.post  ('/nutrition/bmi-categories',      authenticate, authorize('admin'), createBmiCategory);
+adminRouter.put   ('/nutrition/bmi-categories/:id',  authenticate, authorize('admin'), updateBmiCategory);
+adminRouter.delete('/nutrition/bmi-categories/:id',  authenticate, authorize('admin'), deleteBmiCategory);
+
+// Activity multipliers (PAL values for TDEE)
+adminRouter.get('/nutrition/activity-multipliers',       authenticate, authorize('admin'), getActivityMultipliers);
+adminRouter.put('/nutrition/activity-multipliers/:id',   authenticate, authorize('admin'), updateActivityMultiplier);
+
+// Goal settings (calorie offsets + protein targets per goal)
+adminRouter.get('/nutrition/goal-settings',      authenticate, authorize('admin'), getGoalSettings);
+adminRouter.put('/nutrition/goal-settings/:id',  authenticate, authorize('admin'), updateGoalSetting);
+
+// Calorie floors (minimum safe calories by gender)
+adminRouter.get('/nutrition/calorie-floors',     authenticate, authorize('admin'), getCalorieFloors);
+adminRouter.put('/nutrition/calorie-floors/:id', authenticate, authorize('admin'), updateCalorieFloor);
+
+// Medical condition adjustments (macro overrides + AI prompt notes)
+adminRouter.get   ('/nutrition/medical-adjustments',      authenticate, authorize('admin'), getMedicalAdjustments);
+adminRouter.post  ('/nutrition/medical-adjustments',      authenticate, authorize('admin'), createMedicalAdjustment);
+adminRouter.put   ('/nutrition/medical-adjustments/:id',  authenticate, authorize('admin'), updateMedicalAdjustment);
+adminRouter.delete('/nutrition/medical-adjustments/:id',  authenticate, authorize('admin'), deleteMedicalAdjustment);
+
+// General settings (scalar values like carb floor, IBW thresholds, elderly age)
+adminRouter.get('/nutrition/general-settings',     authenticate, authorize('admin'), getGeneralSettings);
+adminRouter.put('/nutrition/general-settings/:id', authenticate, authorize('admin'), updateGeneralSetting);

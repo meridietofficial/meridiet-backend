@@ -565,11 +565,11 @@ const sectionCardNew = (iconSvg: string, title: string, rows: string, extraStyle
 // Info row (matches React <Row> component)
 const infoRow = (label: string, value: unknown, iconSvg = ''): string => {
   const val = String(value ?? '').trim() || '—';
-  return `<div style="display:flex;align-items:center;font-size:11px;padding:4px 0;line-height:1.3;">
-    ${iconSvg ? `<span style="width:15px;display:flex;justify-content:center;color:${C.faint};margin-right:8px;flex-shrink:0;">${iconSvg}</span>` : ''}
+  return `<div style="display:flex;align-items:flex-start;font-size:11px;padding:4px 0;line-height:1.3;">
+    ${iconSvg ? `<span style="width:15px;display:flex;justify-content:center;color:${C.faint};margin-right:8px;flex-shrink:0;padding-top:1px;">${iconSvg}</span>` : ''}
     <span style="color:${C.sub};min-width:116px;flex-shrink:0;">${esc(label)}</span>
-    <span style="color:${C.sub};margin:0 5px;">:</span>
-    <span style="color:${C.ink};font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(val)}</span>
+    <span style="color:${C.sub};margin:0 5px;flex-shrink:0;">:</span>
+    <span style="color:${C.ink};font-weight:600;word-break:break-word;">${esc(val)}</span>
   </div>`;
 };
 
@@ -984,7 +984,7 @@ const weekPage = (week: WeekPlan, plan: DietPlan, page: number): string => {
     </span>
   </div>
 
-  ${pageTitle(`WEEK ${week.week} –`, 'SAMPLE MEAL PLAN')}
+  ${pageTitle(`WEEK ${week.week} –`, 'MEAL PLAN')}
   <p style="font-size:12.5px;color:${C.sub};margin:2px 0 10px;">
     Days ${startDay}–${endDay} structured nutrition plan${week.title ? ` — ${esc(week.title)}.` : '.'}
   </p>
@@ -1362,21 +1362,39 @@ const progressPage = (plan: DietPlan, page: number): string => {
     </div>`;
 
   // ── Weight tracker ────────────────────────────────────────────────────
-  const weightRows = wk.map((w) => `
+  // Pull starting weight from the stored client_profile (set at plan generation time)
+  const cp = (plan.client_profile ?? {}) as Record<string, Record<string, unknown>>;
+  const startWeightRaw = cp.current_vitals?.weight_kg;
+  const startWeightKg  = startWeightRaw != null ? parseFloat(String(startWeightRaw)) : null;
+  const startWeightStr = startWeightKg != null ? `${startWeightKg} kg` : '____';
+
+  const weightRows = wk.map((w, i) => {
+    const isFirst     = i === 0;
+    const weightCell  = isFirst && startWeightKg != null
+      ? `<td style="padding:3px 8px;text-align:center;color:${C.brand};font-weight:700;border-bottom:1px solid ${C.line};font-size:9px;">${esc(startWeightStr)}</td>`
+      : `<td style="padding:3px 8px;text-align:center;color:${C.faint};border-bottom:1px solid ${C.line};font-size:9px;">____</td>`;
+    const changeCell  = isFirst
+      ? `<td style="padding:3px 8px;text-align:center;color:${C.sub};border-bottom:1px solid ${C.line};font-size:9px;">—</td>`
+      : `<td style="padding:3px 8px;text-align:center;color:${C.faint};border-bottom:1px solid ${C.line};font-size:9px;">____</td>`;
+    return `
     <tr>
       <td style="padding:3px 8px;color:${C.ink};border-bottom:1px solid ${C.line};font-size:9px;">${esc(w)}</td>
       <td style="padding:3px 8px;text-align:center;color:${C.faint};border-bottom:1px solid ${C.line};font-size:9px;">____</td>
-      <td style="padding:3px 8px;text-align:center;color:${C.faint};border-bottom:1px solid ${C.line};font-size:9px;">____</td>
-      <td style="padding:3px 8px;text-align:center;color:${C.faint};border-bottom:1px solid ${C.line};font-size:9px;">____</td>
-    </tr>`).join('');
+      ${weightCell}
+      ${changeCell}
+    </tr>`;
+  }).join('');
 
+  // Graph Y-axis: centre around the client's starting weight, 5 kg steps
   const graphW = 320; const graphH = 150;
+  const graphBase   = startWeightKg != null ? Math.ceil(startWeightKg / 5) * 5 + 5 : 90;
+  const graphLabels = [0, 1, 2, 3, 4].map((i) => graphBase - i * 5);
   const graphSvg = `
     <svg viewBox="0 0 ${graphW} ${graphH}" preserveAspectRatio="none" style="width:100%;height:104px;display:block;">
       ${[0,1,2,3,4].map((g) => `<line x1="30" y1="${14 + g*28}" x2="314" y2="${14 + g*28}" stroke="${C.line}" stroke-width="1"/>`).join('')}
       <line x1="30" y1="14" x2="30" y2="126" stroke="${C.faint}" stroke-width="1"/>
       <line x1="30" y1="126" x2="314" y2="126" stroke="${C.faint}" stroke-width="1"/>
-      ${[90,85,80,75,70].map((v, g) => `<text x="25" y="${17 + g*28}" text-anchor="end" font-size="8" fill="${C.faint}">${v}</text>`).join('')}
+      ${graphLabels.map((v, g) => `<text x="25" y="${17 + g*28}" text-anchor="end" font-size="8" fill="${C.faint}">${v}</text>`).join('')}
       ${wk.map((w, i) => `<text x="${30 + (i + 0.5) * (284 / wk.length)}" y="139" text-anchor="middle" font-size="8" fill="${C.sub}">${esc(w)}</text>`).join('')}
       <text x="9" y="70" font-size="8" fill="${C.sub}" transform="rotate(-90 9 70)" text-anchor="middle">Weight (kg)</text>
     </svg>`;
