@@ -219,21 +219,37 @@ export const findAppointmentsByUserId = async (userId: number, page = 1, limit =
       dietitian_avatar_url: string | null;
       dietitian_city: string;
       dietitian_state: string;
+      diet_plan_id: number | null;
+      diet_plan_status: string | null;
+      diet_plan_pdf_url: string | null;
     }>(
       `SELECT
          a.id, a.dietitian_id, a.user_id, a.name, a.email, a.phone,
          DATE_FORMAT(a.appointment_date, '%Y-%m-%d')  AS appointment_date,
          TIME_FORMAT(a.slot, '%H:%i')                 AS slot,
+         a.duration, a.session_type,
          a.fee, a.currency, a.status, a.payment_status,
-         a.payment_id, a.order_id, a.notes, a.created_at, a.updated_at,
+         a.payment_id, a.order_id, a.notes,
+         a.missed_reason,
+         a.user_rating, a.user_review, a.user_reviewed_at,
+         a.dietitian_rating, a.dietitian_review, a.dietitian_reviewed_at,
+         a.parent_appointment_id, a.is_follow_up, a.follow_up_type,
+         a.agora_channel_name, a.agora_resource_id, a.agora_recording_sid, a.agora_recording_uid,
+         a.video_call_status, a.recording_url,
+         a.call_started_at, a.call_ended_at, a.call_duration_seconds,
+         a.created_at, a.updated_at,
          d.id                                          AS dietitian_profile_id,
          u.full_name                                   AS dietitian_full_name,
-         COALESCE(u.avatar_url, d.profile_photo)       AS dietitian_avatar_url,
+         d.profile_photo                               AS dietitian_avatar_url,
          d.city                                        AS dietitian_city,
-         d.state                                       AS dietitian_state
+         d.state                                       AS dietitian_state,
+         dp.id                                         AS diet_plan_id,
+         dp.status                                     AS diet_plan_status,
+         dp.pdf_url                                    AS diet_plan_pdf_url
        FROM appointments a
        JOIN dietitians d ON a.dietitian_id = d.id
        JOIN users u ON d.user_id = u.id
+       LEFT JOIN diet_plans dp ON dp.appointment_id = a.id
        WHERE a.user_id = ?
          AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed')
        ORDER BY a.appointment_date DESC, a.slot ASC
@@ -243,7 +259,7 @@ export const findAppointmentsByUserId = async (userId: number, page = 1, limit =
     query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE user_id = ? AND (payment_status <> 'unpaid' OR status = 'confirmed')`, [userId]),
   ]);
 
-  const appointments: AppointmentWithDietitian[] = rows.map((r) => ({
+  const appointments = rows.map((r) => ({
     id: r.id,
     dietitian_id: r.dietitian_id,
     user_id: r.user_id,
@@ -261,27 +277,25 @@ export const findAppointmentsByUserId = async (userId: number, page = 1, limit =
     payment_id: r.payment_id,
     order_id: r.order_id,
     notes: r.notes,
-    dietitian_notes: null, // never returned to patients
     missed_reason: r.missed_reason ?? null,
-    missed_type: null,
     user_rating: r.user_rating ?? null,
     user_review: r.user_review ?? null,
     user_reviewed_at: r.user_reviewed_at ?? null,
-    dietitian_rating: null,
-    dietitian_review: null,
-    dietitian_reviewed_at: null,
-    parent_appointment_id: r.parent_appointment_id,
+    dietitian_rating: r.dietitian_rating ?? null,
+    dietitian_review: r.dietitian_review ?? null,
+    dietitian_reviewed_at: r.dietitian_reviewed_at ?? null,
+    parent_appointment_id: r.parent_appointment_id ?? null,
     is_follow_up: r.is_follow_up,
     follow_up_type: r.follow_up_type ?? null,
-    agora_channel_name: r.agora_channel_name,
-    agora_resource_id: r.agora_resource_id,
-    agora_recording_sid: r.agora_recording_sid,
-    agora_recording_uid: r.agora_recording_uid,
-    video_call_status: r.video_call_status,
-    recording_url: r.recording_url,
-    call_started_at: r.call_started_at,
-    call_ended_at: r.call_ended_at,
-    call_duration_seconds: r.call_duration_seconds,
+    agora_channel_name: r.agora_channel_name ?? null,
+    agora_resource_id: r.agora_resource_id ?? null,
+    agora_recording_sid: r.agora_recording_sid ?? null,
+    agora_recording_uid: r.agora_recording_uid ?? null,
+    video_call_status: r.video_call_status ?? null,
+    recording_url: r.recording_url ?? null,
+    call_started_at: r.call_started_at ?? null,
+    call_ended_at: r.call_ended_at ?? null,
+    call_duration_seconds: r.call_duration_seconds ?? null,
     created_at: r.created_at,
     updated_at: r.updated_at,
     dietitian: {
@@ -291,6 +305,9 @@ export const findAppointmentsByUserId = async (userId: number, page = 1, limit =
       city: r.dietitian_city,
       state: r.dietitian_state,
     },
+    diet_plan: r.diet_plan_id
+      ? { id: r.diet_plan_id, status: r.diet_plan_status, pdf_url: r.diet_plan_pdf_url }
+      : null,
   }));
 
   return { appointments, total: countRows[0]?.total ?? 0 };
