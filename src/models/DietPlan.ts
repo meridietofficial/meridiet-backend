@@ -3,6 +3,7 @@ import { query, execute } from '../config/database';
 export interface MealItem {
   food: string;
   quantity: string;
+  protein_g: number;
 }
 
 export interface FeaturedRecipe {
@@ -34,6 +35,7 @@ export interface WeekDay {
   };
   total_kcal: number;
   total_protein_g: number;
+  total_fiber_g: number;
   water_liters: number;
 }
 
