@@ -215,13 +215,19 @@ export const deleteDietitian = async (req: Request, res: Response) => {
   }
 };
 
-// GET /api/v1/admin/existing-users?page=1&limit=10
+// GET /api/v1/admin/existing-users?page=1&limit=10&search=&status=active|blocked&startDate=&endDate=&sortBy=&sortOrder=
 export const getUserList = async (req: Request, res: Response) => {
   try {
-    const page = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 10));
+    const page      = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit     = Math.min(10000, Math.max(1, parseInt(req.query.limit as string) || 10));
+    const search    = (req.query.search    as string | undefined)?.trim() || undefined;
+    const status    = req.query.status    as string | undefined;
+    const startDate = req.query.startDate as string | undefined;
+    const endDate   = req.query.endDate   as string | undefined;
+    const sortBy    = req.query.sortBy    as string | undefined;
+    const sortOrder = req.query.sortOrder as string | undefined;
 
-    const { rows, total } = await getUsersPaginated(page, limit);
+    const { rows, total } = await getUsersPaginated({ page, limit, search, status, startDate, endDate, sortBy, sortOrder });
     const totalPages = Math.ceil(total / limit);
 
     return successResponse(res, 200, 'Users fetched successfully', rows, { page, limit, total, totalPages });
@@ -293,55 +299,78 @@ export const deleteUser = async (req: Request, res: Response) => {
   }
 };
 
-// GET /api/v1/admin/diet-form-requests?page=1&limit=10&status=completed&plan_type=1&from=YYYY-MM-DD&to=YYYY-MM-DD
+// GET /api/v1/admin/diet-form-requests
+// Params: page, limit, search, planType, startDate, endDate, sortBy, sortOrder, status
 export const getDietFormRequests = async (req: Request, res: Response) => {
   try {
     const page      = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit     = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 10));
-    const status    = req.query.status    as string | undefined;
-    const plan_type = req.query.plan_type as string | undefined;
-    const from      = req.query.from      as string | undefined;
-    const to        = req.query.to        as string | undefined;
+    const limit     = Math.min(10000, Math.max(1, parseInt(req.query.limit as string) || 10));
+    const search    = (req.query.search as string | undefined)?.trim();
+    const status    = req.query.status   as string | undefined;
+    const planType  = req.query.planType as string | undefined;
+    const startDate = req.query.startDate as string | undefined;
+    const endDate   = req.query.endDate   as string | undefined;
     const offset    = (page - 1) * limit;
+
+    const VALID_SORT: Record<string, string> = { created_at: 'df.created_at', full_name: 'df.full_name' };
+    const sortField = VALID_SORT[req.query.sortBy as string ?? ''] ?? 'df.created_at';
+    const sortOrder = (req.query.sortOrder as string | undefined)?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
     const validStatuses  = ['pending', 'generating', 'completed', 'failed'];
     const validPlanTypes = ['1', '2', '3'];
 
-    // 'pending' = a request form with no generated plan yet
-    const statusFilter  = status && validStatuses.includes(status)
-      ? (status === 'pending' ? `AND dp.id IS NULL` : `AND dp.status = '${status}'`)
-      : '';
+    const params: unknown[] = [];
+    const conditions: string[] = ['1=1'];
 
-    const planFilter = plan_type && validPlanTypes.includes(plan_type)
-      ? `AND df.plan_type = ${parseInt(plan_type)}`
-      : '';
-
-    const queryParams: string[] = [];
-    let dateFilter = '';
-    if (from && to) {
-      dateFilter = 'AND df.created_at BETWEEN ? AND ?';
-      queryParams.push(`${from} 00:00:00`, `${to} 23:59:59`);
+    if (search) {
+      conditions.push('(df.full_name LIKE ? OR df.email LIKE ? OR df.whatsapp LIKE ? OR df.city LIKE ?)');
+      const like = `%${search}%`;
+      params.push(like, like, like, like);
     }
 
-    const baseWhere = `WHERE 1=1 ${statusFilter} ${planFilter} ${dateFilter}`;
+    if (status && validStatuses.includes(status)) {
+      conditions.push(status === 'pending' ? 'dp.id IS NULL' : `dp.status = '${status}'`);
+    }
 
-    const rows = await query<DietForm & { plan_id: number | null; status: string }>(
-      `SELECT
-        df.*,
-        dp.id AS plan_id,
-        COALESCE(dp.status, 'pending') AS status
-       FROM diet_forms df
-       LEFT JOIN diet_plans dp ON dp.id = (
-         SELECT id FROM diet_plans WHERE form_id = df.id ORDER BY created_at DESC LIMIT 1
-       )
-       ${baseWhere}
-       ORDER BY df.created_at DESC
-       LIMIT ${limit} OFFSET ${offset}`,
-      queryParams,
-    );
+    if (planType && validPlanTypes.includes(planType)) {
+      conditions.push(`df.plan_type = ${parseInt(planType)}`);
+    }
 
-    // Parse JSON-encoded columns stored as strings
+    if (startDate) { conditions.push('df.created_at >= ?'); params.push(`${startDate} 00:00:00`); }
+    if (endDate)   { conditions.push('df.created_at <= ?'); params.push(`${endDate} 23:59:59`);   }
+
+    const baseWhere = `WHERE ${conditions.join(' AND ')}`;
+
     const JSON_FIELDS = ['goals', 'cuisine_preference', 'food_allergies', 'medical_conditions', 'delivery_method'];
+
+    const [rows, countRows] = await Promise.all([
+      query<DietForm & { plan_id: number | null; status: string }>(
+        `SELECT
+          df.*,
+          dp.id AS plan_id,
+          COALESCE(dp.status, 'pending') AS status
+         FROM diet_forms df
+         LEFT JOIN diet_plans dp ON dp.id = (
+           SELECT id FROM diet_plans WHERE form_id = df.id ORDER BY created_at DESC LIMIT 1
+         )
+         LEFT JOIN payments p ON p.diet_form_id = df.id AND p.status = 'paid'
+         ${baseWhere} AND p.id IS NULL
+         ORDER BY ${sortField} ${sortOrder}
+         LIMIT ${limit} OFFSET ${offset}`,
+        params,
+      ),
+      query<{ total: number }>(
+        `SELECT COUNT(*) AS total
+           FROM diet_forms df
+           LEFT JOIN diet_plans dp ON dp.id = (
+             SELECT id FROM diet_plans WHERE form_id = df.id ORDER BY created_at DESC LIMIT 1
+           )
+           LEFT JOIN payments p ON p.diet_form_id = df.id AND p.status = 'paid'
+         ${baseWhere} AND p.id IS NULL`,
+        params,
+      ),
+    ]);
+
     const data = rows.map((row) => {
       const r = row as unknown as Record<string, unknown>;
       for (const field of JSON_FIELDS) {
@@ -351,16 +380,6 @@ export const getDietFormRequests = async (req: Request, res: Response) => {
       }
       return row;
     });
-
-    const countRows = await query<{ total: number }>(
-      `SELECT COUNT(*) AS total
-         FROM diet_forms df
-         LEFT JOIN diet_plans dp ON dp.id = (
-           SELECT id FROM diet_plans WHERE form_id = df.id ORDER BY created_at DESC LIMIT 1
-         )
-       ${baseWhere}`,
-      queryParams,
-    );
 
     const total      = countRows[0]?.total ?? 0;
     const totalPages = Math.ceil(total / limit);
@@ -374,49 +393,75 @@ export const getDietFormRequests = async (req: Request, res: Response) => {
   }
 };
 
-// GET /api/v1/admin/paid-diet-charts?page=1&limit=10&plan_type=1&from=YYYY-MM-DD&to=YYYY-MM-DD
+// GET /api/v1/admin/paid-diet-charts
+// Params: page, limit, search, planType, startDate, endDate, sortBy, sortOrder
 // Only returns diet forms that are paid AND have a completed PDF generated
 export const getPaidDietCharts = async (req: Request, res: Response) => {
   try {
     const page      = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit     = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 10));
-    const plan_type = req.query.plan_type as string | undefined;
-    const from      = req.query.from      as string | undefined;
-    const to        = req.query.to        as string | undefined;
+    const limit     = Math.min(10000, Math.max(1, parseInt(req.query.limit as string) || 10));
+    const search    = (req.query.search as string | undefined)?.trim();
+    const planType  = req.query.planType  as string | undefined;
+    const startDate = req.query.startDate as string | undefined;
+    const endDate   = req.query.endDate   as string | undefined;
     const offset    = (page - 1) * limit;
+
+    const VALID_SORT: Record<string, string> = { created_at: 'df.created_at', full_name: 'df.full_name' };
+    const sortField = VALID_SORT[req.query.sortBy as string ?? ''] ?? 'df.created_at';
+    const sortOrder = (req.query.sortOrder as string | undefined)?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
     const validPlanTypes = ['1', '2', '3'];
 
-    const planFilter = plan_type && validPlanTypes.includes(plan_type)
-      ? `AND df.plan_type = ${parseInt(plan_type)}`
-      : '';
+    const params: unknown[] = [];
+    const conditions: string[] = ['1=1'];
 
-    const queryParams: string[] = [];
-    let dateFilter = '';
-    if (from && to) {
-      dateFilter = 'AND df.created_at BETWEEN ? AND ?';
-      queryParams.push(`${from} 00:00:00`, `${to} 23:59:59`);
+    if (search) {
+      conditions.push('(df.full_name LIKE ? OR df.email LIKE ? OR df.whatsapp LIKE ? OR df.city LIKE ?)');
+      const like = `%${search}%`;
+      params.push(like, like, like, like);
     }
 
-    const baseWhere = `WHERE 1=1 ${planFilter} ${dateFilter}`;
+    if (planType && validPlanTypes.includes(planType)) {
+      conditions.push(`df.plan_type = ${parseInt(planType)}`);
+    }
 
-    const rows = await query<DietForm & { plan_id: number | null; plan_status: string; pdf_url: string | null; payment_amount: number }>(
-      `SELECT
-        df.*,
-        dp.id          AS plan_id,
-        dp.status      AS plan_status,
-        dp.pdf_url     AS pdf_url,
-        p.amount       AS payment_amount
-       FROM diet_forms df
-       INNER JOIN payments   p  ON p.diet_form_id = df.id AND p.status = 'paid'
-       INNER JOIN diet_plans dp ON dp.form_id     = df.id AND dp.status = 'completed' AND dp.pdf_url IS NOT NULL
-       ${baseWhere}
-       ORDER BY df.created_at DESC
-       LIMIT ${limit} OFFSET ${offset}`,
-      queryParams,
-    );
+    if (startDate) { conditions.push('df.created_at >= ?'); params.push(`${startDate} 00:00:00`); }
+    if (endDate)   { conditions.push('df.created_at <= ?'); params.push(`${endDate} 23:59:59`);   }
+
+    const baseWhere = `WHERE ${conditions.join(' AND ')}`;
 
     const JSON_FIELDS = ['goals', 'cuisine_preference', 'food_allergies', 'medical_conditions', 'delivery_method'];
+
+    const [rows, countRows] = await Promise.all([
+      query<DietForm & { plan_id: number | null; plan_status: string | null; pdf_url: string | null; payment_amount: number }>(
+        `SELECT
+          df.*,
+          dp.id          AS plan_id,
+          dp.status      AS plan_status,
+          dp.pdf_url     AS pdf_url,
+          p.amount       AS payment_amount
+         FROM diet_forms df
+         INNER JOIN payments p ON p.diet_form_id = df.id AND p.status = 'paid'
+         LEFT JOIN diet_plans dp ON dp.id = (
+           SELECT id FROM diet_plans WHERE form_id = df.id ORDER BY created_at DESC LIMIT 1
+         )
+         ${baseWhere}
+         ORDER BY ${sortField} ${sortOrder}
+         LIMIT ${limit} OFFSET ${offset}`,
+        params,
+      ),
+      query<{ total: number }>(
+        `SELECT COUNT(*) AS total
+           FROM diet_forms df
+           INNER JOIN payments p ON p.diet_form_id = df.id AND p.status = 'paid'
+           LEFT JOIN diet_plans dp ON dp.id = (
+             SELECT id FROM diet_plans WHERE form_id = df.id ORDER BY created_at DESC LIMIT 1
+           )
+         ${baseWhere}`,
+        params,
+      ),
+    ]);
+
     const data = rows.map((row) => {
       const r = row as unknown as Record<string, unknown>;
       for (const field of JSON_FIELDS) {
@@ -426,15 +471,6 @@ export const getPaidDietCharts = async (req: Request, res: Response) => {
       }
       return row;
     });
-
-    const countRows = await query<{ total: number }>(
-      `SELECT COUNT(*) AS total
-         FROM diet_forms df
-         INNER JOIN payments   p  ON p.diet_form_id = df.id AND p.status = 'paid'
-         INNER JOIN diet_plans dp ON dp.form_id     = df.id AND dp.status = 'completed' AND dp.pdf_url IS NOT NULL
-       ${baseWhere}`,
-      queryParams,
-    );
 
     const total      = countRows[0]?.total ?? 0;
     const totalPages = Math.ceil(total / limit);

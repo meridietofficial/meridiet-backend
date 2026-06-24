@@ -64,12 +64,50 @@ export const getAllUsers = async () => {
 
 const USER_SELECT = 'SELECT id, full_name, email, phone_code, phone_number, role, is_active, avatar_url, wallet_balance, created_at, updated_at FROM users';
 
-export const getUsersPaginated = async (page: number, limit: number) => {
+export interface GetUsersPaginatedOptions {
+  page: number;
+  limit: number;
+  search?: string;
+  status?: string;
+  startDate?: string;
+  endDate?: string;
+  sortBy?: string;
+  sortOrder?: string;
+}
+
+export const getUsersPaginated = async (opts: GetUsersPaginatedOptions) => {
+  const { page, limit, search, status, startDate, endDate } = opts;
+
+  const ALLOWED_SORT_FIELDS = new Set(['created_at', 'full_name', 'email']);
+  const sortBy    = ALLOWED_SORT_FIELDS.has(opts.sortBy ?? '') ? opts.sortBy! : 'created_at';
+  const sortOrder = opts.sortOrder?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
   const offset = (page - 1) * limit;
-  const rows = await query<Omit<User, 'password' | 'is_delete'>>(
-    `${USER_SELECT} WHERE role = 'user' AND is_delete = 0 ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`,
-  );
-  const countRows = await query<{ total: number }>("SELECT COUNT(*) AS total FROM users WHERE role = 'user' AND is_delete = 0");
+  const params: unknown[] = [];
+  const conditions: string[] = ["role = 'user'", 'is_delete = 0'];
+
+  if (search) {
+    conditions.push('(full_name LIKE ? OR email LIKE ? OR phone_number LIKE ?)');
+    const like = `%${search}%`;
+    params.push(like, like, like);
+  }
+
+  if (status === 'active')  { conditions.push('is_active = 1'); }
+  if (status === 'blocked') { conditions.push('is_active = 0'); }
+
+  if (startDate) { conditions.push('created_at >= ?'); params.push(`${startDate} 00:00:00`); }
+  if (endDate)   { conditions.push('created_at <= ?'); params.push(`${endDate} 23:59:59`);   }
+
+  const where = `WHERE ${conditions.join(' AND ')}`;
+
+  const [rows, countRows] = await Promise.all([
+    query<Omit<User, 'password' | 'is_delete'>>(
+      `${USER_SELECT} ${where} ORDER BY ${sortBy} ${sortOrder} LIMIT ${limit} OFFSET ${offset}`,
+      params,
+    ),
+    query<{ total: number }>(`SELECT COUNT(*) AS total FROM users ${where}`, params),
+  ]);
+
   return { rows, total: countRows[0]?.total ?? 0 };
 };
 
