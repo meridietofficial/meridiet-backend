@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/authenticate';
 import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDietFormRequests, getDietChartDetails, previewDietPlan, getDashboardStats, getDashboardRevenue, getDashboardUserGrowth, getDashboardConsultations, getSystemOverview, getPaidDietCharts } from '../controllers/admin';
+import { adminCreateCoupon, adminListCoupons, adminGetCoupon, adminUpdateCoupon, adminDeactivateCoupon, adminGetCouponUsages } from '../controllers/coupon';
 import {
   getBmiCategories, createBmiCategory, updateBmiCategory, deleteBmiCategory,
   getActivityMultipliers, updateActivityMultiplier,
@@ -77,3 +78,11 @@ adminRouter.delete('/nutrition/medical-adjustments/:id',  authenticate, authoriz
 // General settings (scalar values like carb floor, IBW thresholds, elderly age)
 adminRouter.get('/nutrition/general-settings',     authenticate, authorize('admin'), getGeneralSettings);
 adminRouter.put('/nutrition/general-settings/:id', authenticate, authorize('admin'), updateGeneralSetting);
+
+// ── Coupon management ─────────────────────────────────────────────────────────
+adminRouter.post  ('/coupons',           authenticate, authorize('admin'), adminCreateCoupon);
+adminRouter.get   ('/coupons',           authenticate, authorize('admin'), adminListCoupons);
+adminRouter.get   ('/coupons/:id',       authenticate, authorize('admin'), adminGetCoupon);
+adminRouter.patch ('/coupons/:id',       authenticate, authorize('admin'), adminUpdateCoupon);
+adminRouter.delete('/coupons/:id',       authenticate, authorize('admin'), adminDeactivateCoupon);
+adminRouter.get   ('/coupons/:id/usages',authenticate, authorize('admin'), adminGetCouponUsages);

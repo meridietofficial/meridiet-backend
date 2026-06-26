@@ -17,15 +17,25 @@ export const app = express();
 app.use(helmet());
 app.use(cors(corsOptions));
 
-// Rate limiting
-app.use(
-  env.API_PREFIX,
-  rateLimit({
-    windowMs: env.RATE_LIMIT_WINDOW_MS,
-    max: env.RATE_LIMIT_MAX,
-    message: { success: false, message: 'Too many requests, please try again later.' },
-  }),
-);
+// Rate limiting — strict on auth, relaxed everywhere else
+const globalLimiter = rateLimit({
+  windowMs: env.RATE_LIMIT_WINDOW_MS,
+  max: env.RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many requests, please try again later.' },
+});
+
+const authLimiter = rateLimit({
+  windowMs: env.RATE_LIMIT_WINDOW_MS,
+  max: env.RATE_LIMIT_AUTH_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many login attempts, please try again later.' },
+});
+
+app.use(`${env.API_PREFIX}/${env.API_VERSION}/auth`, authLimiter);
+app.use(env.API_PREFIX, globalLimiter);
 
 // Body parsing & logging
 app.use(compression());
