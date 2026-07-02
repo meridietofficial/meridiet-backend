@@ -19,6 +19,7 @@ import { generateDietPlanPdf } from './dietPlanPdf';
 import { uploadBufferToS3 } from './uploadToS3';
 import { sendEmail } from './email';
 import { dietPlanReadyEmail } from './emails/dietPlanReady';
+import { sendDietPlanWhatsApp } from './whatsapp';
 
 // ── Shared helpers (duplicated from controller to keep service self-contained) ──
 
@@ -37,7 +38,19 @@ const calcVitals = (form: DietForm, config: NutritionConfig) => {
   let weightKg = parseFloat(String(form.weight ?? 0));
   if (form.weight_unit === 'lbs') weightKg *= 0.453592;
 
-  const age = form.age ?? 25;
+  let age = form.age ?? null;
+  if (age === null && form.dob) {
+    const birth = new Date(form.dob);
+    if (!Number.isNaN(birth.getTime())) {
+      const today = new Date();
+      age = today.getFullYear() - birth.getFullYear();
+      const notYetHadBirthday =
+        today.getMonth() < birth.getMonth() ||
+        (today.getMonth() === birth.getMonth() && today.getDate() < birth.getDate());
+      if (notYetHadBirthday) age -= 1;
+    }
+  }
+  age = age ?? 25;
   const gender = form.gender ?? 'male';
   const heightM = heightCm / 100;
   const bmi = heightM > 0 ? parseFloat((weightKg / (heightM * heightM)).toFixed(2)) : 0;
@@ -48,15 +61,22 @@ const calcVitals = (form: DietForm, config: NutritionConfig) => {
   );
   const bmi_category = bmiRow?.category_name ?? 'Unknown';
 
+  const bmrWeightCoeff   = config.general['bmr_weight_coeff']   ?? 10;
+  const bmrHeightCoeff   = config.general['bmr_height_coeff']   ?? 6.25;
+  const bmrAgeCoeff      = config.general['bmr_age_coeff']      ?? 5;
+  const bmrMaleConstant  = config.general['bmr_male_constant']  ?? 5;
+  const bmrFemaleConstant = config.general['bmr_female_constant'] ?? -161;
+
+  const bmrBase = bmrWeightCoeff * weightKg + bmrHeightCoeff * heightCm - bmrAgeCoeff * age;
   const bmr = parseFloat((gender === 'female'
-    ? 10 * weightKg + 6.25 * heightCm - 5 * age - 161
-    : 10 * weightKg + 6.25 * heightCm - 5 * age + 5).toFixed(2));
+    ? bmrBase + bmrFemaleConstant
+    : bmrBase + bmrMaleConstant).toFixed(2));
 
   // Activity multiplier from DB, fallback to 1.2 if key not found
   const pal = config.activityMultipliers[form.activity_level ?? 'sedentary'] ?? 1.2;
   const tdee = parseFloat((bmr * pal).toFixed(2));
 
-  return { bmi, bmi_category, bmr, tdee, weightKg, heightCm };
+  return { bmi, bmi_category, bmr, tdee, weightKg, heightCm, age };
 };
 
 // Derive goal-aware calorie range and macro targets from TDEE + client goals + medical conditions
@@ -70,7 +90,7 @@ const calcNutritionTargets = (form: DietForm, vitals: ReturnType<typeof calcVita
   const isMuscle = goals.some((g) =>
     g.includes('muscle') || g.includes('strength') || g.includes('bulk'));
   const isWeightGain = !isMuscle && goals.some((g) =>
-    g.includes('weight_gain') || g.includes('gain_weight') || g.includes('gain'));
+    g.includes('weight_gain') || g.includes('gain_weight'));
 
   // Detect which medical conditions the client has by matching against DB detection_keywords
   const clientConditionText = [
@@ -100,11 +120,14 @@ const calcNutritionTargets = (form: DietForm, vitals: ReturnType<typeof calcVita
   const proteinTolerance     = g['protein_range_tolerance']     ?? 0.10;
 
   const gender = form.gender ?? 'male';
-  const age    = form.age ?? 25;
+  const age    = vitals.age;
+
+  const isAdolescent = age < 18;
 
   // IBW-based protein weight for overweight/obese clients (Devine formula from DB values)
+  // Adolescents: always use actual body weight — IBW adjustment is inappropriate during growth
   let weightForProtein = vitals.weightKg;
-  if (vitals.bmi > ibwBmiThreshold) {
+  if (!isAdolescent && vitals.bmi > ibwBmiThreshold) {
     const heightInches = vitals.heightCm / 2.54;
     const ibwBase      = gender === 'female' ? ibwFemaleBase : ibwMaleBase;
     const ibw          = ibwBase + ibwPerInch * Math.max(0, heightInches - 60);
@@ -126,6 +149,14 @@ const calcNutritionTargets = (form: DietForm, vitals: ReturnType<typeof calcVita
   calorieMin = Math.max(calorieMin, calorieFloor);
   calorieMax = Math.max(calorieMax, calorieMin + 100);
 
+  // Adolescent calorie floor: teens need minimum 1600 kcal regardless of goal.
+  // Aggressive deficits during growth can stunt development — override any lower floor.
+  if (isAdolescent) {
+    const adolescentCalorieFloor = 1600;
+    calorieMin = Math.max(calorieMin, adolescentCalorieFloor);
+    calorieMax = Math.max(calorieMax, calorieMin + 100);
+  }
+
   // Protein per kg: start with goal-based value, then apply medical overrides
   // Conditions are already sorted by priority (lowest = highest priority)
   let proteinPerKg = goalRow.protein_per_kg;
@@ -140,6 +171,12 @@ const calcNutritionTargets = (form: DietForm, vitals: ReturnType<typeof calcVita
   const hasCKDMatch = matchedConditions.some((c) => c.condition_key === 'ckd');
   if (age >= elderlyAgeThreshold && !hasCKDMatch) {
     proteinPerKg = Math.max(proteinPerKg, elderlyMinProtein);
+  }
+
+  // Adolescent protein: teens need at least 1.2g/kg for growth (higher than sedentary adult maintenance).
+  // Do not apply the IBW reduction — use actual body weight already set above.
+  if (isAdolescent) {
+    proteinPerKg = Math.max(proteinPerKg, 1.2);
   }
 
   // Vegetarian protein cap: pure Indian vegetarian food (paneer, dal, curd, legumes) can
@@ -175,6 +212,15 @@ const calcNutritionTargets = (form: DietForm, vitals: ReturnType<typeof calcVita
 
   // Collect prompt notes from all matched conditions (in priority order)
   const medicalNotes = matchedConditions.map((c) => c.prompt_note);
+
+  // Adolescent warning injected into the prompt so the AI knows not to restrict calories aggressively
+  if (isAdolescent) {
+    medicalNotes.unshift(
+      `This client is a minor (age ${age}). Do NOT apply aggressive calorie restriction — growth requires adequate energy. ` +
+      `Avoid diet culture language ("cutting", "deficit", "fat loss"). Frame every meal as nourishing and energising. ` +
+      `Protein target uses actual body weight (not IBW). Minimum calorie floor is 1600 kcal/day regardless of goal.`,
+    );
+  }
 
   return {
     calorieMin, calorieMax,
@@ -394,6 +440,9 @@ CRITICAL: Before writing total_protein_g for any day, SUM the protein_g of every
 // Logic: only fire when the protein target is genuinely hard to hit from whole food alone.
 // Adjusts recommendation based on diet type, digestive health, and contraindications.
 const wheyProteinBlock = (form: DietForm, nt: ReturnType<typeof calcNutritionTargets>): string => {
+  // User explicitly doesn't want supplements — food only
+  if (form.whey_protein === 'no_food_only') return '';
+
   const conditionText = [
     ...((form.medical_conditions ?? []) as string[]),
     form.other_condition ?? '',
@@ -409,6 +458,23 @@ const wheyProteinBlock = (form: DietForm, nt: ReturnType<typeof calcNutritionTar
   const isEgg     = form.diet_type === 'eggetarian';
   const isNonVeg  = form.diet_type === 'non_vegetarian';
 
+  // User is already using whey — always include it in the plan regardless of protein target
+  if (form.whey_protein === 'yes_using') {
+    const allergyText = ((form.food_allergies ?? []) as string[]).join(' ').toLowerCase();
+    const hasDairyAllergy = ['milk', 'dairy', 'whey'].some((kw) => allergyText.includes(kw));
+    if (hasDairyAllergy) {
+      return `
+PROTEIN SUPPLEMENTATION — PLANT PROTEIN (client is already using it):
+The client is already using plant-based protein powder. Include 1 scoop (25–30g) in the plan — preferably post-workout or as an afternoon snack. Count its protein (~20–25g) toward that day's total_protein_g.
+`;
+    }
+    return `
+PROTEIN SUPPLEMENTATION — WHEY PROTEIN (client is already using it):
+The client is already using whey protein. Include 1 scoop (25–30g) in the plan — preferably post-workout or as an afternoon snack. Count its protein (~24–27g) toward that day's total_protein_g. Mix with water or milk.
+`;
+  }
+
+  // open_to_trying or null — use existing threshold logic
   // Threshold: is the protein target realistically hard to cover from whole food alone?
   // Vegetarian Indian food tops out at ~70g/day without supplements.
   // Eggetarian can go higher with eggs (~90g). Non-veg can go higher still.
@@ -911,7 +977,7 @@ const genderNutritionBlock = (form: DietForm, nt: ReturnType<typeof calcNutritio
 
 const buildClientProfile = (form: DietForm, vitals: ReturnType<typeof calcVitals>) => ({
   personal_information: {
-    full_name: form.full_name ?? null, age: form.age ?? null,
+    full_name: form.full_name ?? null, age: vitals.age,
     gender: form.gender ? formatLabel(form.gender) : null, date_of_birth: form.dob ?? null,
     height: `${vitals.heightCm.toFixed(1)} cm`, weight: `${vitals.weightKg.toFixed(1)} kg`,
     phone: form.whatsapp ?? null, email: form.email ?? null,
@@ -963,11 +1029,59 @@ const dietTypeLabel = (dietType: string | null): string => {
   }
 };
 
+// Injects mandatory cuisine guidance when the client has specified preferences.
+// Without this, the AI defaults to generic North Indian regardless of what the client selected.
+const cuisineEnforcementBlock = (form: DietForm): string => {
+  const cuisines = ((form.cuisine_preference ?? []) as string[]).filter(Boolean);
+  if (cuisines.length === 0) return '';
+
+  const cuisineList = cuisines.join(', ');
+
+  // Build cuisine-specific food anchors so the AI knows what "following this cuisine" means
+  const CUISINE_ANCHORS: Record<string, string> = {
+    'north indian':     'roti, dal makhani, paneer sabzi, chole, rajma, paratha, lassi, khichdi',
+    'south indian':     'idli, dosa, sambar, rasam, rice, coconut chutney, upma, pongal, avial',
+    'gujarati':         'thepla, khichdi, kadhi, dhokla, undhiyu, fafda, rotla, bajra roti',
+    'punjabi':          'makki di roti, sarson da saag, lassi, chole bhature, dal fry, butter chicken (non-veg)',
+    'maharashtrian':    'bhakri, varan bhaat, misal pav, poha, sol kadhi, thalipeeth, puran poli',
+    'bengali':          'steamed rice, dal, fish curry (non-veg), aloo posto, shukto, mishti doi, luchi',
+    'rajasthani':       'bajra roti, dal baati churma, gatte ki sabzi, ker sangri, lassi',
+    'kerala':           'appam, puttu, stew, fish curry (non-veg), rice, coconut-based curries, sadya',
+    'tamil':            'idli, dosa, rice, sambar, rasam, kootu, poriyal, curd rice',
+    'andhra':           'rice, gongura chutney, pesarattu, pulihora, spicy curries',
+    'hyderabadi':       'biryani, haleem (non-veg), mirchi ka salan, double ka meetha',
+    'odia':             'rice, dalma, pakhala, santula, macha jhola (non-veg)',
+    'kashmiri':         'rice, rogan josh (non-veg), yakhni, haak saag, modur pulao',
+    'jain':             'no onion, no garlic, no root vegetables (potato, carrot, beetroot) — use lauki, tinda, raw banana, lotus seeds instead',
+    'continental':      'salads, grilled proteins, whole grain bread, soups, sautéed vegetables, oats',
+    'mediterranean':    'whole grain bread/pita, hummus, olive oil, grilled vegetables, legumes, yoghurt',
+  };
+
+  const anchors = cuisines
+    .map((c) => {
+      const key = c.toLowerCase().trim();
+      const anchor = Object.entries(CUISINE_ANCHORS).find(([k]) => key.includes(k))?.[1];
+      return anchor ? `  • ${c}: typical foods include — ${anchor}` : null;
+    })
+    .filter(Boolean)
+    .join('\n');
+
+  return `
+CUISINE PREFERENCE — MANDATORY (client has specifically chosen: ${cuisineList}):
+Build ALL meals using the cooking style, staple ingredients, and typical dishes of the client's preferred cuisine(s).
+${anchors ? `Reference foods for each cuisine:\n${anchors}` : ''}
+- At least 80% of meals each day must reflect the client's cuisine preference.
+- Do NOT default to generic North Indian (roti-dal-sabzi) if the client has selected a different cuisine.
+- If multiple cuisines are listed, rotate between them across days so the client gets variety.
+- Adapt traditional recipes to meet the macro targets — e.g. use less oil, add more protein-rich ingredients.
+`;
+};
+
 // Shared client details block reused in every prompt
 const clientBlock = (form: DietForm, vitals: ReturnType<typeof calcVitals>): string =>
   `CLIENT DETAILS:
 - Name: ${form.full_name ?? 'Client'}
-- Age: ${form.age ?? 'N/A'} | Gender: ${form.gender ?? 'N/A'}
+- Age: ${vitals.age} | Gender: ${form.gender ?? 'N/A'}
 - Height: ${vitals.heightCm.toFixed(1)} cm | Weight: ${vitals.weightKg.toFixed(1)} kg
 - BMI: ${vitals.bmi} (${vitals.bmi_category})
 - BMR: ${vitals.bmr} kcal/day | TDEE: ${vitals.tdee} kcal/day
@@ -976,7 +1090,7 @@ const clientBlock = (form: DietForm, vitals: ReturnType<typeof calcVitals>): str
 - Work Type: ${form.work_type ?? 'N/A'}
 - Workout Type: ${form.workout_type ?? 'none'}
 - Diet Type: ${dietTypeLabel(form.diet_type ?? null)}
-- Cuisine Preference: ${(form.cuisine_preference as string[])?.join(', ') ?? 'North Indian'}
+- Cuisine Preference: ${((form.cuisine_preference as string[])?.filter(Boolean).length ? (form.cuisine_preference as string[]).join(', ') : 'No specific preference — use a balanced mix of regional Indian cuisines')}
 - Food Allergies: ${(form.food_allergies as string[])?.join(', ') ?? 'none'}
 - Foods Disliked: ${form.foods_dislike ?? 'none'}
 - Favorite Foods: ${form.favorite_foods ?? 'N/A'}
@@ -987,7 +1101,9 @@ const clientBlock = (form: DietForm, vitals: ReturnType<typeof calcVitals>): str
 - Date of Birth: ${form.dob ?? 'N/A'}
 - City/State: ${form.city ?? ''}, ${form.state ?? ''}
 - Health Notes: ${form.health_notes ?? 'none'}
-- Final Notes / Personal Goals: ${form.final_notes ?? 'none'}`;
+- Final Notes / Personal Goals: ${form.final_notes ?? 'none'}
+- Preferred Meal Times: Breakfast ${form.breakfast_time ?? '8:00 AM'} | Lunch ${form.lunch_time ?? '1:00 PM'} | Evening Snack ${form.evening_snack_time ?? '5:00 PM'} | Dinner ${form.dinner_time ?? '8:00 PM'}
+- Whey Protein Preference: ${form.whey_protein === 'yes_using' ? 'Already using — include in plan' : form.whey_protein === 'no_food_only' ? 'No supplements — food only' : 'Open to trying if needed'}`;
 
 // Injected just before the JSON template in every prompt.
 // Forces the model to confirm it has read every constraint before writing its first meal.
@@ -1079,10 +1195,10 @@ CALORIE & PROTEIN TARGETS (calculated from client's TDEE of ${vitals.tdee} kcal/
 - Daily Carbs Target: ~${nt.carbsTarget} g/day
 - Daily Fat Target: ~${nt.fatTarget} g/day
 - Daily Fiber Target: ~${nt.fiberTarget} g/day (from dal, sabzi, whole grains, fruits — essential for digestion and nutrient absorption)
-${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${digestiveHealthBlock(form)}${smokeAlcoholBlock(form)}${genderNutritionBlock(form, nt)}${medicationTimingBlock(form)}${supplementGuidanceBlock(form)}${vegetarianProteinBoostBlock(form, nt)}${wheyProteinBlock(form, nt)}
+${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${digestiveHealthBlock(form)}${smokeAlcoholBlock(form)}${genderNutritionBlock(form, nt)}${medicationTimingBlock(form)}${supplementGuidanceBlock(form)}${cuisineEnforcementBlock(form)}${vegetarianProteinBoostBlock(form, nt)}${wheyProteinBlock(form, nt)}
 INSTRUCTIONS:
 1. Recipes must respect the diet type and strictly avoid disliked foods and allergens.
-2. Use Indian home-style recipes suited to their cuisine preference.
+2. Use recipes from the client's preferred cuisine(s) as specified above.
 3. Generate EXACTLY 4 featured recipes — no more, no fewer.
 4. Each recipe must include: name, cook_time, servings, calories, ingredients (6–8 items), steps (4–6 steps), macros.
 5. QUANTITY FORMAT (MANDATORY for all recipe ingredients): All ingredient quantities must be in grams (g) or millilitres (ml). Examples: "150g paneer", "200ml curd", "2 medium tomatoes (100g)", "1 tsp cumin seeds (3g)". NEVER use vague amounts like "some", "a handful", or "as needed".
@@ -1113,8 +1229,11 @@ const buildWeek1DaysPrompt = (
   nt: ReturnType<typeof calcNutritionTargets>,
   usedSwaps: string[] = [],
 ): string => {
-  const mk = Math.round((nt.calorieMin + nt.calorieMax) / 2); // midpoint kcal for examples
   const mp = nt.proteinTarget;
+  const bt = form.breakfast_time    ?? '8:00 AM';
+  const lt = form.lunch_time        ?? '1:00 PM';
+  const st = form.evening_snack_time ?? '5:00 PM';
+  const dt = form.dinner_time       ?? '8:00 PM';
   return `
 You are an expert Indian clinical dietitian. Generate EXACTLY 7 days for Week 1 of a ${totalWeeks}-week personalized Indian diet plan in strict JSON format.
 
@@ -1124,18 +1243,21 @@ CALORIE & MACRO TARGETS (calculated from client's TDEE of ${vitals.tdee} kcal/da
 - Daily Calorie Range: ${nt.calorieRange}
 - Daily Protein Target: ${nt.proteinRange}
 - Daily Fiber Target: ~${nt.fiberTarget} g/day (from dal, sabzi, whole grains, fruits)
-${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${digestiveHealthBlock(form)}${smokeAlcoholBlock(form)}${genderNutritionBlock(form, nt)}${medicationTimingBlock(form)}${vegetarianProteinBoostBlock(form, nt)}${wheyProteinBlock(form, nt)}
+${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${digestiveHealthBlock(form)}${smokeAlcoholBlock(form)}${genderNutritionBlock(form, nt)}${medicationTimingBlock(form)}${cuisineEnforcementBlock(form)}${vegetarianProteinBoostBlock(form, nt)}${wheyProteinBlock(form, nt)}
 CRITICAL RULES:
 - You MUST generate all 7 days: day 1, day 2, day 3, day 4, day 5, day 6, day 7. Do NOT stop early.
 - The "days" array must contain exactly 7 objects.
 - All meals must respect the diet type and strictly avoid disliked foods and allergens.
-- Use Indian home-style meals suited to their cuisine preference.
+- Use meals from the client's preferred cuisine(s) as specified above.
 - Each day must have breakfast, lunch, snack, and dinner as arrays of meal items.
 - Each meal item MUST include "protein_g": the estimated protein in grams for that item using standard Indian food nutrition values.
 - QUANTITY FORMAT (MANDATORY for every item across ALL 7 days): Always specify quantities in grams (g) or millilitres (ml). If using common units, always add the gram/ml equivalent in brackets. Examples: "2 medium chapati (60g)", "1 bowl dal (200ml)", "1 cup cooked rice (180g)", "150g paneer", "200ml curd". NEVER use vague quantities like "1 bowl", "1 cup", "1 piece", or "some" without the gram/ml value.
-- Include meal_timing for each day with realistic Indian meal times.
+- Use the client's preferred meal times for meal_timing in every day — DO NOT use generic times.
+- For EVERY meal item, set "kcal" to the estimated calorie count for that specific food using standard Indian food nutrition values (e.g. 1 bowl cooked dal 200ml ≈ 150 kcal, 1 medium chapati 30g ≈ 100 kcal, 100g paneer ≈ 265 kcal, 1 cup cooked rice 180g ≈ 240 kcal).
+- Set "total_kcal" as the EXACT SUM of all "kcal" values across breakfast + lunch + snack + dinner. Do NOT copy example numbers — the total must reflect the actual meals you wrote. The example JSON shows 0 as a placeholder; replace it with the real sum.
+- Aim for total_kcal to fall within ${nt.calorieMin}–${nt.calorieMax} kcal/day. If your meals fall short, add portion sizes or an extra item rather than inflating the number.
 - Set "total_protein_g" as the actual SUM of all protein_g values across breakfast + lunch + snack + dinner. Do NOT just echo the target.
-- Keep total_kcal between ${nt.calorieMin}–${nt.calorieMax} and total_protein_g between ${nt.proteinMin}–${nt.proteinMax} g/day.
+- Keep total_protein_g between ${nt.proteinMin}–${nt.proteinMax} g/day.
 - Include water_liters (2.5–3.5) for each day.
 - Never repeat the same meal across days within this week.
 - Include 3 smart_swaps and 3 weekly_notes.
@@ -1151,13 +1273,13 @@ Return ONLY this JSON structure (days array must have exactly 7 items):
     "focus": ["...", "...", "..."],
     "what_to_expect": "...",
     "days": [
-      { "day": 1, "breakfast": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "lunch": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "snack": [{"food":"...","quantity":"...","protein_g":0}], "dinner": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": ${mk - 50}, "total_protein_g": ${mp - 5}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
-      { "day": 2, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": ${mk - 20}, "total_protein_g": ${mp - 2}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
-      { "day": 3, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": ${mk - 40}, "total_protein_g": ${mp - 4}, "total_fiber_g": ${nt.fiberTarget - 2}, "water_liters": 2.5 },
-      { "day": 4, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": ${mk - 30}, "total_protein_g": ${mp - 3}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
-      { "day": 5, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": ${mk}, "total_protein_g": ${mp}, "total_fiber_g": ${nt.fiberTarget + 2}, "water_liters": 3.5 },
-      { "day": 6, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": ${mk - 50}, "total_protein_g": ${mp - 5}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
-      { "day": 7, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": ${mk - 10}, "total_protein_g": ${mp - 1}, "total_fiber_g": ${nt.fiberTarget + 1}, "water_liters": 3 }
+      { "day": 1, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 5}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
+      { "day": 2, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 2}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
+      { "day": 3, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 4}, "total_fiber_g": ${nt.fiberTarget - 2}, "water_liters": 2.5 },
+      { "day": 4, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 3}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
+      { "day": 5, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp}, "total_fiber_g": ${nt.fiberTarget + 2}, "water_liters": 3.5 },
+      { "day": 6, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 5}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
+      { "day": 7, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 1}, "total_fiber_g": ${nt.fiberTarget + 1}, "water_liters": 3 }
     ],
     "weekly_notes": ["...", "...", "..."],
     "smart_swaps": [{"instead_of":"...","choose":"..."},{"instead_of":"...","choose":"..."},{"instead_of":"...","choose":"..."}]
@@ -1176,8 +1298,11 @@ const buildWeekNPrompt = (
   nt: ReturnType<typeof calcNutritionTargets>,
   usedSwaps: string[] = [],
 ): string => {
-  const mk = Math.round((nt.calorieMin + nt.calorieMax) / 2);
   const mp = nt.proteinTarget;
+  const bt = form.breakfast_time     ?? '8:00 AM';
+  const lt = form.lunch_time         ?? '1:00 PM';
+  const st = form.evening_snack_time ?? '5:00 PM';
+  const dt = form.dinner_time        ?? '8:00 PM';
   return `
 You are an expert Indian clinical dietitian. Generate Week ${weekNumber} of a ${totalWeeks}-week personalized diet plan in strict JSON format.
 
@@ -1187,25 +1312,29 @@ CALORIE & MACRO TARGETS (calculated from client's TDEE of ${vitals.tdee} kcal/da
 - Daily Calorie Range: ${nt.calorieRange}
 - Daily Protein Target: ${nt.proteinRange}
 - Daily Fiber Target: ~${nt.fiberTarget} g/day (from dal, sabzi, whole grains, fruits)
-${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${digestiveHealthBlock(form)}${smokeAlcoholBlock(form)}${genderNutritionBlock(form, nt)}${medicationTimingBlock(form)}${vegetarianProteinBoostBlock(form, nt)}${wheyProteinBlock(form, nt)}
+${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${digestiveHealthBlock(form)}${smokeAlcoholBlock(form)}${genderNutritionBlock(form, nt)}${medicationTimingBlock(form)}${cuisineEnforcementBlock(form)}${vegetarianProteinBoostBlock(form, nt)}${wheyProteinBlock(form, nt)}
 MEALS ALREADY USED IN PREVIOUS WEEKS — do NOT repeat any of these:
 ${usedMeals.slice(0, 150).join(', ')}
 
 INSTRUCTIONS:
 1. All meals must respect the diet type and strictly avoid disliked foods and allergens.
-2. Use Indian home-style meals suited to their cuisine preference.
+2. Use meals from the client's preferred cuisine(s) as specified above.
 3. Each day must have Breakfast, Lunch, Snack, and Dinner as arrays of meal items.
 4. Each meal item MUST include "protein_g": the estimated protein in grams for that item using standard Indian food nutrition values.
 5. QUANTITY FORMAT (MANDATORY for every item across ALL 7 days): Always specify quantities in grams (g) or millilitres (ml). If using common units, always add the gram/ml equivalent in brackets. Examples: "2 medium chapati (60g)", "1 bowl dal (200ml)", "1 cup cooked rice (180g)", "150g paneer", "200ml curd". NEVER use vague quantities like "1 bowl", "1 cup", "1 piece", or "some" without the gram/ml value.
-6. Include meal_timing for each day with realistic Indian meal times.
-7. Set "total_protein_g" as the actual SUM of all protein_g values across all meals. Do NOT just echo the target.
-8. Keep total_kcal between ${nt.calorieMin}–${nt.calorieMax} and total_protein_g between ${nt.proteinMin}–${nt.proteinMax} g/day.
-9. Include water_liters (2.5–3.5) for each day.
-10. Generate exactly 7 days for Week ${weekNumber}.
-11. Never repeat the same meals within this week or from the already used meals list above.
-12. Include smart swaps and weekly tips for Week ${weekNumber}.
-${smartSwapConstraintsBlock(form, usedSwaps)}13. Return VALID JSON only — no markdown, no comments, no code blocks.
-14. All numeric fields must be numbers, not strings.
+6. Use the client's preferred meal times for meal_timing in every day — DO NOT use generic times.
+7. For EVERY meal item, set "kcal" to the estimated calorie count for that specific food using standard Indian food nutrition values (e.g. 1 bowl cooked dal 200ml ≈ 150 kcal, 1 medium chapati 30g ≈ 100 kcal, 100g paneer ≈ 265 kcal, 1 cup cooked rice 180g ≈ 240 kcal).
+8. Set "total_kcal" as the EXACT SUM of all "kcal" values across breakfast + lunch + snack + dinner. Do NOT copy example numbers — the total must reflect the actual meals you wrote. The example JSON shows 0 as a placeholder; replace it with the real sum.
+9. Aim for total_kcal to fall within ${nt.calorieMin}–${nt.calorieMax} kcal/day. If your meals fall short, add portion sizes or an extra item rather than inflating the number.
+10. Set "total_protein_g" as the actual SUM of all protein_g values across all meals. Do NOT just echo the target.
+11. Keep total_protein_g between ${nt.proteinMin}–${nt.proteinMax} g/day.
+12. Include water_liters (2.5–3.5) for each day.
+13. Generate exactly 7 days for Week ${weekNumber}.
+14. Never repeat the same meals within this week or from the already used meals list above.
+15. Include smart swaps and weekly tips for Week ${weekNumber}.
+16. Return VALID JSON only — no markdown, no comments, no code blocks.
+17. All numeric fields must be numbers, not strings.
+${smartSwapConstraintsBlock(form, usedSwaps)}
 ${finalCheckBlock(form, nt)}
 Return ONLY this JSON structure (days array MUST have exactly 7 items):
 {
@@ -1216,13 +1345,13 @@ Return ONLY this JSON structure (days array MUST have exactly 7 items):
     "focus": ["...", "...", "..."],
     "what_to_expect": "...",
     "days": [
-      { "day": 1, "breakfast": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "lunch": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "snack": [{"food":"...","quantity":"...","protein_g":0}], "dinner": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": ${mk - 50}, "total_protein_g": ${mp - 5}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
-      { "day": 2, "breakfast": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "lunch": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "snack": [{"food":"...","quantity":"...","protein_g":0}], "dinner": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": ${mk - 20}, "total_protein_g": ${mp - 2}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
-      { "day": 3, "breakfast": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "lunch": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "snack": [{"food":"...","quantity":"...","protein_g":0}], "dinner": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": ${mk - 40}, "total_protein_g": ${mp - 4}, "total_fiber_g": ${nt.fiberTarget - 2}, "water_liters": 2.5 },
-      { "day": 4, "breakfast": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "lunch": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "snack": [{"food":"...","quantity":"...","protein_g":0}], "dinner": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": ${mk - 30}, "total_protein_g": ${mp - 3}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
-      { "day": 5, "breakfast": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "lunch": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "snack": [{"food":"...","quantity":"...","protein_g":0}], "dinner": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": ${mk}, "total_protein_g": ${mp}, "total_fiber_g": ${nt.fiberTarget + 2}, "water_liters": 3.5 },
-      { "day": 6, "breakfast": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "lunch": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "snack": [{"food":"...","quantity":"...","protein_g":0}], "dinner": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": ${mk - 50}, "total_protein_g": ${mp - 5}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
-      { "day": 7, "breakfast": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "lunch": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "snack": [{"food":"...","quantity":"...","protein_g":0}], "dinner": [{"food":"...","quantity":"...","protein_g":0},{"food":"...","quantity":"...","protein_g":0}], "meal_timing": {"breakfast":"8:00 AM","lunch":"1:00 PM","snack":"5:00 PM","dinner":"8:00 PM"}, "total_kcal": ${mk - 10}, "total_protein_g": ${mp - 1}, "total_fiber_g": ${nt.fiberTarget + 1}, "water_liters": 3 }
+      { "day": 1, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 5}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
+      { "day": 2, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 2}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
+      { "day": 3, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 4}, "total_fiber_g": ${nt.fiberTarget - 2}, "water_liters": 2.5 },
+      { "day": 4, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 3}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
+      { "day": 5, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp}, "total_fiber_g": ${nt.fiberTarget + 2}, "water_liters": 3.5 },
+      { "day": 6, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 5}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
+      { "day": 7, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 1}, "total_fiber_g": ${nt.fiberTarget + 1}, "water_liters": 3 }
     ],
     "weekly_notes": ["...", "...", "..."],
     "smart_swaps": [{"instead_of":"...","choose":"..."},{"instead_of":"...","choose":"..."},{"instead_of":"...","choose":"..."}]
@@ -1250,6 +1379,28 @@ const validateAndFixWeeks = (
     days: (week.days ?? []).map((day) => {
       let kcal    = Number(day.total_kcal    ?? 0);
       let protein = Number(day.total_protein_g ?? 0);
+
+      // Always prefer the item-level kcal sum — it reflects the actual food the AI generated.
+      // The AI has a strong tendency to echo our template total_kcal values rather than computing
+      // them from the meal items. Summing item kcals is always more honest.
+      const allItemsForKcal = [
+        ...(day.breakfast ?? []),
+        ...(day.lunch     ?? []),
+        ...(day.snack     ?? []),
+        ...(day.dinner    ?? []),
+      ];
+      const itemisedKcal = allItemsForKcal.reduce(
+        (sum, item) => sum + (Number((item as unknown as Record<string, unknown>).kcal) || 0),
+        0,
+      );
+      if (itemisedKcal > 400) {
+        if (Math.abs(kcal - itemisedKcal) > 50) {
+          console.warn(
+            `[validation] form ${formId} W${week.week} D${day.day}: total_kcal stated=${kcal} vs itemised sum=${itemisedKcal} — using itemised sum`,
+          );
+        }
+        kcal = itemisedKcal;
+      }
 
       // Fix: clearly invalid calorie (missing, zero, negative, or absurdly low)
       if (!kcal || kcal < 400) {
@@ -1316,9 +1467,12 @@ const sanitizeForbiddenFoods = (
   dietType: string | null,
   formId: number,
   form?: DietForm | null,
-): WeekPlan[] => {
+  featuredRecipes?: FeaturedRecipe[],
+): { weeks: WeekPlan[]; featured_recipes: FeaturedRecipe[] } => {
   const forbidden = forbiddenKeywordsForDiet(dietType);
-  if (forbidden.length === 0) return weeks;
+  if (forbidden.length === 0) {
+    return { weeks, featured_recipes: featuredRecipes ?? [] };
+  }
 
   // Determine safest replacement for the client's specific constraints:
   // dairy allergy → can't use paneer; thyroid + dairy allergy → can't use tofu/soy either
@@ -1339,7 +1493,7 @@ const sanitizeForbiddenFoods = (
     });
   };
 
-  return weeks.map((week) => ({
+  const sanitizedWeeks = weeks.map((week) => ({
     ...week,
     days: (week.days ?? []).map((day) => {
       const sanitizeMeal = (items: { food: string; quantity: string; protein_g: number }[], mealName: string) =>
@@ -1363,6 +1517,23 @@ const sanitizeForbiddenFoods = (
       };
     }),
   }));
+
+  // Sanitize featured recipe ingredients — remove any forbidden ingredient strings
+  const sanitizedRecipes = (featuredRecipes ?? []).map((recipe) => ({
+    ...recipe,
+    ingredients: (recipe.ingredients ?? []).filter((ingredient) => {
+      if (isForbidden(ingredient)) {
+        console.warn(
+          `[diet-type-guard] form ${formId} recipe "${recipe.name}": ` +
+          `ingredient "${ingredient}" is forbidden for ${dietType ?? 'vegetarian'} — removed`,
+        );
+        return false;
+      }
+      return true;
+    }),
+  }));
+
+  return { weeks: sanitizedWeeks, featured_recipes: sanitizedRecipes };
 };
 
 // Extract all food names from a generated week to prevent repetition in subsequent weeks
@@ -1498,14 +1669,21 @@ export const generateAndDeliverDietPlan = async (
     const validatedWeeks = validateAndFixWeeks(allWeeks, nt, formId);
 
     // Remove any forbidden foods the AI hallucinated (e.g. eggs in a vegetarian plan)
-    const sanitizedWeeks = sanitizeForbiddenFoods(validatedWeeks, form.diet_type ?? null, formId, form);
+    // Also sanitizes featured recipe ingredients against the same forbidden-food list
+    const { weeks: sanitizedWeeks, featured_recipes: sanitizedRecipes } = sanitizeForbiddenFoods(
+      validatedWeeks,
+      form.diet_type ?? null,
+      formId,
+      form,
+      week1Result.featured_recipes as FeaturedRecipe[],
+    );
 
     // Merge into the same final structure — response shape is unchanged
     generatedData = {
       summary:          week1Result.summary,
       hydration_guide:  week1Result.hydration_guide,
       general_tips:     week1Result.general_tips,
-      featured_recipes: week1Result.featured_recipes,
+      featured_recipes: sanitizedRecipes,
       weeks:            sanitizedWeeks,
     };
   } catch (lastAiErr) {
@@ -1623,18 +1801,30 @@ export const generateAndDeliverDietPlan = async (
     }
   }
 
+  const deliveryMethods = (form.delivery_method as string[]) ?? [];
+  const wantsEmail     = deliveryMethods.includes('email');
+  const wantsWhatsApp  = deliveryMethods.includes('whatsapp');
+
   // ── Step 4: Send email ──────────────────────────────────────────────────────
-  const recipientEmail = form.email ?? null;
-  if (recipientEmail && pdfUrl) {
+  if (wantsEmail && form.email && pdfUrl) {
     try {
       const { subject, html, text } = dietPlanReadyEmail(
         form.full_name ?? 'there',
         pdfUrl,
         cashbackAmount,
       );
-      await sendEmail({ to: recipientEmail, subject, html, text });
+      await sendEmail({ to: form.email, subject, html, text });
     } catch (mailErr) {
       console.error('[delivery] Email error:', mailErr);
+    }
+  }
+
+  // ── Step 5: Send WhatsApp ───────────────────────────────────────────────────
+  if (wantsWhatsApp && form.whatsapp && pdfUrl) {
+    try {
+      await sendDietPlanWhatsApp(form.whatsapp, form.full_name ?? 'there', pdfUrl);
+    } catch (waErr) {
+      console.error('[delivery] WhatsApp error:', waErr);
     }
   }
 };

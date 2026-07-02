@@ -20,6 +20,10 @@ export interface DietForm {
   activity_level: 'sedentary' | 'lightly_active' | 'moderately_active' | 'very_active' | 'super_active' | null;
   work_type: 'desk_job' | 'standing_job' | 'physical_job' | null;
   workout_type: 'none' | 'gym' | 'yoga' | 'running' | 'sports' | 'mixed' | null;
+  breakfast_time: string | null;
+  lunch_time: string | null;
+  evening_snack_time: string | null;
+  dinner_time: string | null;
 
   // Step 3: Food Preferences
   diet_type: 'vegetarian' | 'non_vegetarian' | 'eggetarian' | null;
@@ -27,6 +31,7 @@ export interface DietForm {
   food_allergies: string[] | null;
   foods_dislike: string | null;
   favorite_foods: string | null;
+  whey_protein: 'yes_using' | 'open_to_trying' | 'no_food_only' | null;
 
   // Step 4: Health & Medical
   medical_conditions: string[] | null;
@@ -62,8 +67,9 @@ const JSON_FIELDS = [
 const ALLOWED_FIELDS = new Set([
   'user_id', 'plan_type', 'full_name', 'age', 'gender', 'dob',
   'height_unit', 'height', 'weight_unit', 'weight', 'goals',
-  'activity_level', 'work_type', 'workout_type', 'diet_type',
-  'cuisine_preference', 'food_allergies', 'foods_dislike', 'favorite_foods',
+  'activity_level', 'work_type', 'workout_type',
+  'breakfast_time', 'lunch_time', 'evening_snack_time', 'dinner_time',
+  'diet_type', 'cuisine_preference', 'food_allergies', 'foods_dislike', 'favorite_foods', 'whey_protein',
   'medical_conditions', 'other_condition', 'on_medication', 'medications',
   'digestive_health', 'smoke_alcohol', 'health_notes', 'contact_name',
   'whatsapp', 'email', 'delivery_method', 'city', 'state', 'state_code', 'final_notes',

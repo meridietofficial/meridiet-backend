@@ -73,6 +73,11 @@ const envSchema = z.object({
   MSG91_OTP_EXPIRY_MINUTES: z.coerce.number().default(5),
   MSG91_OTP_LENGTH: z.coerce.number().default(4),
 
+  // MSG91 WhatsApp
+  MSG91_WHATSAPP_INTEGRATED_NUMBER: z.string().default(''),
+  MSG91_WHATSAPP_CONFIRMATION_TEMPLATE: z.string().default('meri_diet_form_received'),
+  MSG91_WHATSAPP_DIET_PLAN_TEMPLATE: z.string().default('meri_diet_plan_ready'),
+
   // Encryption — AES-256-GCM key for sensitive fields (account numbers)
   // Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
   ACCOUNT_ENCRYPTION_KEY: z

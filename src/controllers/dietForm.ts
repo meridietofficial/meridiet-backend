@@ -5,6 +5,7 @@ import { successResponse, errorResponse } from '../utils/response';
 import { sendEmail } from '../services/email';
 import { dietFormConfirmationEmail } from '../services/emails/dietFormConfirmation';
 import { generateAndDeliverDietPlan } from '../services/dietPlanDelivery';
+import { sendFormReceivedWhatsApp } from '../services/whatsapp';
 
 const PLAN_DURATION_LABELS: Record<number, string> = {
   1: '1 Week',
@@ -45,9 +46,12 @@ export const finalizeDietForm = async (req: Request, res: Response) => {
 
     const userId = form.user_id;
 
+    const deliveryMethods = (form.delivery_method as string[]) ?? [];
+    const wantsEmail     = deliveryMethods.includes('email');
+    const wantsWhatsApp  = deliveryMethods.includes('whatsapp');
+
     // Fire-and-forget confirmation email
-    const recipientEmail = form.email ?? null;
-    if (recipientEmail) {
+    if (wantsEmail && form.email) {
       const { subject, html, text } = dietFormConfirmationEmail(
         form.full_name ?? 'there',
         {
@@ -56,8 +60,15 @@ export const finalizeDietForm = async (req: Request, res: Response) => {
           planDuration: PLAN_DURATION_LABELS[form.plan_type ?? 1] ?? '1 Week',
         },
       );
-      void sendEmail({ to: recipientEmail, subject, html, text }).catch((err) => {
+      void sendEmail({ to: form.email, subject, html, text }).catch((err) => {
         console.error('Diet form confirmation email failed:', err);
+      });
+    }
+
+    // Fire-and-forget WhatsApp confirmation
+    if (wantsWhatsApp && form.whatsapp) {
+      void sendFormReceivedWhatsApp(form.whatsapp, form.full_name ?? 'there').catch((err) => {
+        console.error('Diet form confirmation WhatsApp failed:', err);
       });
     }
 

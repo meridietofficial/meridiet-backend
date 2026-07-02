@@ -3,6 +3,7 @@ import { query, execute } from '../config/database';
 export interface MealItem {
   food: string;
   quantity: string;
+  kcal?: number;
   protein_g: number;
 }
 

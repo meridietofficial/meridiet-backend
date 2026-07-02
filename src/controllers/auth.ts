@@ -6,7 +6,8 @@ import { findDietitianByUserId, findDietitianById, formatDietitianRow } from '..
 import { env } from '../config/env';
 import { BRAND } from '../config/brand';
 import { successResponse, errorResponse } from '../utils/response';
-import { sendOtp, verifyOtp, resendOtp } from '../services/otp';
+import { generateOtp, sendOtp, verifyOtp, resendOtp } from '../services/otp';
+import { saveOtp, getLatestOtp, markOtpVerified } from '../models/PhoneOtp';
 import { sendEmail } from '../services/email';
 import { passwordResetEmail } from '../services/emails/passwordReset';
 import { userWelcomeEmail } from '../services/emails/userWelcome';
@@ -259,12 +260,13 @@ export const sendPhoneOtp = async (req: Request, res: Response) => {
     const existing = await findUserByPhone(phone_code, phone_number);
     if (existing) return errorResponse(res, 409, 'Phone number is already registered');
 
-    const result = await sendOtp(phone_code, phone_number);
+    const otp = generateOtp();
+    await saveOtp(phone_code, phone_number, otp);
+
+    const result = await sendOtp(phone_code, phone_number, otp);
     if (!result.ok) return errorResponse(res, 502, result.message || 'Failed to send OTP');
 
-    return successResponse(res, 200, 'OTP sent successfully', {
-      request_id: result.requestId,
-    });
+    return successResponse(res, 200, 'OTP sent successfully');
   } catch (err) {
     console.error('Send OTP error:', err);
     return errorResponse(res, 500, 'Something went wrong');
@@ -273,7 +275,7 @@ export const sendPhoneOtp = async (req: Request, res: Response) => {
 
 // POST /api/v1/auth/verify-otp
 // Body: { phone_code, phone_number, otp }
-// Verifies the OTP with MSG91. Frontend should proceed to /register on success.
+// Verifies the OTP against DB. Frontend should proceed to /register on success.
 export const verifyPhoneOtp = async (req: Request, res: Response) => {
   try {
     const { phone_code, phone_number, otp } = req.body;
@@ -282,12 +284,15 @@ export const verifyPhoneOtp = async (req: Request, res: Response) => {
       return errorResponse(res, 400, 'phone_code, phone_number and otp are required');
     }
 
-    const result = await verifyOtp(phone_code, phone_number, otp);
+    const record = await getLatestOtp(phone_code, phone_number);
+    if (!record) return errorResponse(res, 400, 'No OTP found. Please request a new one');
+
+    const result = await verifyOtp(phone_code, phone_number, otp, record.otp, record.expires_at);
     if (!result.ok) return errorResponse(res, 400, result.message || 'Invalid or expired OTP');
 
-    return successResponse(res, 200, 'Phone number verified successfully', {
-      verified: true,
-    });
+    await markOtpVerified(phone_code, phone_number);
+
+    return successResponse(res, 200, 'Phone number verified successfully', { verified: true });
   } catch (err) {
     console.error('Verify OTP error:', err);
     return errorResponse(res, 500, 'Something went wrong');
@@ -304,12 +309,13 @@ export const resendPhoneOtp = async (req: Request, res: Response) => {
       return errorResponse(res, 400, 'phone_code and phone_number are required');
     }
 
-    const result = await resendOtp(phone_code, phone_number);
+    const otp = generateOtp();
+    await saveOtp(phone_code, phone_number, otp);
+
+    const result = await resendOtp(phone_code, phone_number, otp);
     if (!result.ok) return errorResponse(res, 502, result.message || 'Failed to resend OTP');
 
-    return successResponse(res, 200, 'OTP resent successfully', {
-      request_id: result.requestId,
-    });
+    return successResponse(res, 200, 'OTP resent successfully');
   } catch (err) {
     console.error('Resend OTP error:', err);
     return errorResponse(res, 500, 'Something went wrong');

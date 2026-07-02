@@ -1680,7 +1680,7 @@ const dietitiansPage = (plan: DietPlan, page: number): string => {
       <div style="font-size:8.5px;font-weight:500;opacity:0.8;margin-bottom:8px;line-height:1.3;">Personalised consultation with a verified dietitian</div>
       <div style="border-top:1px solid rgba(0,0,0,0.15);padding-top:7px;">
         <div style="font-size:9px;font-weight:700;opacity:0.75;">Starting from</div>
-        <div style="font-size:26px;font-weight:900;line-height:1.1;">₹1,499</div>
+        <div style="font-size:26px;font-weight:900;line-height:1.1;">₹999</div>
         <div style="font-size:8px;font-weight:600;opacity:0.7;margin-top:1px;">Price set by each dietitian</div>
       </div>
     </div>
