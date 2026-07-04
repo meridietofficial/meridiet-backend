@@ -10,7 +10,7 @@ import {
   createDraftDietPlan,
   updateDietPlanStatus,
 } from '../models/DietPlan';
-import { generateAndDeliverDietPlan } from '../services/dietPlanDelivery';
+import { generateAndDeliverDietPlan, deliverDietPlanToUser } from '../services/dietPlanDelivery';
 import { successResponse, errorResponse } from '../utils/response';
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -137,18 +137,15 @@ export const generateFromDraft = async (req: Request, res: Response) => {
       return errorResponse(res, 400, 'Plan must be in draft status to generate');
     }
 
-    // Run existing pipeline in background — it will:
-    //   1. Generate via Gemini AI
-    //   2. Create PDF
-    //   3. Email the diet chart to the user automatically
+    // Run pipeline in background — generates AI plan + PDF, then auto-delivers to user
     void generateAndDeliverDietPlan(
       plan.form_id,
       plan.user_id,
       undefined,
       dietitian.id,
       plan.appointment_id,
-      plan.id,          // reuse this draft plan record (don't create a new one)
-    ).catch((err) => console.error('[dietitian generate] pipeline error:', err));
+      plan.id,
+    ).then(() => deliverDietPlanToUser(plan.id)).catch((err) => console.error('[dietitian generate] pipeline error:', err));
 
     return successResponse(res, 202, 'Generation started. The diet chart will be emailed to the user once ready.');
   } catch (err) {

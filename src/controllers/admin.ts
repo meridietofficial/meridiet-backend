@@ -394,23 +394,25 @@ export const getDietFormRequests = async (req: Request, res: Response) => {
 };
 
 // GET /api/v1/admin/paid-diet-charts
-// Params: page, limit, search, planType, startDate, endDate, sortBy, sortOrder
-// Only returns diet forms that are paid AND have a completed PDF generated
+// Params: page, limit, search, planType, planStatus, startDate, endDate, sortBy, sortOrder
+// Returns all diet forms that have a paid payment, along with their associated plan status.
 export const getPaidDietCharts = async (req: Request, res: Response) => {
   try {
-    const page      = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit     = Math.min(10000, Math.max(1, parseInt(req.query.limit as string) || 10));
-    const search    = (req.query.search as string | undefined)?.trim();
-    const planType  = req.query.planType  as string | undefined;
-    const startDate = req.query.startDate as string | undefined;
-    const endDate   = req.query.endDate   as string | undefined;
-    const offset    = (page - 1) * limit;
+    const page       = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit      = Math.min(10000, Math.max(1, parseInt(req.query.limit as string) || 10));
+    const search     = (req.query.search as string | undefined)?.trim();
+    const planType   = req.query.planType   as string | undefined;
+    const planStatus = req.query.planStatus as string | undefined;
+    const startDate  = req.query.startDate  as string | undefined;
+    const endDate    = req.query.endDate    as string | undefined;
+    const offset     = (page - 1) * limit;
 
     const VALID_SORT: Record<string, string> = { created_at: 'df.created_at', full_name: 'df.full_name' };
     const sortField = VALID_SORT[req.query.sortBy as string ?? ''] ?? 'df.created_at';
     const sortOrder = (req.query.sortOrder as string | undefined)?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
-    const validPlanTypes = ['1', '2', '3'];
+    const validPlanTypes    = ['1', '2', '3'];
+    const validPlanStatuses = ['generating', 'completed', 'failed', 'sent'];
 
     const params: unknown[] = [];
     const conditions: string[] = ['1=1'];
@@ -425,6 +427,11 @@ export const getPaidDietCharts = async (req: Request, res: Response) => {
       conditions.push(`df.plan_type = ${parseInt(planType)}`);
     }
 
+    if (planStatus && validPlanStatuses.includes(planStatus)) {
+      conditions.push('dp.status = ?');
+      params.push(planStatus);
+    }
+
     if (startDate) { conditions.push('df.created_at >= ?'); params.push(`${startDate} 00:00:00`); }
     if (endDate)   { conditions.push('df.created_at <= ?'); params.push(`${endDate} 23:59:59`);   }
 
@@ -433,12 +440,13 @@ export const getPaidDietCharts = async (req: Request, res: Response) => {
     const JSON_FIELDS = ['goals', 'cuisine_preference', 'food_allergies', 'medical_conditions', 'delivery_method'];
 
     const [rows, countRows] = await Promise.all([
-      query<DietForm & { plan_id: number | null; plan_status: string | null; pdf_url: string | null; payment_amount: number }>(
+      query<DietForm & { plan_id: number | null; plan_status: string | null; pdf_url: string | null; sent_at: Date | null; payment_amount: number }>(
         `SELECT
           df.*,
           dp.id          AS plan_id,
           dp.status      AS plan_status,
           dp.pdf_url     AS pdf_url,
+          dp.sent_at     AS sent_at,
           p.amount       AS payment_amount
          FROM diet_forms df
          INNER JOIN payments p ON p.diet_form_id = df.id AND p.status = 'paid'

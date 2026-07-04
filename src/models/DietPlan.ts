@@ -57,7 +57,8 @@ export interface DietPlan {
   user_id: number | null;
   dietitian_id: number | null;
   appointment_id: number | null;
-  status: 'generating' | 'completed' | 'failed' | 'draft' | 'archived';
+  status: 'generating' | 'completed' | 'failed' | 'draft' | 'archived' | 'sent';
+  sent_at: Date | null;
 
   // Calculated vitals
   bmi: number | null;
@@ -441,6 +442,144 @@ export const updateDietPlanStatus = async (
   status: DietPlan['status'],
 ) => {
   await execute('UPDATE diet_plans SET status = ? WHERE id = ?', [status, id]);
+};
+
+// ── Admin diet plan functions ─────────────────────────────────────────────────
+
+export interface AdminDietPlanListRow {
+  id: number;
+  form_id: number;
+  user_id: number | null;
+  status: DietPlan['status'];
+  client_name: string | null;
+  primary_goal: string | null;
+  plan_duration: string | null;
+  diet_type: string | null;
+  calorie_range: string | null;
+  pdf_url: string | null;
+  sent_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+  // From diet_forms join
+  form_full_name: string | null;
+  form_email: string | null;
+  form_whatsapp: string | null;
+  form_delivery_method: string | null;
+  form_plan_type: number | null;
+  form_goals: string | null;
+  form_diet_type: string | null;
+  form_medical_conditions: string | null;
+}
+
+export const findAllDietPlansForAdmin = async (
+  status: string | undefined,
+  page: number,
+  limit: number,
+  search: string | undefined,
+) => {
+  const offset = (page - 1) * limit;
+  const conditions: string[] = ['dp.dietitian_id IS NULL'];
+  const params: unknown[] = [];
+
+  if (status) {
+    conditions.push('dp.status = ?');
+    params.push(status);
+  }
+  if (search) {
+    conditions.push('(f.full_name LIKE ? OR f.email LIKE ? OR f.whatsapp LIKE ?)');
+    const like = `%${search}%`;
+    params.push(like, like, like);
+  }
+
+  const where = `WHERE ${conditions.join(' AND ')}`;
+
+  const [rows, countRows] = await Promise.all([
+    query<AdminDietPlanListRow>(
+      `SELECT
+         dp.id, dp.form_id, dp.user_id, dp.status,
+         dp.client_name, dp.primary_goal, dp.plan_duration, dp.diet_type,
+         dp.calorie_range, dp.pdf_url, dp.sent_at, dp.created_at, dp.updated_at,
+         f.full_name          AS form_full_name,
+         f.email              AS form_email,
+         f.whatsapp           AS form_whatsapp,
+         f.delivery_method    AS form_delivery_method,
+         f.plan_type          AS form_plan_type,
+         f.goals              AS form_goals,
+         f.diet_type          AS form_diet_type,
+         f.medical_conditions AS form_medical_conditions
+       FROM diet_plans dp
+       LEFT JOIN diet_forms f ON f.id = dp.form_id
+       ${where}
+       ORDER BY dp.created_at DESC
+       LIMIT ${limit} OFFSET ${offset}`,
+      params,
+    ),
+    query<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM diet_plans dp
+       LEFT JOIN diet_forms f ON f.id = dp.form_id
+       ${where}`,
+      params,
+    ),
+  ]);
+
+  const plans = rows.map((r) => ({
+    ...r,
+    client_name:          r.client_name ?? r.form_full_name ?? null,
+    form_goals:           parseJson<string[]>(r.form_goals as unknown as string | null),
+    form_medical_conditions: parseJson<string[]>(r.form_medical_conditions as unknown as string | null),
+    form_delivery_method: parseJson<string[]>(r.form_delivery_method as unknown as string | null),
+  }));
+
+  return { plans, total: countRows[0]?.total ?? 0 };
+};
+
+export const updateAdminDietPlanContent = async (
+  id: number,
+  data: {
+    client_name?: string;
+    calorie_range?: string;
+    protein_target_g?: number;
+    carbs_target_g?: number;
+    fat_target_g?: number;
+    primary_goal?: string;
+    plan_duration?: string;
+    diet_type?: string;
+    hydration_guide?: string;
+    weeks?: WeekPlan[];
+    general_tips?: string[];
+    featured_recipes?: FeaturedRecipe[];
+    notes?: string;
+  },
+) => {
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+
+  const add = (col: string, val: unknown) => { sets.push(`${col} = ?`); vals.push(val); };
+
+  if (data.client_name      !== undefined) add('client_name',      data.client_name);
+  if (data.calorie_range    !== undefined) add('calorie_range',    data.calorie_range);
+  if (data.protein_target_g !== undefined) add('protein_target_g', data.protein_target_g);
+  if (data.carbs_target_g   !== undefined) add('carbs_target_g',   data.carbs_target_g);
+  if (data.fat_target_g     !== undefined) add('fat_target_g',     data.fat_target_g);
+  if (data.primary_goal     !== undefined) add('primary_goal',     data.primary_goal);
+  if (data.plan_duration    !== undefined) add('plan_duration',    data.plan_duration);
+  if (data.diet_type        !== undefined) add('diet_type',        data.diet_type);
+  if (data.hydration_guide  !== undefined) add('hydration_guide',  data.hydration_guide);
+  if (data.weeks            !== undefined) add('weeks',            JSON.stringify(data.weeks));
+  if (data.general_tips     !== undefined) add('general_tips',     JSON.stringify(data.general_tips));
+  if (data.featured_recipes !== undefined) add('featured_recipes', JSON.stringify(data.featured_recipes));
+  if (data.notes            !== undefined) add('notes',            data.notes);
+
+  if (sets.length === 0) return;
+  vals.push(id);
+  await execute(`UPDATE diet_plans SET ${sets.join(', ')} WHERE id = ?`, vals);
+};
+
+export const markDietPlanSent = async (id: number) => {
+  await execute(
+    "UPDATE diet_plans SET status = 'sent', sent_at = NOW() WHERE id = ?",
+    [id],
+  );
 };
 
 export const updateDraftPlanData = async (

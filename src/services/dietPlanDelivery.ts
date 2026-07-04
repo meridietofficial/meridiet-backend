@@ -9,14 +9,11 @@ import {
   updateDietPlanStatus,
   findDietPlanById,
   findDietPlanByFormId,
-  saveDietPlanPdfUrl,
 } from '../models/DietPlan';
 import type { WeekPlan, FeaturedRecipe } from '../models/DietPlan';
 import { getSetting } from '../models/Setting';
 import { findPaidPaymentByDietFormId, incrementMonthsGenerated } from '../models/Payment';
 import { creditWallet } from '../models/Wallet';
-import { generateDietPlanPdf } from './dietPlanPdf';
-import { uploadBufferToS3 } from './uploadToS3';
 import { sendEmail } from './email';
 import { dietPlanReadyEmail } from './emails/dietPlanReady';
 import { sendDietPlanWhatsApp } from './whatsapp';
@@ -223,7 +220,7 @@ const calcNutritionTargets = (form: DietForm, vitals: ReturnType<typeof calcVita
   }
 
   return {
-    calorieMin, calorieMax,
+    calorieMin, calorieMax, calorieTarget,
     calorieRange: `${calorieMin}–${calorieMax} kcal/day`,
     proteinTarget, proteinMin, proteinMax,
     proteinRange: `${proteinMin}–${proteinMax} g/day`,
@@ -1256,6 +1253,12 @@ CRITICAL RULES:
 - For EVERY meal item, set "kcal" to the estimated calorie count for that specific food using standard Indian food nutrition values (e.g. 1 bowl cooked dal 200ml ≈ 150 kcal, 1 medium chapati 30g ≈ 100 kcal, 100g paneer ≈ 265 kcal, 1 cup cooked rice 180g ≈ 240 kcal).
 - Set "total_kcal" as the EXACT SUM of all "kcal" values across breakfast + lunch + snack + dinner. Do NOT copy example numbers — the total must reflect the actual meals you wrote. The example JSON shows 0 as a placeholder; replace it with the real sum.
 - Aim for total_kcal to fall within ${nt.calorieMin}–${nt.calorieMax} kcal/day. If your meals fall short, add portion sizes or an extra item rather than inflating the number.
+- CALORIE DISTRIBUTION PER MEAL — each slot must hit these kcal targets so the day total reaches ${nt.calorieMin}–${nt.calorieMax} kcal:
+  • Breakfast: ${Math.round(nt.calorieTarget * 0.25)}–${Math.round(nt.calorieTarget * 0.27)} kcal — include a base item (oats/paratha/chilla/idli: 300–450 kcal) + protein source (paneer/tofu/curd: 120–260 kcal) + healthy fat (nuts/ghee: 100–175 kcal)
+  • Lunch: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — include protein dish 150–200g (300–400 kcal) + legume/dal 1.5–2 cups (200–300 kcal) + 2–3 roti OR 1 cup rice (180–280 kcal)
+  • Snack: ${Math.round(nt.calorieTarget * 0.11)}–${Math.round(nt.calorieTarget * 0.13)} kcal — e.g. 50g nuts/chana (200 kcal) + 200g curd/yogurt (120 kcal), or fruit + peanut butter (220 kcal)
+  • Dinner: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — include protein dish 150g (280–400 kcal) + dal 1.5 cups (150–200 kcal) + 2 roti/1 cup rice (180–240 kcal) + curd 200ml (120 kcal)
+  If any meal falls below its target, ADD more food (extra roti, extra dal, 1 tsp ghee, 30g nuts, extra curd) — do NOT reduce another meal to compensate.
 - Set "total_protein_g" as the actual SUM of all protein_g values across breakfast + lunch + snack + dinner. Do NOT just echo the target.
 - Keep total_protein_g between ${nt.proteinMin}–${nt.proteinMax} g/day.
 - Include water_liters (2.5–3.5) for each day.
@@ -1326,6 +1329,12 @@ INSTRUCTIONS:
 7. For EVERY meal item, set "kcal" to the estimated calorie count for that specific food using standard Indian food nutrition values (e.g. 1 bowl cooked dal 200ml ≈ 150 kcal, 1 medium chapati 30g ≈ 100 kcal, 100g paneer ≈ 265 kcal, 1 cup cooked rice 180g ≈ 240 kcal).
 8. Set "total_kcal" as the EXACT SUM of all "kcal" values across breakfast + lunch + snack + dinner. Do NOT copy example numbers — the total must reflect the actual meals you wrote. The example JSON shows 0 as a placeholder; replace it with the real sum.
 9. Aim for total_kcal to fall within ${nt.calorieMin}–${nt.calorieMax} kcal/day. If your meals fall short, add portion sizes or an extra item rather than inflating the number.
+9a. CALORIE DISTRIBUTION PER MEAL — each slot must hit these kcal targets so the day total reaches ${nt.calorieMin}–${nt.calorieMax} kcal:
+  • Breakfast: ${Math.round(nt.calorieTarget * 0.25)}–${Math.round(nt.calorieTarget * 0.27)} kcal — include a base item (oats/paratha/chilla/idli: 300–450 kcal) + protein source (paneer/tofu/curd: 120–260 kcal) + healthy fat (nuts/ghee: 100–175 kcal)
+  • Lunch: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — include protein dish 150–200g (300–400 kcal) + legume/dal 1.5–2 cups (200–300 kcal) + 2–3 roti OR 1 cup rice (180–280 kcal)
+  • Snack: ${Math.round(nt.calorieTarget * 0.11)}–${Math.round(nt.calorieTarget * 0.13)} kcal — e.g. 50g nuts/chana (200 kcal) + 200g curd/yogurt (120 kcal), or fruit + peanut butter (220 kcal)
+  • Dinner: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — include protein dish 150g (280–400 kcal) + dal 1.5 cups (150–200 kcal) + 2 roti/1 cup rice (180–240 kcal) + curd 200ml (120 kcal)
+  If any meal falls below its target, ADD more food (extra roti, extra dal, 1 tsp ghee, 30g nuts, extra curd) — do NOT reduce another meal to compensate.
 10. Set "total_protein_g" as the actual SUM of all protein_g values across all meals. Do NOT just echo the target.
 11. Keep total_protein_g between ${nt.proteinMin}–${nt.proteinMax} g/day.
 12. Include water_liters (2.5–3.5) for each day.
@@ -1732,24 +1741,8 @@ export const generateAndDeliverDietPlan = async (
     featured_recipes: (generatedData.featured_recipes as FeaturedRecipe[])   ?? [],
   }, 'completed');
 
-  // Re-fetch to get the fully parsed plan for PDF generation
-  const completedPlan = await findDietPlanByFormId(formId);
-  if (!completedPlan) return;
-
-  // ── Step 2: Generate PDF ────────────────────────────────────────────────────
-  let pdfUrl: string | null = null;
-  try {
-    const pdfBuffer = await generateDietPlanPdf(completedPlan);
-    const s3Key = `diet-plans/form_${formId}_${Date.now()}.pdf`;
-    pdfUrl = await uploadBufferToS3(pdfBuffer, s3Key, 'application/pdf');
-    await saveDietPlanPdfUrl(completedPlan.id, pdfUrl);
-  } catch (pdfErr) {
-    console.error('[delivery] PDF generation/upload error:', pdfErr);
-    // Non-fatal — cashback + email still run
-  }
-
-  // ── Step 3: Wallet credit ────────────────────────────────────────────────────
-  let cashbackAmount: number | null = null;
+  // ── Step 2: Wallet credit ────────────────────────────────────────────────────
+  // PDF generation and delivery happen later when admin clicks "Send to User".
   if (userId) {
     try {
       const payment = await findPaidPaymentByDietFormId(formId);
@@ -1765,7 +1758,7 @@ export const generateAndDeliverDietPlan = async (
         if (payment.plan === '3_months' && payment.months_generated === 0) {
           // Transaction 1: cashback on full purchase amount
           if (cashbackEnabled && cashbackPercent > 0) {
-            cashbackAmount = parseFloat(((payment.amount * cashbackPercent) / 100).toFixed(2));
+            const cashbackAmount = parseFloat(((payment.amount * cashbackPercent) / 100).toFixed(2));
             await creditWallet({
               user_id: userId, source: 'reward', amount: cashbackAmount,
               description: `${cashbackPercent}% cashback from Diet Chart Generation`,
@@ -1787,7 +1780,7 @@ export const generateAndDeliverDietPlan = async (
         } else if (payment.plan !== '3_months') {
           // Regular cashback for 1-week / 1-month plans
           if (cashbackEnabled && cashbackPercent > 0) {
-            cashbackAmount = parseFloat(((payment.amount * cashbackPercent) / 100).toFixed(2));
+            const cashbackAmount = parseFloat(((payment.amount * cashbackPercent) / 100).toFixed(2));
             await creditWallet({
               user_id: userId, source: 'reward', amount: cashbackAmount,
               description: `${cashbackPercent}% cashback from Diet Chart Generation`,
@@ -1801,30 +1794,69 @@ export const generateAndDeliverDietPlan = async (
     }
   }
 
-  const deliveryMethods = (form.delivery_method as string[]) ?? [];
-  const wantsEmail     = deliveryMethods.includes('email');
-  const wantsWhatsApp  = deliveryMethods.includes('whatsapp');
+};
 
-  // ── Step 4: Send email ──────────────────────────────────────────────────────
-  if (wantsEmail && form.email && pdfUrl) {
+// ── Delivery helper — call this when the admin/dietitian clicks "Send" ────────
+// Sends the plan to the user via their chosen delivery_method (email / WhatsApp).
+// Safe to call multiple times — it simply re-sends; caller controls idempotency.
+export const deliverDietPlanToUser = async (
+  planId: number,
+  cashbackAmount: number | null = null,
+): Promise<{ sentEmail: boolean; sentWhatsApp: boolean }> => {
+  const { findDietPlanById: getPlan } = await import('../models/DietPlan');
+  const { findDietFormById: getForm } = await import('../models/DietForm');
+
+  const plan = await getPlan(planId);
+  if (!plan) throw new Error(`Plan ${planId} not found`);
+
+  const form = await getForm(plan.form_id);
+  if (!form) throw new Error(`Form ${plan.form_id} not found`);
+
+  if (!plan.pdf_url) {
+    // PDF failed or wasn't generated — try to generate + upload now
+    try {
+      const { generateDietPlanPdf } = await import('./dietPlanPdf');
+      const { uploadBufferToS3 }     = await import('./uploadToS3');
+      const { saveDietPlanPdfUrl }   = await import('../models/DietPlan');
+      const pdfBuffer = await generateDietPlanPdf(plan);
+      const s3Key     = `diet-plans/form_${plan.form_id}_${Date.now()}.pdf`;
+      const url       = await uploadBufferToS3(pdfBuffer, s3Key, 'application/pdf');
+      await saveDietPlanPdfUrl(plan.id, url);
+      plan.pdf_url = url;
+    } catch (pdfErr) {
+      console.error('[deliverDietPlanToUser] PDF regeneration failed:', pdfErr);
+    }
+  }
+
+  const deliveryMethods = (form.delivery_method as string[] | null) ?? [];
+  const wantsEmail    = deliveryMethods.includes('email');
+  const wantsWhatsApp = deliveryMethods.includes('whatsapp');
+
+  let sentEmail    = false;
+  let sentWhatsApp = false;
+
+  if (wantsEmail && form.email && plan.pdf_url) {
     try {
       const { subject, html, text } = dietPlanReadyEmail(
         form.full_name ?? 'there',
-        pdfUrl,
+        plan.pdf_url,
         cashbackAmount,
       );
       await sendEmail({ to: form.email, subject, html, text });
+      sentEmail = true;
     } catch (mailErr) {
-      console.error('[delivery] Email error:', mailErr);
+      console.error('[deliverDietPlanToUser] Email error:', mailErr);
     }
   }
 
-  // ── Step 5: Send WhatsApp ───────────────────────────────────────────────────
-  if (wantsWhatsApp && form.whatsapp && pdfUrl) {
+  if (wantsWhatsApp && form.whatsapp && plan.pdf_url) {
     try {
-      await sendDietPlanWhatsApp(form.whatsapp, form.full_name ?? 'there', pdfUrl);
+      await sendDietPlanWhatsApp(form.whatsapp, form.full_name ?? 'there', plan.pdf_url);
+      sentWhatsApp = true;
     } catch (waErr) {
-      console.error('[delivery] WhatsApp error:', waErr);
+      console.error('[deliverDietPlanToUser] WhatsApp error:', waErr);
     }
   }
+
+  return { sentEmail, sentWhatsApp };
 };

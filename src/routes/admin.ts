@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/authenticate';
 import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDietFormRequests, getDietChartDetails, previewDietPlan, getDashboardStats, getDashboardRevenue, getDashboardUserGrowth, getDashboardConsultations, getSystemOverview, getPaidDietCharts } from '../controllers/admin';
+import { listDietPlansForAdmin, getDietPlanForAdmin, editDietPlan, sendDietPlanToUser } from '../controllers/adminDietPlan';
 import { adminCreateCoupon, adminListCoupons, adminGetCoupon, adminUpdateCoupon, adminDeactivateCoupon, adminGetCouponUsages } from '../controllers/coupon';
 import {
   getBmiCategories, createBmiCategory, updateBmiCategory, deleteBmiCategory,
@@ -78,6 +79,13 @@ adminRouter.delete('/nutrition/medical-adjustments/:id',  authenticate, authoriz
 // General settings (scalar values like carb floor, IBW thresholds, elderly age)
 adminRouter.get('/nutrition/general-settings',     authenticate, authorize('admin'), getGeneralSettings);
 adminRouter.put('/nutrition/general-settings/:id', authenticate, authorize('admin'), updateGeneralSetting);
+
+// ── Admin diet plan review & delivery ────────────────────────────────────────
+// Dietitian reviews AI-generated plans, edits if needed, then sends to user
+adminRouter.get ('/diet-plans',              authenticate, authorize('admin'), listDietPlansForAdmin);
+adminRouter.get ('/diet-plans/:plan_id',     authenticate, authorize('admin'), getDietPlanForAdmin);
+adminRouter.put ('/diet-plans/:plan_id',     authenticate, authorize('admin'), editDietPlan);
+adminRouter.post('/diet-plans/:plan_id/send', authenticate, authorize('admin'), sendDietPlanToUser);
 
 // ── Coupon management ─────────────────────────────────────────────────────────
 adminRouter.post  ('/coupons',           authenticate, authorize('admin'), adminCreateCoupon);
