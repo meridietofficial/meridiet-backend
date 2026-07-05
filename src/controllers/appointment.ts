@@ -50,6 +50,10 @@ import { createRescheduleHistory, getRescheduleHistory } from '../models/Appoint
 import { creditDietitianForAppointment } from '../models/DietitianWallet';
 import { findDietFormByAppointmentId } from '../models/DietForm';
 import { findDietPlanByAppointmentId } from '../models/DietPlan';
+import { sendEmail } from '../services/email';
+import { appointmentConfirmationEmail } from '../services/emails/appointmentConfirmation';
+import { appointmentNewBookingEmail } from '../services/emails/appointmentNewBooking';
+import { sendAppointmentBookedWhatsApp, sendDietitianNewBookingWhatsApp } from '../services/whatsapp';
 
 // GET /api/v1/appointments/slots/:dietitianId?days=14
 export const getAvailableSlots = async (req: Request, res: Response) => {
@@ -284,6 +288,69 @@ export const verifyAppointmentPayment = async (req: Request, res: Response) => {
     }
 
     await updateAppointmentPayment(razorpay_order_id, razorpay_payment_id, 'paid', 'pending');
+
+    // Fire notifications in background — don't let failures block the response
+    setImmediate(async () => {
+      try {
+        const dietitian = await findDietitianById(appointment.dietitian_id);
+        const dietitianName = dietitian?.full_name ?? 'Your Dietitian';
+
+        // Email to user
+        if (appointment.email) {
+          const userMail = appointmentConfirmationEmail({
+            userName: appointment.name,
+            dietitianName,
+            appointmentDate: appointment.appointment_date,
+            slot: appointment.slot,
+            sessionType: appointment.session_type,
+            fee: appointment.fee,
+            currency: appointment.currency,
+          });
+          await sendEmail({ to: appointment.email, subject: userMail.subject, html: userMail.html, text: userMail.text })
+            .catch((e) => console.error('[appointment] User confirmation email failed:', e));
+        }
+
+        // Email to dietitian
+        if (dietitian?.email) {
+          const dietMail = appointmentNewBookingEmail({
+            dietitianName,
+            patientName: appointment.name,
+            appointmentDate: appointment.appointment_date,
+            slot: appointment.slot,
+            sessionType: appointment.session_type,
+            notes: appointment.notes,
+          });
+          await sendEmail({ to: dietitian.email, subject: dietMail.subject, html: dietMail.html, text: dietMail.text })
+            .catch((e) => console.error('[appointment] Dietitian new-booking email failed:', e));
+        }
+
+        // WhatsApp to user
+        if (appointment.phone) {
+          await sendAppointmentBookedWhatsApp(
+            appointment.phone,
+            appointment.name,
+            appointment.appointment_date,
+            appointment.slot,
+          ).catch((e) => console.error('[appointment] User WhatsApp failed:', e));
+        }
+
+        // WhatsApp to dietitian
+        if (dietitian?.phone_number) {
+          const dietitianPhone = dietitian.phone_code
+            ? `${dietitian.phone_code}${dietitian.phone_number}`
+            : dietitian.phone_number;
+          await sendDietitianNewBookingWhatsApp(
+            dietitianPhone,
+            dietitianName,
+            appointment.name,
+            appointment.appointment_date,
+            appointment.slot,
+          ).catch((e) => console.error('[appointment] Dietitian WhatsApp failed:', e));
+        }
+      } catch (e) {
+        console.error('[appointment] Post-payment notification error:', e);
+      }
+    });
 
     return successResponse(res, 200, 'Payment verified. Awaiting dietitian confirmation.', {
       appointment_id: appointment.id,

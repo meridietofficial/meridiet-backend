@@ -6,7 +6,7 @@ export const BRAND = {
   website: 'https://www.meridiet.com',
 
   // Where a verified dietitian logs in. Override with DASHBOARD_URL if needed.
-  dashboardUrl: process.env.DASHBOARD_URL ?? 'https://www.meridiet.com/for-dietitians',
+  dashboardUrl: process.env.DASHBOARD_URL ?? 'https://www.meridiet.com/dietitian-dashboard',
 
   // Frontend page that shows the new-password / confirm-password form. The reset
   // token is appended as ?token=... Override with RESET_PASSWORD_URL if needed.

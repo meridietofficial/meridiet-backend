@@ -77,6 +77,8 @@ const envSchema = z.object({
   MSG91_WHATSAPP_INTEGRATED_NUMBER: z.string().default(''),
   MSG91_WHATSAPP_CONFIRMATION_TEMPLATE: z.string().default('meri_diet_form_received'),
   MSG91_WHATSAPP_DIET_PLAN_TEMPLATE: z.string().default('meri_diet_plan_ready'),
+  MSG91_WHATSAPP_APPOINTMENT_TEMPLATE: z.string().default('consultation_booked'),
+  MSG91_WHATSAPP_DIETITIAN_APPOINTMENT_TEMPLATE: z.string().default('dietitian_new_booking'),
 
   // Encryption — AES-256-GCM key for sensitive fields (account numbers)
   // Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"

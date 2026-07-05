@@ -3,6 +3,7 @@ import { authenticate, authorize } from '../middlewares/authenticate';
 import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDietFormRequests, getDietChartDetails, previewDietPlan, getDashboardStats, getDashboardRevenue, getDashboardUserGrowth, getDashboardConsultations, getSystemOverview, getPaidDietCharts } from '../controllers/admin';
 import { listDietPlansForAdmin, getDietPlanForAdmin, editDietPlan, sendDietPlanToUser } from '../controllers/adminDietPlan';
 import { adminCreateCoupon, adminListCoupons, adminGetCoupon, adminUpdateCoupon, adminDeactivateCoupon, adminGetCouponUsages } from '../controllers/coupon';
+import { adminGetAppointments, adminGetAppointmentById } from '../controllers/adminAppointment';
 import {
   getBmiCategories, createBmiCategory, updateBmiCategory, deleteBmiCategory,
   getActivityMultipliers, updateActivityMultiplier,
@@ -86,6 +87,10 @@ adminRouter.get ('/diet-plans',              authenticate, authorize('admin'), l
 adminRouter.get ('/diet-plans/:plan_id',     authenticate, authorize('admin'), getDietPlanForAdmin);
 adminRouter.put ('/diet-plans/:plan_id',     authenticate, authorize('admin'), editDietPlan);
 adminRouter.post('/diet-plans/:plan_id/send', authenticate, authorize('admin'), sendDietPlanToUser);
+
+// ── Appointment management ────────────────────────────────────────────────────
+adminRouter.get('/appointments',     authenticate, authorize('admin'), adminGetAppointments);
+adminRouter.get('/appointments/:id', authenticate, authorize('admin'), adminGetAppointmentById);
 
 // ── Coupon management ─────────────────────────────────────────────────────────
 adminRouter.post  ('/coupons',           authenticate, authorize('admin'), adminCreateCoupon);

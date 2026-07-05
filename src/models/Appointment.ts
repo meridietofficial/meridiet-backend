@@ -1055,3 +1055,279 @@ export const updateAppointmentStatusAndPayment = async (
     [status, paymentStatus, id],
   );
 };
+
+// ── Admin queries ─────────────────────────────────────────────────────────────
+
+export interface AdminAppointmentFilters {
+  status?: string;
+  payment_status?: string;
+  session_type?: string;
+  dietitian_id?: number;
+  date_from?: string;
+  date_to?: string;
+  search?: string;    // patient name / email / phone
+  page?: number;
+  limit?: number;
+}
+
+export const adminListAppointments = async (filters: AdminAppointmentFilters) => {
+  const page  = Math.max(1, filters.page  ?? 1);
+  const limit = Math.min(100, Math.max(1, filters.limit ?? 20));
+  const offset = (page - 1) * limit;
+
+  const conditions: string[] = [];
+  const params: unknown[]    = [];
+
+  if (filters.status)        { conditions.push('a.status = ?');         params.push(filters.status); }
+  if (filters.payment_status){ conditions.push('a.payment_status = ?'); params.push(filters.payment_status); }
+  if (filters.session_type)  { conditions.push('a.session_type = ?');   params.push(filters.session_type); }
+  if (filters.dietitian_id)  { conditions.push('a.dietitian_id = ?');   params.push(filters.dietitian_id); }
+  if (filters.date_from)     { conditions.push('a.appointment_date >= ?'); params.push(filters.date_from); }
+  if (filters.date_to)       { conditions.push('a.appointment_date <= ?'); params.push(filters.date_to); }
+  if (filters.search) {
+    conditions.push('(a.name LIKE ? OR a.email LIKE ? OR a.phone LIKE ?)');
+    const like = `%${filters.search}%`;
+    params.push(like, like, like);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const [rows, countRows] = await Promise.all([
+    query<{
+      id: number;
+      appointment_date: string;
+      slot: string;
+      duration: number;
+      session_type: string;
+      status: string;
+      payment_status: string;
+      fee: number;
+      currency: string;
+      is_follow_up: number;
+      created_at: Date;
+      // patient
+      patient_name: string;
+      patient_email: string | null;
+      patient_phone: string | null;
+      // dietitian
+      dietitian_id: number;
+      dietitian_name: string;
+      dietitian_email: string | null;
+      dietitian_phone: string | null;
+      dietitian_photo: string | null;
+    }>(
+      `SELECT
+         a.id,
+         DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS appointment_date,
+         TIME_FORMAT(a.slot, '%H:%i')                AS slot,
+         a.duration,
+         a.session_type,
+         a.status,
+         a.payment_status,
+         a.fee,
+         a.currency,
+         a.is_follow_up,
+         a.created_at,
+         a.name        AS patient_name,
+         a.email       AS patient_email,
+         a.phone       AS patient_phone,
+         d.id          AS dietitian_id,
+         du.full_name  AS dietitian_name,
+         du.email      AS dietitian_email,
+         du.phone_number AS dietitian_phone,
+         d.profile_photo AS dietitian_photo
+       FROM appointments a
+       JOIN dietitians d  ON a.dietitian_id = d.id
+       JOIN users du      ON d.user_id = du.id
+       ${where}
+       ORDER BY a.appointment_date DESC, a.slot DESC
+       LIMIT ${limit} OFFSET ${offset}`,
+      params,
+    ),
+    query<{ total: number }>(
+      `SELECT COUNT(*) AS total
+       FROM appointments a
+       JOIN dietitians d  ON a.dietitian_id = d.id
+       JOIN users du      ON d.user_id = du.id
+       ${where}`,
+      params,
+    ),
+  ]);
+
+  return {
+    appointments: rows.map((r) => ({
+      id: r.id,
+      appointment_date: r.appointment_date,
+      slot: r.slot,
+      duration: r.duration,
+      session_type: r.session_type,
+      status: r.status,
+      payment_status: r.payment_status,
+      fee: r.fee,
+      currency: r.currency,
+      is_follow_up: Boolean(r.is_follow_up),
+      created_at: r.created_at,
+      patient: {
+        name: r.patient_name,
+        email: r.patient_email,
+        phone: r.patient_phone,
+      },
+      dietitian: {
+        id: r.dietitian_id,
+        name: r.dietitian_name,
+        email: r.dietitian_email,
+        phone: r.dietitian_phone,
+        photo: r.dietitian_photo,
+      },
+    })),
+    total: countRows[0]?.total ?? 0,
+    page,
+    limit,
+  };
+};
+
+export const adminGetAppointmentDetail = async (id: number) => {
+  const rows = await query<{
+    id: number;
+    appointment_date: string;
+    slot: string;
+    duration: number;
+    session_type: string;
+    status: string;
+    payment_status: string;
+    payment_id: string | null;
+    order_id: string | null;
+    fee: number;
+    currency: string;
+    notes: string | null;
+    dietitian_notes: string | null;
+    missed_reason: string | null;
+    missed_type: string | null;
+    user_rating: number | null;
+    user_review: string | null;
+    user_reviewed_at: Date | null;
+    dietitian_rating: number | null;
+    dietitian_review: string | null;
+    dietitian_reviewed_at: Date | null;
+    parent_appointment_id: number | null;
+    is_follow_up: number;
+    follow_up_type: string | null;
+    video_call_status: string;
+    recording_url: string | null;
+    call_started_at: Date | null;
+    call_ended_at: Date | null;
+    call_duration_seconds: number | null;
+    created_at: Date;
+    updated_at: Date;
+    // patient
+    patient_name: string;
+    patient_email: string | null;
+    patient_phone: string | null;
+    // dietitian
+    dietitian_id: number;
+    dietitian_name: string;
+    dietitian_email: string | null;
+    dietitian_phone: string | null;
+    dietitian_phone_code: string | null;
+    dietitian_photo: string | null;
+    dietitian_city: string;
+    dietitian_state: string;
+  }>(
+    `SELECT
+       a.id,
+       DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS appointment_date,
+       TIME_FORMAT(a.slot, '%H:%i')                AS slot,
+       a.duration, a.session_type,
+       a.status, a.payment_status, a.payment_id, a.order_id,
+       a.fee, a.currency,
+       a.notes, a.dietitian_notes, a.missed_reason, a.missed_type,
+       a.user_rating, a.user_review, a.user_reviewed_at,
+       a.dietitian_rating, a.dietitian_review, a.dietitian_reviewed_at,
+       a.parent_appointment_id, a.is_follow_up, a.follow_up_type,
+       a.video_call_status, a.recording_url,
+       a.call_started_at, a.call_ended_at, a.call_duration_seconds,
+       a.created_at, a.updated_at,
+       a.name        AS patient_name,
+       a.email       AS patient_email,
+       a.phone       AS patient_phone,
+       d.id          AS dietitian_id,
+       du.full_name  AS dietitian_name,
+       du.email      AS dietitian_email,
+       du.phone_number  AS dietitian_phone,
+       du.phone_code    AS dietitian_phone_code,
+       d.profile_photo  AS dietitian_photo,
+       d.city           AS dietitian_city,
+       d.state          AS dietitian_state
+     FROM appointments a
+     JOIN dietitians d ON a.dietitian_id = d.id
+     JOIN users du     ON d.user_id = du.id
+     WHERE a.id = ?
+     LIMIT 1`,
+    [id],
+  );
+
+  if (!rows[0]) return null;
+  const r = rows[0];
+
+  // Follow-ups of this appointment
+  const followUps = await query<{ id: number; appointment_date: string; slot: string; status: string }>(
+    `SELECT id,
+       DATE_FORMAT(appointment_date, '%Y-%m-%d') AS appointment_date,
+       TIME_FORMAT(slot, '%H:%i') AS slot,
+       status
+     FROM appointments
+     WHERE parent_appointment_id = ?
+       AND status <> 'cancelled'
+     ORDER BY appointment_date ASC, slot ASC`,
+    [id],
+  );
+
+  return {
+    id: r.id,
+    appointment_date: r.appointment_date,
+    slot: r.slot,
+    duration: r.duration,
+    session_type: r.session_type,
+    status: r.status,
+    payment_status: r.payment_status,
+    payment_id: r.payment_id,
+    order_id: r.order_id,
+    fee: r.fee,
+    currency: r.currency,
+    notes: r.notes,
+    dietitian_notes: r.dietitian_notes,
+    missed_reason: r.missed_reason,
+    missed_type: r.missed_type,
+    user_rating: r.user_rating,
+    user_review: r.user_review,
+    user_reviewed_at: r.user_reviewed_at,
+    dietitian_rating: r.dietitian_rating,
+    dietitian_review: r.dietitian_review,
+    dietitian_reviewed_at: r.dietitian_reviewed_at,
+    parent_appointment_id: r.parent_appointment_id,
+    is_follow_up: Boolean(r.is_follow_up),
+    follow_up_type: r.follow_up_type,
+    video_call_status: r.video_call_status,
+    recording_url: r.recording_url,
+    call_started_at: r.call_started_at,
+    call_ended_at: r.call_ended_at,
+    call_duration_seconds: r.call_duration_seconds,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+    patient: {
+      name: r.patient_name,
+      email: r.patient_email,
+      phone: r.patient_phone,
+    },
+    dietitian: {
+      id: r.dietitian_id,
+      name: r.dietitian_name,
+      email: r.dietitian_email,
+      phone: r.dietitian_phone ? `${r.dietitian_phone_code ?? ''}${r.dietitian_phone}`.trim() : null,
+      photo: r.dietitian_photo,
+      city: r.dietitian_city,
+      state: r.dietitian_state,
+    },
+    follow_ups: followUps,
+  };
+};
