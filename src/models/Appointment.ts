@@ -40,6 +40,9 @@ export interface Appointment {
   call_started_at: Date | null;
   call_ended_at: Date | null;
   call_duration_seconds: number | null;
+  reminder_1h_sent_at: Date | null;
+  reminder_10min_sent_at: Date | null;
+  reminder_dietitian_15min_sent_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -72,7 +75,7 @@ const APPOINTMENT_SELECT = `
   fee, currency, status, payment_status, payment_id, order_id, notes, dietitian_notes, missed_reason, missed_type,
   user_rating, user_review, user_reviewed_at,
   dietitian_rating, dietitian_review, dietitian_reviewed_at,
-  parent_appointment_id, is_follow_up,
+  parent_appointment_id, is_follow_up, follow_up_type,
   agora_channel_name, agora_resource_id, agora_recording_sid, agora_recording_uid,
   video_call_status, recording_url,
   call_started_at, call_ended_at, call_duration_seconds,
@@ -406,6 +409,29 @@ export const isSlotTaken = async (
   return rows.length > 0;
 };
 
+// Returns an unpaid/pending appointment for a slot owned by the given user (or any user if userId is null).
+// Used to detect when the same user is retrying after cancelling the Razorpay modal.
+export const findUnpaidSlotAppointment = async (
+  dietitian_id: number,
+  appointment_date: string,
+  slot: string,
+  userId: number | null,
+) => {
+  const rows = await query<Appointment>(
+    `SELECT ${APPOINTMENT_SELECT} FROM appointments
+      WHERE dietitian_id = ? AND appointment_date = ? AND slot = ?
+        AND payment_status = 'unpaid' AND status = 'pending'
+        AND (user_id = ? OR (? IS NULL AND user_id IS NULL))
+      LIMIT 1`,
+    [dietitian_id, appointment_date, slot, userId, userId],
+  );
+  return rows[0] ?? null;
+};
+
+export const updateAppointmentOrderId = async (id: number, order_id: string) => {
+  await query('UPDATE appointments SET order_id = ? WHERE id = ?', [order_id, id]);
+};
+
 export const rescheduleAppointment = async (
   id: number,
   appointment_date: string,
@@ -433,6 +459,87 @@ export const markAppointmentMissedWithType = async (
      WHERE id = ?`,
     [missed_type, missed_reason ?? null, id],
   );
+};
+
+// ── Reminder queries ──────────────────────────────────────────────────────────
+
+export interface ReminderAppointment {
+  id: number;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  appointment_date: string;
+  slot: string;
+  session_type: 'video_call' | 'in_person';
+  dietitian_id: number;
+  user_id: number | null;
+  // joined from dietitians + users
+  dietitian_name: string;
+  dietitian_email: string | null;
+  dietitian_phone: string | null;
+}
+
+// Shared JOIN fragment — pulls dietitian name/email/phone in one query
+// appointment_date filter comes FIRST so MySQL uses the date index before
+// evaluating the more expensive TIMESTAMP() function
+const REMINDER_SELECT = `
+  SELECT a.id, a.name, a.email, a.phone,
+         DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS appointment_date,
+         TIME_FORMAT(a.slot, '%H:%i')                AS slot,
+         a.session_type, a.dietitian_id, a.user_id,
+         u.full_name   AS dietitian_name,
+         u.email       AS dietitian_email,
+         CONCAT(COALESCE(u.phone_code,''), u.phone_number) AS dietitian_phone
+  FROM   appointments a
+  JOIN   dietitians   d ON d.id = a.dietitian_id
+  JOIN   users        u ON u.id = d.user_id
+`;
+
+// 1h window: today OR tomorrow (handles reminders that cross midnight)
+export const getDue1hReminders = async (): Promise<ReminderAppointment[]> =>
+  query<ReminderAppointment>(
+    `${REMINDER_SELECT}
+     WHERE a.status = 'confirmed'
+       AND a.reminder_1h_sent_at IS NULL
+       AND a.appointment_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+       AND TIMESTAMP(a.appointment_date, a.slot)
+             BETWEEN NOW() + INTERVAL 55 MINUTE
+                 AND NOW() + INTERVAL 65 MINUTE`,
+  );
+
+// 10min window: always today
+export const getDue10minReminders = async (): Promise<ReminderAppointment[]> =>
+  query<ReminderAppointment>(
+    `${REMINDER_SELECT}
+     WHERE a.status = 'confirmed'
+       AND a.reminder_10min_sent_at IS NULL
+       AND a.appointment_date = CURDATE()
+       AND TIMESTAMP(a.appointment_date, a.slot)
+             BETWEEN NOW() + INTERVAL 8 MINUTE
+                 AND NOW() + INTERVAL 12 MINUTE`,
+  );
+
+// 15min dietitian window: always today
+export const getDueDietitian15minReminders = async (): Promise<ReminderAppointment[]> =>
+  query<ReminderAppointment>(
+    `${REMINDER_SELECT}
+     WHERE a.status = 'confirmed'
+       AND a.reminder_dietitian_15min_sent_at IS NULL
+       AND a.appointment_date = CURDATE()
+       AND TIMESTAMP(a.appointment_date, a.slot)
+             BETWEEN NOW() + INTERVAL 13 MINUTE
+                 AND NOW() + INTERVAL 17 MINUTE`,
+  );
+
+export const markReminderSent = async (
+  id: number,
+  type: '1h' | '10min' | 'dietitian_15min',
+): Promise<void> => {
+  const col =
+    type === '1h'            ? 'reminder_1h_sent_at' :
+    type === '10min'         ? 'reminder_10min_sent_at' :
+                               'reminder_dietitian_15min_sent_at';
+  await execute(`UPDATE appointments SET ${col} = NOW() WHERE id = ?`, [id]);
 };
 
 export const markMissedAppointments = async () => {

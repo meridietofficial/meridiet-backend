@@ -25,6 +25,8 @@ import {
   markAppointmentCancelled,
   getBookedSlots,
   isSlotTaken,
+  findUnpaidSlotAppointment,
+  updateAppointmentOrderId,
   setAgoraChannel,
   markCallLeft,
   updateRecordingStarted,
@@ -51,9 +53,20 @@ import { creditDietitianForAppointment } from '../models/DietitianWallet';
 import { findDietFormByAppointmentId } from '../models/DietForm';
 import { findDietPlanByAppointmentId } from '../models/DietPlan';
 import { sendEmail } from '../services/email';
-import { appointmentConfirmationEmail } from '../services/emails/appointmentConfirmation';
+import { appointmentConfirmationEmail, appointmentConfirmedEmail, followUpScheduledEmail } from '../services/emails/appointmentConfirmation';
 import { appointmentNewBookingEmail } from '../services/emails/appointmentNewBooking';
-import { sendAppointmentBookedWhatsApp, sendDietitianNewBookingWhatsApp } from '../services/whatsapp';
+import { appointmentRescheduledUserEmail, appointmentRescheduledDietitianEmail } from '../services/emails/appointmentRescheduled';
+import { appointmentCompletedEmail } from '../services/emails/appointmentCompleted';
+import {
+  sendAppointmentBookedWhatsApp,
+  sendDietitianNewBookingWhatsApp,
+  sendAppointmentConfirmedWhatsApp,
+  sendFollowUpScheduledWhatsApp,
+  sendAppointmentRescheduledWhatsApp,
+  sendDietitianRescheduledWhatsApp,
+  sendAppointmentCompletedWhatsApp,
+} from '../services/whatsapp';
+import { generateMeetingToken, userUid } from '../utils/meetingToken';
 
 // GET /api/v1/appointments/slots/:dietitianId?days=14
 export const getAvailableSlots = async (req: Request, res: Response) => {
@@ -196,7 +209,7 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
       return errorResponse(res, 400, `Slot "${slot}" is outside the dietitian's hours on ${dayName}. Available: ${scheduledSlots.join(', ')}`);
     }
 
-    // Check if this slot is already booked
+    // Check if this slot is already paid/confirmed
     const taken = await isSlotTaken(dietitian_id, appointment_date, slot);
     if (taken) {
       return errorResponse(res, 409, 'This slot is already booked. Please choose another.');
@@ -210,6 +223,26 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
     }
     const currency = (dietitian.appointment_currency as string) || 'INR';
     const userId = req.user?.sub ? Number(req.user.sub) : null;
+
+    // If the same user previously opened Razorpay but cancelled without paying,
+    // their unpaid appointment row still holds the unique slot in the DB.
+    // Reuse that row with a fresh Razorpay order instead of creating a duplicate.
+    const staleAppointment = await findUnpaidSlotAppointment(dietitian_id, appointment_date, slot, userId);
+    if (staleAppointment) {
+      const freshOrder = await razorpay.orders.create({
+        amount: amountInPaise,
+        currency,
+        receipt: `appt_${Date.now()}`,
+      });
+      await updateAppointmentOrderId(staleAppointment.id, freshOrder.id);
+      return successResponse(res, 201, 'Order created', {
+        appointment_id: staleAppointment.id,
+        order_id: freshOrder.id,
+        amount: fee,
+        currency,
+        key_id: env.RAZORPAY_KEY_ID,
+      });
+    }
 
     // Create Razorpay order only after all checks pass
     const order = await razorpay.orders.create({
@@ -245,7 +278,9 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
     });
   } catch (err: unknown) {
     if ((err as { code?: string }).code === 'ER_DUP_ENTRY') {
-      return errorResponse(res, 409, 'This slot is already booked. Please choose another.');
+      // Another user holds an unpaid reservation on this slot — it hasn't been paid yet
+      // but the DB unique constraint prevents a second row. Ask the user to retry shortly.
+      return errorResponse(res, 409, 'This slot is temporarily held by another booking. Please try again in a few minutes or choose a different slot.');
     }
     console.error('Create appointment order error:', err);
     return errorResponse(res, 500, 'Failed to create appointment order');
@@ -295,6 +330,13 @@ export const verifyAppointmentPayment = async (req: Request, res: Response) => {
         const dietitian = await findDietitianById(appointment.dietitian_id);
         const dietitianName = dietitian?.full_name ?? 'Your Dietitian';
 
+        // Generate meeting links for video call appointments
+        const isVideoCall = appointment.session_type === 'video_call';
+        const baseUrl = env.APP_BASE_URL ?? 'http://localhost:3000';
+        const userJoinUrl = isVideoCall
+          ? `${baseUrl}/meet/${appointment.id}?t=${generateMeetingToken(appointment.id, userUid(appointment.id))}`
+          : undefined;
+
         // Email to user
         if (appointment.email) {
           const userMail = appointmentConfirmationEmail({
@@ -305,6 +347,7 @@ export const verifyAppointmentPayment = async (req: Request, res: Response) => {
             sessionType: appointment.session_type,
             fee: appointment.fee,
             currency: appointment.currency,
+            joinUrl: userJoinUrl,
           });
           await sendEmail({ to: appointment.email, subject: userMail.subject, html: userMail.html, text: userMail.text })
             .catch((e) => console.error('[appointment] User confirmation email failed:', e));
@@ -331,6 +374,7 @@ export const verifyAppointmentPayment = async (req: Request, res: Response) => {
             appointment.name,
             appointment.appointment_date,
             appointment.slot,
+            userJoinUrl,
           ).catch((e) => console.error('[appointment] User WhatsApp failed:', e));
         }
 
@@ -487,6 +531,46 @@ export const updateAppointmentStatusHandler = async (req: Request, res: Response
 
     await updateAppointmentStatus(id, status as 'confirmed' | 'completed' | 'cancelled');
 
+    // Notify user when dietitian confirms
+    if (status === 'confirmed') {
+      setImmediate(async () => {
+        try {
+          const fullDietitian = await findDietitianById(appointment.dietitian_id);
+          const dietitianName = fullDietitian?.full_name ?? 'Your Dietitian';
+          const isVideoCall = appointment.session_type === 'video_call';
+          const baseUrl = env.APP_BASE_URL ?? 'http://localhost:3000';
+          const userJoinUrl = isVideoCall
+            ? `${baseUrl}/meet/${id}?t=${generateMeetingToken(id, userUid(id))}`
+            : undefined;
+
+          if (appointment.email) {
+            const mail = appointmentConfirmedEmail({
+              userName: appointment.name,
+              dietitianName,
+              appointmentDate: appointment.appointment_date,
+              slot: appointment.slot,
+              sessionType: appointment.session_type,
+              joinUrl: userJoinUrl,
+            });
+            await sendEmail({ to: appointment.email, subject: mail.subject, html: mail.html, text: mail.text })
+              .catch((e) => console.error('[confirm] User email failed:', e));
+          }
+
+          if (appointment.phone) {
+            await sendAppointmentConfirmedWhatsApp(
+              appointment.phone,
+              appointment.name,
+              appointment.appointment_date,
+              appointment.slot,
+              userJoinUrl,
+            ).catch((e) => console.error('[confirm] User WhatsApp failed:', e));
+          }
+        } catch (e) {
+          console.error('[confirm] Notification error:', e);
+        }
+      });
+    }
+
     // Credit dietitian wallet when manually marked completed and payment was collected
     if (status === 'completed' && appointment.payment_status === 'paid') {
       try {
@@ -499,6 +583,40 @@ export const updateAppointmentStatusHandler = async (req: Request, res: Response
         // Log clearly so this can be fixed manually if needed.
         console.error(`CRITICAL: Dietitian wallet credit FAILED for appointment ${id} (dietitian ${dietitian.id}, fee ${appointment.fee}). Manual fix required.`, err);
       }
+    }
+
+    // Notify user when appointment is completed — prompt them to rate the dietitian
+    if (status === 'completed') {
+      setImmediate(async () => {
+        try {
+          const fullDietitian = await findDietitianById(appointment.dietitian_id);
+          const dietitianName = fullDietitian?.full_name ?? 'Your Dietitian';
+          const rateUrl = `${env.APP_FRONTEND_URL}/profile?tab=appointments`;
+
+          if (appointment.email) {
+            const mail = appointmentCompletedEmail({
+              userName: appointment.name,
+              dietitianName,
+              appointmentDate: appointment.appointment_date,
+              slot: appointment.slot,
+              rateUrl,
+            });
+            await sendEmail({ to: appointment.email, subject: mail.subject, html: mail.html, text: mail.text })
+              .catch((e) => console.error('[completed] User email failed:', e));
+          }
+
+          if (appointment.phone) {
+            await sendAppointmentCompletedWhatsApp(
+              appointment.phone,
+              appointment.name,
+              appointment.appointment_date,
+              appointment.slot,
+            ).catch((e) => console.error('[completed] User WhatsApp failed:', e));
+          }
+        } catch (e) {
+          console.error('[completed] Notification error:', e);
+        }
+      });
     }
 
     return successResponse(res, 200, 'Appointment status updated', { id, status });
@@ -1237,6 +1355,83 @@ export const rescheduleAppointmentHandler = async (req: Request, res: Response) 
 
     const updated = await findAppointmentById(id);
 
+    // Fire reschedule notifications in background
+    setImmediate(async () => {
+      try {
+        const fullDietitian = await findDietitianById(dietitian.id);
+        const dietitianName = fullDietitian?.full_name ?? 'Your Dietitian';
+
+        const isVideoCall = appointment.session_type === 'video_call';
+        const baseUrl = env.APP_BASE_URL ?? 'http://localhost:3000';
+        const userJoinUrl = isVideoCall
+          ? `${baseUrl}/meet/${id}?t=${generateMeetingToken(id, userUid(id))}`
+          : undefined;
+
+        // Email to user
+        if (appointment.email) {
+          const userMail = appointmentRescheduledUserEmail({
+            userName: appointment.name,
+            dietitianName,
+            previousDate: appointment.appointment_date,
+            previousSlot: appointment.slot,
+            newDate: appointment_date,
+            newSlot: slot,
+            sessionType: appointment.session_type,
+            reason: reason?.trim() || null,
+            joinUrl: userJoinUrl,
+          });
+          await sendEmail({ to: appointment.email, subject: userMail.subject, html: userMail.html, text: userMail.text })
+            .catch((e) => console.error('[reschedule] User email failed:', e));
+        }
+
+        // Email to dietitian
+        if (fullDietitian?.email) {
+          const dietMail = appointmentRescheduledDietitianEmail({
+            dietitianName,
+            patientName: appointment.name,
+            previousDate: appointment.appointment_date,
+            previousSlot: appointment.slot,
+            newDate: appointment_date,
+            newSlot: slot,
+            sessionType: appointment.session_type,
+          });
+          await sendEmail({ to: fullDietitian.email, subject: dietMail.subject, html: dietMail.html, text: dietMail.text })
+            .catch((e) => console.error('[reschedule] Dietitian email failed:', e));
+        }
+
+        // WhatsApp to user
+        if (appointment.phone) {
+          await sendAppointmentRescheduledWhatsApp(
+            appointment.phone,
+            appointment.name,
+            appointment.appointment_date,
+            appointment.slot,
+            appointment_date,
+            slot,
+            userJoinUrl,
+          ).catch((e) => console.error('[reschedule] User WhatsApp failed:', e));
+        }
+
+        // WhatsApp to dietitian
+        if (fullDietitian?.phone_number) {
+          const dietitianPhone = fullDietitian.phone_code
+            ? `${fullDietitian.phone_code}${fullDietitian.phone_number}`
+            : fullDietitian.phone_number;
+          await sendDietitianRescheduledWhatsApp(
+            dietitianPhone,
+            dietitianName,
+            appointment.name,
+            appointment.appointment_date,
+            appointment.slot,
+            appointment_date,
+            slot,
+          ).catch((e) => console.error('[reschedule] Dietitian WhatsApp failed:', e));
+        }
+      } catch (e) {
+        console.error('[reschedule] Post-reschedule notification error:', e);
+      }
+    });
+
     return successResponse(res, 200, 'Appointment rescheduled successfully', updated);
   } catch (err) {
     console.error('Reschedule appointment error:', err);
@@ -1438,6 +1633,45 @@ export const scheduleFollowUp = async (req: Request, res: Response) => {
     await updateAppointmentStatus(followUp.id, 'confirmed');
 
     const confirmed = await findAppointmentById(followUp.id);
+
+    // Notify user about the follow-up
+    setImmediate(async () => {
+      try {
+        const fullDietitian = await findDietitianById(dietitian.id);
+        const dietitianName = fullDietitian?.full_name ?? 'Your Dietitian';
+        const followUpSessionType = session_type ?? parent.session_type;
+        const isVideoCall = followUpSessionType === 'video_call';
+        const baseUrl = env.APP_BASE_URL ?? 'http://localhost:3000';
+        const userJoinUrl = isVideoCall && followUp
+          ? `${baseUrl}/meet/${followUp.id}?t=${generateMeetingToken(followUp.id, userUid(followUp.id))}`
+          : undefined;
+
+        if (parent.email) {
+          const mail = followUpScheduledEmail({
+            userName: parent.name,
+            dietitianName,
+            appointmentDate: appointment_date,
+            slot,
+            sessionType: followUpSessionType,
+            joinUrl: userJoinUrl,
+          });
+          await sendEmail({ to: parent.email, subject: mail.subject, html: mail.html, text: mail.text })
+            .catch((e) => console.error('[follow-up] User email failed:', e));
+        }
+
+        if (parent.phone) {
+          await sendFollowUpScheduledWhatsApp(
+            parent.phone,
+            parent.name,
+            appointment_date,
+            slot,
+            userJoinUrl,
+          ).catch((e) => console.error('[follow-up] User WhatsApp failed:', e));
+        }
+      } catch (e) {
+        console.error('[follow-up] Notification error:', e);
+      }
+    });
 
     return successResponse(res, 201, 'Follow-up appointment scheduled successfully', confirmed);
   } catch (err: unknown) {

@@ -5,6 +5,10 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(5000),
   API_VERSION: z.string().default('v1'),
   API_PREFIX: z.string().default('/api'),
+  // Public base URL of this server — used to build meeting join links
+  APP_BASE_URL: z.string().default('http://localhost:5000'),
+  // Public URL of the frontend web app — used to build user-facing deep links (e.g. appointment page)
+  APP_FRONTEND_URL: z.string().default('https://meridiet.com'),
 
   // MySQL Database
   DB_HOST: z.string().min(1, 'DB_HOST is required'),
@@ -79,6 +83,14 @@ const envSchema = z.object({
   MSG91_WHATSAPP_DIET_PLAN_TEMPLATE: z.string().default('meri_diet_plan_ready'),
   MSG91_WHATSAPP_APPOINTMENT_TEMPLATE: z.string().default('consultation_booked'),
   MSG91_WHATSAPP_DIETITIAN_APPOINTMENT_TEMPLATE: z.string().default('dietitian_new_booking'),
+  MSG91_WHATSAPP_CONFIRMED_TEMPLATE: z.string().default('consultation_confirmed'),
+  MSG91_WHATSAPP_FOLLOW_UP_TEMPLATE: z.string().default('follow_up_booked'),
+  MSG91_WHATSAPP_REMINDER_1H_TEMPLATE: z.string().default('consultation_reminder_1h'),
+  MSG91_WHATSAPP_REMINDER_10MIN_TEMPLATE: z.string().default('consultation_reminder_10min'),
+  MSG91_WHATSAPP_DIETITIAN_REMINDER_15MIN_TEMPLATE: z.string().default('dietitian_reminder_15min'),
+  MSG91_WHATSAPP_RESCHEDULE_TEMPLATE: z.string().default('consultation_rescheduled'),
+  MSG91_WHATSAPP_DIETITIAN_RESCHEDULE_TEMPLATE: z.string().default('dietitian_appointment_rescheduled'),
+  MSG91_WHATSAPP_COMPLETED_TEMPLATE: z.string().default('consultation_completed'),
 
   // Encryption — AES-256-GCM key for sensitive fields (account numbers)
   // Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"

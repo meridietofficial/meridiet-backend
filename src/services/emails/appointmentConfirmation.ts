@@ -25,13 +25,14 @@ export const appointmentConfirmationEmail = (params: {
   sessionType: 'video_call' | 'in_person';
   fee: number;
   currency: string;
+  joinUrl?: string;
 }): { subject: string; html: string; text: string } => {
   const firstName = params.userName.trim().split(/\s+/)[0] || 'there';
   const formattedDate = formatDate(params.appointmentDate);
   const formattedTime = formatTime(params.slot);
   const sessionLabel = params.sessionType === 'video_call' ? 'Video Call' : 'In-Person';
 
-  const subject = `Your appointment with ${BRAND.name} is confirmed!`;
+  const subject = `Your booking with ${BRAND.name} is received!`;
 
   const checkBadge = `<div style="width:56px;height:56px;border-radius:50%;background:${c.green};text-align:center;line-height:56px;font-size:28px;color:${c.white};font-weight:700;">&#10003;</div>`;
 
@@ -62,9 +63,9 @@ export const appointmentConfirmationEmail = (params: {
             <tr>
               <td width="76" valign="middle">${checkBadge}</td>
               <td valign="middle">
-                <div style="font-size:16px;font-weight:700;letter-spacing:0.3px;color:${c.green};text-transform:uppercase;">Booking Confirmed</div>
+                <div style="font-size:16px;font-weight:700;letter-spacing:0.3px;color:${c.green};text-transform:uppercase;">Booking Received</div>
                 <div style="font-size:14px;line-height:1.6;color:${c.textDark};margin-top:4px;">
-                  Your session with <strong>${params.dietitianName}</strong> is confirmed and ready.
+                  Your booking with <strong>${params.dietitianName}</strong> is received and pending confirmation.
                 </div>
               </td>
             </tr>
@@ -88,13 +89,24 @@ export const appointmentConfirmationEmail = (params: {
     </p>
 
     <!-- CTA -->
-    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 8px 0;">
+    ${params.sessionType === 'video_call' && params.joinUrl ? `
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 12px 0;">
       <tr>
         <td style="border-radius:8px;background:${c.green};">
-          <a href="${BRAND.website}" target="_blank" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:${c.white};text-decoration:none;border-radius:8px;">Join Your Consultation</a>
+          <a href="${params.joinUrl}" target="_blank" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:${c.white};text-decoration:none;border-radius:8px;">🎥 Join Video Consultation</a>
         </td>
       </tr>
     </table>
+    <p style="margin:0 0 8px 0;font-size:12px;color:${c.textMid};">Or copy this link: <a href="${params.joinUrl}" style="color:${c.green};word-break:break-all;">${params.joinUrl}</a></p>
+    ` : `
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 8px 0;">
+      <tr>
+        <td style="border-radius:8px;background:${c.green};">
+          <a href="${BRAND.website}" target="_blank" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:${c.white};text-decoration:none;border-radius:8px;">Visit MeriDiet</a>
+        </td>
+      </tr>
+    </table>
+    `}
   `;
 
   const html = emailLayout({
@@ -116,7 +128,191 @@ export const appointmentConfirmationEmail = (params: {
     ``,
     `Please be available a few minutes before your scheduled time.`,
     ``,
-    `Join your consultation: ${BRAND.website}`,
+    params.joinUrl ? `Join your consultation: ${params.joinUrl}` : `Visit MeriDiet: ${BRAND.website}`,
+    ``,
+    ...footerText,
+  ].join('\n');
+
+  return { subject, html, text };
+};
+
+// ── Dietitian confirmed the appointment ───────────────────────────────────────
+
+export const appointmentConfirmedEmail = (params: {
+  userName: string;
+  dietitianName: string;
+  appointmentDate: string;
+  slot: string;
+  sessionType: 'video_call' | 'in_person';
+  joinUrl?: string;
+}): { subject: string; html: string; text: string } => {
+  const firstName = params.userName.trim().split(/\s+/)[0] || 'there';
+  const formattedDate = formatDate(params.appointmentDate);
+  const formattedTime = formatTime(params.slot);
+  const sessionLabel = params.sessionType === 'video_call' ? 'Video Call' : 'In-Person';
+
+  const subject = `Your appointment is confirmed — ${formattedDate}`;
+
+  const detailRow = (label: string, value: string) => `
+    <tr>
+      <td style="padding:10px 0;border-bottom:1px solid ${c.border};">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="font-size:13px;font-weight:600;color:${c.textMid};text-transform:uppercase;letter-spacing:0.4px;width:40%;">${label}</td>
+            <td style="font-size:14px;font-weight:700;color:${c.textDark};text-align:right;">${value}</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  `;
+
+  const bodyHtml = `
+    <h1 style="margin:0 0 16px 0;font-size:24px;font-weight:800;color:${c.textDark};text-transform:uppercase;line-height:1.3;">Great news, ${firstName}! ✅</h1>
+    <p style="margin:0 0 22px 0;font-size:15px;line-height:1.7;color:${c.textMid};">
+      Your consultation with <strong style="color:${c.green};">${params.dietitianName}</strong> has been confirmed. You're all set — please be ready a few minutes before your scheduled time.
+    </p>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 28px 0;">
+      <tr>
+        <td style="background:${c.greenBg};border-left:5px solid ${c.green};border-radius:10px;padding:22px 24px;">
+          <div style="font-size:13px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:${c.green};margin-bottom:12px;">Confirmed Appointment</div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid ${c.border};">
+            ${detailRow('📅 Date', formattedDate)}
+            ${detailRow('⏰ Time', formattedTime)}
+            ${detailRow('👩‍⚕️ Dietitian', params.dietitianName)}
+            ${detailRow('📋 Session', sessionLabel)}
+          </table>
+        </td>
+      </tr>
+    </table>
+
+    ${params.sessionType === 'video_call' && params.joinUrl ? `
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 12px 0;">
+      <tr>
+        <td style="border-radius:8px;background:${c.green};">
+          <a href="${params.joinUrl}" target="_blank" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#fff;text-decoration:none;border-radius:8px;">🎥 Join Video Consultation</a>
+        </td>
+      </tr>
+    </table>
+    <p style="margin:0 0 8px 0;font-size:12px;color:${c.textMid};">Or copy this link: <a href="${params.joinUrl}" style="color:${c.green};word-break:break-all;">${params.joinUrl}</a></p>
+    ` : `
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 8px 0;">
+      <tr>
+        <td style="border-radius:8px;background:${c.green};">
+          <a href="${BRAND.website}" target="_blank" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#fff;text-decoration:none;border-radius:8px;">Visit MeriDiet</a>
+        </td>
+      </tr>
+    </table>
+    `}
+  `;
+
+  const html = emailLayout({
+    preheader: `Your appointment on ${formattedDate} at ${formattedTime} with ${params.dietitianName} is confirmed!`,
+    bodyHtml,
+  });
+
+  const text = [
+    `Hi ${firstName}, your appointment is confirmed!`,
+    ``,
+    `Your consultation with ${params.dietitianName} has been confirmed.`,
+    ``,
+    `Date: ${formattedDate}`,
+    `Time: ${formattedTime}`,
+    `Session Type: ${sessionLabel}`,
+    ``,
+    params.joinUrl ? `Join your consultation: ${params.joinUrl}` : `Visit MeriDiet: ${BRAND.website}`,
+    ``,
+    ...footerText,
+  ].join('\n');
+
+  return { subject, html, text };
+};
+
+// ── Follow-up appointment scheduled ──────────────────────────────────────────
+
+export const followUpScheduledEmail = (params: {
+  userName: string;
+  dietitianName: string;
+  appointmentDate: string;
+  slot: string;
+  sessionType: 'video_call' | 'in_person';
+  joinUrl?: string;
+}): { subject: string; html: string; text: string } => {
+  const firstName = params.userName.trim().split(/\s+/)[0] || 'there';
+  const formattedDate = formatDate(params.appointmentDate);
+  const formattedTime = formatTime(params.slot);
+  const sessionLabel = params.sessionType === 'video_call' ? 'Video Call' : 'In-Person';
+
+  const subject = `Follow-up consultation scheduled — ${formattedDate}`;
+
+  const detailRow = (label: string, value: string) => `
+    <tr>
+      <td style="padding:10px 0;border-bottom:1px solid ${c.border};">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="font-size:13px;font-weight:600;color:${c.textMid};text-transform:uppercase;letter-spacing:0.4px;width:40%;">${label}</td>
+            <td style="font-size:14px;font-weight:700;color:${c.textDark};text-align:right;">${value}</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  `;
+
+  const bodyHtml = `
+    <h1 style="margin:0 0 16px 0;font-size:24px;font-weight:800;color:${c.textDark};text-transform:uppercase;line-height:1.3;">Hi ${firstName}, follow-up scheduled! 📅</h1>
+    <p style="margin:0 0 22px 0;font-size:15px;line-height:1.7;color:${c.textMid};">
+      Your dietitian <strong style="color:${c.green};">${params.dietitianName}</strong> has scheduled a follow-up consultation for you. Please note the details below.
+    </p>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 28px 0;">
+      <tr>
+        <td style="background:${c.greenBg};border-left:5px solid ${c.green};border-radius:10px;padding:22px 24px;">
+          <div style="font-size:13px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:${c.green};margin-bottom:12px;">Follow-up Details</div>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid ${c.border};">
+            ${detailRow('📅 Date', formattedDate)}
+            ${detailRow('⏰ Time', formattedTime)}
+            ${detailRow('👩‍⚕️ Dietitian', params.dietitianName)}
+            ${detailRow('📋 Session', sessionLabel)}
+          </table>
+        </td>
+      </tr>
+    </table>
+
+    ${params.sessionType === 'video_call' && params.joinUrl ? `
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 12px 0;">
+      <tr>
+        <td style="border-radius:8px;background:${c.green};">
+          <a href="${params.joinUrl}" target="_blank" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#fff;text-decoration:none;border-radius:8px;">🎥 Join Video Consultation</a>
+        </td>
+      </tr>
+    </table>
+    <p style="margin:0 0 8px 0;font-size:12px;color:${c.textMid};">Or copy this link: <a href="${params.joinUrl}" style="color:${c.green};word-break:break-all;">${params.joinUrl}</a></p>
+    ` : `
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 8px 0;">
+      <tr>
+        <td style="border-radius:8px;background:${c.green};">
+          <a href="${BRAND.website}" target="_blank" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#fff;text-decoration:none;border-radius:8px;">Visit MeriDiet</a>
+        </td>
+      </tr>
+    </table>
+    `}
+  `;
+
+  const html = emailLayout({
+    preheader: `Your follow-up with ${params.dietitianName} is scheduled for ${formattedDate} at ${formattedTime}.`,
+    bodyHtml,
+  });
+
+  const text = [
+    `Hi ${firstName}, your follow-up consultation has been scheduled.`,
+    ``,
+    `${params.dietitianName} has booked a follow-up session for you.`,
+    ``,
+    `Date: ${formattedDate}`,
+    `Time: ${formattedTime}`,
+    `Session Type: ${sessionLabel}`,
+    ``,
+    params.joinUrl ? `Join your consultation: ${params.joinUrl}` : `Visit MeriDiet: ${BRAND.website}`,
     ``,
     ...footerText,
   ].join('\n');

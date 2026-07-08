@@ -10,6 +10,7 @@ import { corsOptions } from './config/cors';
 import { errorHandler } from './middlewares/errorHandler';
 import { notFound } from './middlewares/notFound';
 import { router } from './routes';
+import { meetRouter } from './routes/meet';
 
 export const app = express();
 
@@ -55,6 +56,10 @@ app.get('/health', (_req, res) => {
 
 // API routes
 app.use(`${env.API_PREFIX}/${env.API_VERSION}`, router);
+
+// Meeting room — served as HTML, outside the API prefix
+// GET /meet/:appointmentId?t=<signed-token>
+app.use('/meet', meetRouter);
 
 // 404 & error handler
 app.use(notFound);

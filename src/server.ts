@@ -3,6 +3,7 @@ import { app } from './app';
 import { connectDatabase } from './config/database';
 import { env } from './config/env';
 import { startMissedAppointmentJob } from './jobs/missedAppointments';
+import { startAppointmentReminderJob } from './jobs/appointmentReminders';
 
 const startServer = async () => {
   const server = app.listen(env.PORT, () => {
@@ -13,6 +14,7 @@ const startServer = async () => {
   try {
     await connectDatabase();
     startMissedAppointmentJob();
+    startAppointmentReminderJob();
   } catch (err) {
     console.error('❌ DB connection failed:', (err as Error).message);
   }

@@ -99,8 +99,8 @@ export const appointmentNewBookingEmail = (params: {
       Log in to your dashboard to view the full appointment and manage your schedule.
     </p>
 
-    <!-- CTA -->
-    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 8px 0;">
+    <!-- CTA buttons -->
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 12px 0;">
       <tr>
         <td style="border-radius:8px;background:${c.green};">
           <a href="${BRAND.dashboardUrl}" target="_blank" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:${c.white};text-decoration:none;border-radius:8px;">View in Dashboard</a>

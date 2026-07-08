@@ -3,7 +3,7 @@ import { sendEmail } from '../services/email';
 import { appointmentConfirmationEmail } from '../services/emails/appointmentConfirmation';
 import { appointmentNewBookingEmail } from '../services/emails/appointmentNewBooking';
 
-const TEST_TO = 'mannu@yopmail.com';
+const TEST_TO = 'manish@yopmail.com';
 
 const SAMPLE = {
   userName:        'Manish Kumar',
@@ -28,6 +28,7 @@ const run = async () => {
     sessionType:     SAMPLE.sessionType,
     fee:             SAMPLE.fee,
     currency:        SAMPLE.currency,
+    joinUrl:         'https://app.meridiet.com/meet/42?t=sample_token_for_testing',
   });
 
   await sendEmail({ to: TEST_TO, subject: userMail.subject, html: userMail.html, text: userMail.text });
@@ -48,7 +49,7 @@ const run = async () => {
   console.log('✅ Dietitian new-booking email sent');
   console.log('   Subject:', dietMail.subject);
 
-  console.log('\nDone. Check mannu@yopmail.com\n');
+  console.log('\nDone. Check manish@yopmail.com\n');
 };
 
 run().catch((err) => {
