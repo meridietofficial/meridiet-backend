@@ -28,6 +28,9 @@ import {
   findUnpaidSlotAppointment,
   updateAppointmentOrderId,
   setAgoraChannel,
+  endCallSession,
+  markUserJoined,
+  markDietitianJoined,
   markCallLeft,
   updateRecordingStarted,
   updateCallEnded,
@@ -66,7 +69,7 @@ import {
   sendDietitianRescheduledWhatsApp,
   sendAppointmentCompletedWhatsApp,
 } from '../services/whatsapp';
-import { generateMeetingToken, userUid } from '../utils/meetingToken';
+import { generateMeetingToken, verifyMeetingToken, userUid, dietitianUid } from '../utils/meetingToken';
 
 // GET /api/v1/appointments/slots/:dietitianId?days=14
 export const getAvailableSlots = async (req: Request, res: Response) => {
@@ -433,7 +436,16 @@ export const getMyAppointments = async (req: Request, res: Response) => {
 
     const { appointments, total } = await findAppointmentsByUserId(userId, page, limit);
 
-    return successResponse(res, 200, 'Appointments fetched', appointments, {
+    const baseUrl = env.APP_BASE_URL ?? 'http://localhost:5000';
+    const appointmentsWithJoin = appointments.map((a) => ({
+      ...a,
+      join_url:
+        a.session_type === 'video_call' && a.status === 'confirmed'
+          ? `${baseUrl}/meet/${a.id}?t=${generateMeetingToken(a.id, userUid(a.id))}`
+          : null,
+    }));
+
+    return successResponse(res, 200, 'Appointments fetched', appointmentsWithJoin, {
       page,
       limit,
       total,
@@ -569,6 +581,11 @@ export const updateAppointmentStatusHandler = async (req: Request, res: Response
           console.error('[confirm] Notification error:', e);
         }
       });
+    }
+
+    // Close the video call channel when appointment is marked completed
+    if (status === 'completed' && appointment.session_type === 'video_call') {
+      await endCallSession(id).catch((e) => console.error('[completed] endCallSession failed:', e));
     }
 
     // Credit dietitian wallet when manually marked completed and payment was collected
@@ -970,6 +987,13 @@ export const joinCall = async (req: Request, res: Response) => {
     // Persist channel + mark call as ongoing (COALESCE keeps original call_started_at on re-joins)
     await setAgoraChannel(id, channelName);
 
+    // Track who joined (COALESCE preserves first-join timestamp on re-joins)
+    if (role === 'dietitian') {
+      await markDietitianJoined(id).catch(() => null);
+    } else {
+      await markUserJoined(id).catch(() => null);
+    }
+
     // Auto-start recording on the first join if the setting is enabled
     if (isFirstJoin) {
       const recordingEnabled = await getSetting('video_recording_enabled');
@@ -986,16 +1010,22 @@ export const joinCall = async (req: Request, res: Response) => {
       }
     }
 
+    // Use deterministic UIDs so both paths (join_url and joinCall meet_url) share the
+    // same UID — user = appointmentId*2, dietitian = appointmentId*2+1.
+    // This ensures trackUserJoin can reliably identify who joined regardless of entry point.
+    const agoraUid  = role === 'dietitian' ? dietitianUid(id) : userUid(id);
     const expiresAt = Math.floor(Date.now() / 1000) + CALL_MAX_SECONDS;
-    const token     = generateRtcToken(channelName, userId, CALL_MAX_SECONDS);
+    const token     = generateRtcToken(channelName, agoraUid, CALL_MAX_SECONDS);
+    const meetUrl   = `${env.APP_BASE_URL}/meet/${id}?t=${generateMeetingToken(id, agoraUid)}`;
 
     return successResponse(res, 200, 'Joined call successfully', {
       channel_name:         channelName,
       token,
-      uid:                  userId,
+      uid:                  agoraUid,
       app_id:               env.AGORA_APP_ID,
       expires_at:           expiresAt,
       max_duration_seconds: CALL_MAX_SECONDS,
+      meet_url:             meetUrl,
     });
   } catch (err) {
     console.error('Join call error:', err);
@@ -1819,5 +1849,38 @@ export const agoraWebhook = async (req: Request, res: Response) => {
   } catch (err) {
     console.error('Agora webhook error:', err);
     return res.status(200).json({ success: true }); // always 200 so Agora does not retry
+  }
+};
+
+// POST /api/v1/appointments/:id/track-join
+// Called by the meet page JS after Agora join succeeds.
+// Authenticated by the meeting JWT (no login token needed — user came from a notification link).
+export const trackUserJoin = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const appointmentId = Number(req.params.id);
+    const { t } = req.body as { t?: string };
+
+    if (!t) { res.status(400).json({ success: false }); return; }
+
+    const payload = verifyMeetingToken(t);
+    if (!payload || payload.appointmentId !== appointmentId) {
+      res.status(401).json({ success: false }); return;
+    }
+
+    const appointment = await findAppointmentById(appointmentId);
+    if (!appointment) { res.status(404).json({ success: false }); return; }
+
+    // UID is always deterministic: user = appointmentId*2, dietitian = appointmentId*2+1
+    // This works for both entry points: join_url (getMyAppointments) and joinCall meet_url
+    if (payload.uid === userUid(appointmentId)) {
+      await markUserJoined(appointmentId);
+    } else {
+      await markDietitianJoined(appointmentId);
+    }
+
+    res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('Track join error:', err);
+    res.status(500).json({ success: false });
   }
 };

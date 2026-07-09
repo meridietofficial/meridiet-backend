@@ -14,8 +14,9 @@ import { meetRouter } from './routes/meet';
 
 export const app = express();
 
-// Security
-app.use(helmet());
+// Security — CSP disabled globally (API routes return JSON, CSP only matters for HTML)
+// The /meet page sets its own permissive CSP below to allow Agora SDK + WebRTC
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors(corsOptions));
 
 // Rate limiting — strict on auth, relaxed everywhere else
@@ -59,7 +60,22 @@ app.use(`${env.API_PREFIX}/${env.API_VERSION}`, router);
 
 // Meeting room — served as HTML, outside the API prefix
 // GET /meet/:appointmentId?t=<signed-token>
-app.use('/meet', meetRouter);
+// Permissive CSP required: Agora SDK (CDN), inline JS, WebRTC connections, camera/mic
+app.use('/meet', helmet.contentSecurityPolicy({
+  useDefaults: false,
+  directives: {
+    defaultSrc:    ["'self'"],
+    scriptSrc:     ["'self'", "'unsafe-inline'", 'https://download.agora.io'],
+    scriptSrcAttr: ["'unsafe-inline'"],
+    connectSrc:    ["'self'", 'https:', 'wss:'],
+    mediaSrc:      ['*'],
+    imgSrc:        ["'self'", 'data:', 'blob:'],
+    workerSrc:     ['blob:'],
+    styleSrc:      ["'self'", "'unsafe-inline'"],
+    frameAncestors:["'none'"],
+    objectSrc:     ["'none'"],
+  },
+}), meetRouter);
 
 // 404 & error handler
 app.use(notFound);

@@ -36,6 +36,9 @@ const meetingRoomPage = (opts: {
   token: string;
   uid: number;
   dietitianName: string;
+  appointmentId: number;
+  meetingToken: string;
+  trackJoinUrl: string;
 }) => `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -213,7 +216,7 @@ const meetingRoomPage = (opts: {
   <!-- Waiting for other party -->
   <div id="waiting">
     <div class="avatar pulse">👩‍⚕️</div>
-    <p>Waiting for <strong>${opts.dietitianName.split(' ')[0]}</strong> to join…</p>
+    <p>Waiting for the other participant to join…</p>
   </div>
 
   <!-- Remote video fills stage -->
@@ -235,9 +238,9 @@ const meetingRoomPage = (opts: {
 
 <!-- Controls -->
 <div id="controls">
-  <button class="ctrl-btn active" id="btn-mic" onclick="toggleMic()" title="Mute / Unmute">🎤</button>
-  <button class="ctrl-btn end-call" onclick="endCall()" title="End call">📵</button>
-  <button class="ctrl-btn active" id="btn-cam" onclick="toggleCam()" title="Camera on / off">📷</button>
+  <button class="ctrl-btn active" id="btn-mic" title="Mute / Unmute">🎤</button>
+  <button class="ctrl-btn end-call" id="btn-end" title="End call">📵</button>
+  <button class="ctrl-btn active" id="btn-cam" title="Camera on / off">📷</button>
 </div>
 
 <!-- Toast -->
@@ -336,13 +339,20 @@ const meetingRoomPage = (opts: {
 
     hideLoader();
     showToast('You have joined the consultation ✓');
+
+    // Track that this participant joined (fire-and-forget)
+    fetch(${JSON.stringify(opts.trackJoinUrl)}, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ t: ${JSON.stringify(opts.meetingToken)} }),
+    }).catch(() => null);
   } catch (err) {
     console.error('Agora join error:', err);
     setLoaderText('Could not join. Please check camera/microphone permissions and reload.');
   }
 
-  // ── Controls ─────────────────────────────────────────────────────
-  window.toggleMic = async function() {
+  // ── Controls (addEventListener — no inline onclick needed) ───────
+  document.getElementById('btn-mic').addEventListener('click', async () => {
     if (!localAudioTrack) return;
     micMuted = !micMuted;
     await localAudioTrack.setMuted(micMuted);
@@ -350,9 +360,9 @@ const meetingRoomPage = (opts: {
     btn.textContent = micMuted ? '🔇' : '🎤';
     btn.className   = 'ctrl-btn ' + (micMuted ? 'muted' : 'active');
     showToast(micMuted ? 'Microphone muted' : 'Microphone on');
-  };
+  });
 
-  window.toggleCam = async function() {
+  document.getElementById('btn-cam').addEventListener('click', async () => {
     if (!localVideoTrack) return;
     camMuted = !camMuted;
     await localVideoTrack.setMuted(camMuted);
@@ -361,9 +371,9 @@ const meetingRoomPage = (opts: {
     btn.className   = 'ctrl-btn ' + (camMuted ? 'muted' : 'active');
     document.getElementById('cam-off-local').style.display = camMuted ? 'flex' : 'none';
     showToast(camMuted ? 'Camera off' : 'Camera on');
-  };
+  });
 
-  window.endCall = async function() {
+  document.getElementById('btn-end').addEventListener('click', async () => {
     if (timerInterval) clearInterval(timerInterval);
     try {
       if (localAudioTrack) { localAudioTrack.stop(); localAudioTrack.close(); }
@@ -378,7 +388,7 @@ const meetingRoomPage = (opts: {
         <p style="font-size:16px;color:#ccc;">Your consultation has ended.</p>
         <p style="font-size:13px;color:#666;">You may close this tab.</p>
       </div>\`;
-  };
+  });
 
   // Drag PiP
   const pip = document.getElementById('local-video');
@@ -424,7 +434,7 @@ export const meetingPage = async (req: Request, res: Response): Promise<void> =>
     res.status(400).send(errorPage('This appointment is awaiting confirmation. Please wait for your dietitian to confirm.'));
     return;
   }
-  if (appointment.video_call_status === 'ended') {
+  if (appointment.status === 'completed' || appointment.video_call_status === 'ended') {
     res.status(400).send(errorPage('This consultation has already ended.'));
     return;
   }
@@ -452,5 +462,8 @@ export const meetingPage = async (req: Request, res: Response): Promise<void> =>
     token: rtcToken,
     uid: payload.uid,
     dietitianName,
+    appointmentId,
+    meetingToken: t,
+    trackJoinUrl: `${env.APP_BASE_URL}/api/v1/appointments/${appointmentId}/track-join`,
   }));
 };

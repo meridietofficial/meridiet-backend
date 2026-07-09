@@ -28,6 +28,7 @@ import {
   getDietitianReviewsList,
   getAppointmentDietForm,
   getFollowUpSlots,
+  trackUserJoin,
 } from '../controllers/appointment';
 import { authenticate, authorize } from '../middlewares/authenticate';
 import { optionalAuth } from '../middlewares/optionalAuth';
@@ -82,3 +83,5 @@ appointmentRouter.get('/:id/follow-ups', authenticate, getAppointmentFollowUps);
 appointmentRouter.post('/:id/join-call', authenticate, joinCall);
 appointmentRouter.post('/:id/leave-call', authenticate, leaveCall);
 appointmentRouter.get('/:id/recording', authenticate, getCallRecording);
+// No login required — verified by meeting JWT from the URL
+appointmentRouter.post('/:id/track-join', trackUserJoin);

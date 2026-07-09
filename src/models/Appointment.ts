@@ -40,6 +40,8 @@ export interface Appointment {
   call_started_at: Date | null;
   call_ended_at: Date | null;
   call_duration_seconds: number | null;
+  user_joined_at: Date | null;
+  dietitian_joined_at: Date | null;
   reminder_1h_sent_at: Date | null;
   reminder_10min_sent_at: Date | null;
   reminder_dietitian_15min_sent_at: Date | null;
@@ -79,6 +81,7 @@ const APPOINTMENT_SELECT = `
   agora_channel_name, agora_resource_id, agora_recording_sid, agora_recording_uid,
   video_call_status, recording_url,
   call_started_at, call_ended_at, call_duration_seconds,
+  user_joined_at, dietitian_joined_at,
   created_at, updated_at
 `;
 
@@ -496,39 +499,44 @@ const REMINDER_SELECT = `
 `;
 
 // 1h window: today OR tomorrow (handles reminders that cross midnight)
+// IST_NOW = UTC_TIMESTAMP() + 330 min (5h 30m).
+// Slots are stored as IST naive datetimes. UTC_TIMESTAMP() is always UTC regardless of
+// session timezone. Adding 330 min gives the current IST moment as a naive datetime so
+// the comparison is correct on any server (UTC or IST system clock).
 export const getDue1hReminders = async (): Promise<ReminderAppointment[]> =>
   query<ReminderAppointment>(
     `${REMINDER_SELECT}
      WHERE a.status = 'confirmed'
        AND a.reminder_1h_sent_at IS NULL
-       AND a.appointment_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+       AND a.appointment_date BETWEEN DATE(UTC_TIMESTAMP() + INTERVAL 330 MINUTE)
+                                  AND DATE_ADD(DATE(UTC_TIMESTAMP() + INTERVAL 330 MINUTE), INTERVAL 1 DAY)
        AND TIMESTAMP(a.appointment_date, a.slot)
-             BETWEEN NOW() + INTERVAL 55 MINUTE
-                 AND NOW() + INTERVAL 65 MINUTE`,
+             BETWEEN UTC_TIMESTAMP() + INTERVAL 385 MINUTE
+                 AND UTC_TIMESTAMP() + INTERVAL 395 MINUTE`,
   );
 
-// 10min window: always today
+// 10min window: always today (IST date)
 export const getDue10minReminders = async (): Promise<ReminderAppointment[]> =>
   query<ReminderAppointment>(
     `${REMINDER_SELECT}
      WHERE a.status = 'confirmed'
        AND a.reminder_10min_sent_at IS NULL
-       AND a.appointment_date = CURDATE()
+       AND a.appointment_date = DATE(UTC_TIMESTAMP() + INTERVAL 330 MINUTE)
        AND TIMESTAMP(a.appointment_date, a.slot)
-             BETWEEN NOW() + INTERVAL 8 MINUTE
-                 AND NOW() + INTERVAL 12 MINUTE`,
+             BETWEEN UTC_TIMESTAMP() + INTERVAL 338 MINUTE
+                 AND UTC_TIMESTAMP() + INTERVAL 342 MINUTE`,
   );
 
-// 15min dietitian window: always today
+// 15min dietitian window: always today (IST date)
 export const getDueDietitian15minReminders = async (): Promise<ReminderAppointment[]> =>
   query<ReminderAppointment>(
     `${REMINDER_SELECT}
      WHERE a.status = 'confirmed'
        AND a.reminder_dietitian_15min_sent_at IS NULL
-       AND a.appointment_date = CURDATE()
+       AND a.appointment_date = DATE(UTC_TIMESTAMP() + INTERVAL 330 MINUTE)
        AND TIMESTAMP(a.appointment_date, a.slot)
-             BETWEEN NOW() + INTERVAL 13 MINUTE
-                 AND NOW() + INTERVAL 17 MINUTE`,
+             BETWEEN UTC_TIMESTAMP() + INTERVAL 343 MINUTE
+                 AND UTC_TIMESTAMP() + INTERVAL 347 MINUTE`,
   );
 
 export const markReminderSent = async (
@@ -547,7 +555,8 @@ export const markMissedAppointments = async () => {
     `UPDATE appointments
      SET status = 'missed'
      WHERE status IN ('confirmed', 'pending')
-       AND TIMESTAMP(appointment_date, slot) < NOW()`,
+       AND TIMESTAMP(appointment_date, slot) + INTERVAL 30 MINUTE
+             < UTC_TIMESTAMP() + INTERVAL 330 MINUTE`,
   );
   return (result as { affectedRows: number }).affectedRows;
 };
@@ -836,6 +845,20 @@ export const endCallSession = async (id: number) => {
          call_ended_at         = COALESCE(call_ended_at, NOW()),
          call_duration_seconds = TIMESTAMPDIFF(SECOND, call_started_at, COALESCE(call_ended_at, NOW()))
      WHERE id = ?`,
+    [id],
+  );
+};
+
+export const markUserJoined = async (id: number) => {
+  await execute(
+    `UPDATE appointments SET user_joined_at = COALESCE(user_joined_at, NOW()) WHERE id = ?`,
+    [id],
+  );
+};
+
+export const markDietitianJoined = async (id: number) => {
+  await execute(
+    `UPDATE appointments SET dietitian_joined_at = COALESCE(dietitian_joined_at, NOW()) WHERE id = ?`,
     [id],
   );
 };
@@ -1173,6 +1196,7 @@ export interface AdminAppointmentFilters {
   date_from?: string;
   date_to?: string;
   search?: string;    // patient name / email / phone
+  no_show?: 'user' | 'dietitian' | 'any'; // video calls where someone didn't join
   page?: number;
   limit?: number;
 }
@@ -1191,6 +1215,12 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
   if (filters.dietitian_id)  { conditions.push('a.dietitian_id = ?');   params.push(filters.dietitian_id); }
   if (filters.date_from)     { conditions.push('a.appointment_date >= ?'); params.push(filters.date_from); }
   if (filters.date_to)       { conditions.push('a.appointment_date <= ?'); params.push(filters.date_to); }
+  if (filters.no_show) {
+    conditions.push('a.session_type = \'video_call\'');
+    if (filters.no_show === 'user')      conditions.push('a.user_joined_at IS NULL');
+    if (filters.no_show === 'dietitian') conditions.push('a.dietitian_joined_at IS NULL');
+    if (filters.no_show === 'any')       conditions.push('(a.user_joined_at IS NULL OR a.dietitian_joined_at IS NULL)');
+  }
   if (filters.search) {
     conditions.push('(a.name LIKE ? OR a.email LIKE ? OR a.phone LIKE ?)');
     const like = `%${filters.search}%`;
@@ -1212,6 +1242,8 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
       currency: string;
       is_follow_up: number;
       created_at: Date;
+      user_joined_at: Date | null;
+      dietitian_joined_at: Date | null;
       // patient
       patient_name: string;
       patient_email: string | null;
@@ -1235,6 +1267,8 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
          a.currency,
          a.is_follow_up,
          a.created_at,
+         a.user_joined_at,
+         a.dietitian_joined_at,
          a.name        AS patient_name,
          a.email       AS patient_email,
          a.phone       AS patient_phone,
@@ -1274,6 +1308,10 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
       currency: r.currency,
       is_follow_up: Boolean(r.is_follow_up),
       created_at: r.created_at,
+      call_tracking: {
+        user_joined_at:      r.user_joined_at ?? null,
+        dietitian_joined_at: r.dietitian_joined_at ?? null,
+      },
       patient: {
         name: r.patient_name,
         email: r.patient_email,
@@ -1324,6 +1362,8 @@ export const adminGetAppointmentDetail = async (id: number) => {
     call_started_at: Date | null;
     call_ended_at: Date | null;
     call_duration_seconds: number | null;
+    user_joined_at: Date | null;
+    dietitian_joined_at: Date | null;
     created_at: Date;
     updated_at: Date;
     // patient
@@ -1353,6 +1393,7 @@ export const adminGetAppointmentDetail = async (id: number) => {
        a.parent_appointment_id, a.is_follow_up, a.follow_up_type,
        a.video_call_status, a.recording_url,
        a.call_started_at, a.call_ended_at, a.call_duration_seconds,
+       a.user_joined_at, a.dietitian_joined_at,
        a.created_at, a.updated_at,
        a.name        AS patient_name,
        a.email       AS patient_email,
@@ -1419,6 +1460,10 @@ export const adminGetAppointmentDetail = async (id: number) => {
     call_started_at: r.call_started_at,
     call_ended_at: r.call_ended_at,
     call_duration_seconds: r.call_duration_seconds,
+    call_tracking: {
+      user_joined_at:      r.user_joined_at ?? null,
+      dietitian_joined_at: r.dietitian_joined_at ?? null,
+    },
     created_at: r.created_at,
     updated_at: r.updated_at,
     patient: {

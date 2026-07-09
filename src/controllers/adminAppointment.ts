@@ -17,11 +17,13 @@ export const adminGetAppointments = async (req: Request, res: Response) => {
       date_from,
       date_to,
       search,
+      no_show,
     } = req.query as Record<string, string | undefined>;
 
     const validStatuses  = ['pending', 'confirmed', 'completed', 'cancelled', 'missed'];
     const validPayments  = ['unpaid', 'paid', 'refunded'];
     const validSessions  = ['video_call', 'in_person'];
+    const validNoShow    = ['user', 'dietitian', 'any'];
 
     if (status && !validStatuses.includes(status)) {
       return errorResponse(res, 400, `status must be one of: ${validStatuses.join(', ')}`);
@@ -38,6 +40,9 @@ export const adminGetAppointments = async (req: Request, res: Response) => {
     if (date_to && !/^\d{4}-\d{2}-\d{2}$/.test(date_to)) {
       return errorResponse(res, 400, 'date_to must be YYYY-MM-DD');
     }
+    if (no_show && !validNoShow.includes(no_show)) {
+      return errorResponse(res, 400, `no_show must be one of: ${validNoShow.join(', ')}`);
+    }
 
     const result = await adminListAppointments({
       page:           page   ? Number(page)  : 1,
@@ -49,6 +54,7 @@ export const adminGetAppointments = async (req: Request, res: Response) => {
       date_from,
       date_to,
       search:         search?.trim() || undefined,
+      no_show:        no_show as 'user' | 'dietitian' | 'any' | undefined,
     });
 
     return successResponse(res, 200, 'Appointments fetched', {

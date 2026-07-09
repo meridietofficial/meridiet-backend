@@ -4,6 +4,8 @@ import {
   saveDraft,
   updateDraft,
   generateFromDraft,
+  editGeneratedPlan,
+  sendDietitianPlan,
   archivePlan,
   listDietitianPlans,
   getDietitianPlan,
@@ -64,6 +66,12 @@ dietitianRouter.put('/diet-forms/:id', authenticate, authorize('dietitian'), upd
 
 // POST /api/v1/dietitian/diet-forms/:id/generate — trigger AI generation on a draft
 dietitianRouter.post('/diet-forms/:id/generate', authenticate, authorize('dietitian'), generateFromDraft);
+
+// PUT  /api/v1/dietitian/diet-forms/:id/content  — edit AI-generated content before sending
+dietitianRouter.put('/diet-forms/:id/content', authenticate, authorize('dietitian'), editGeneratedPlan);
+
+// POST /api/v1/dietitian/diet-forms/:id/send     — send completed plan to patient
+dietitianRouter.post('/diet-forms/:id/send', authenticate, authorize('dietitian'), sendDietitianPlan);
 
 // PUT  /api/v1/dietitian/diet-forms/:id/archive  — archive
 dietitianRouter.put('/diet-forms/:id/archive', authenticate, authorize('dietitian'), archivePlan);

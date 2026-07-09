@@ -92,13 +92,13 @@ export const sendAppointmentBookedWhatsApp = async (
     },
   ];
 
-  // Dynamic URL button — suffix is the path after the base domain
+  // Join Consultation is the 2nd button (index 1) — Visit Website is index 0 (static, no param)
   if (joinUrl && env.APP_BASE_URL) {
     const urlSuffix = joinUrl.replace(`${env.APP_BASE_URL}/`, '');
     components.push({
       type: 'button',
       sub_type: 'url',
-      index: '0',
+      index: '1',
       parameters: [{ type: 'text', text: urlSuffix }],
     });
   }
