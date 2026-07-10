@@ -159,7 +159,7 @@ export const getMyAllDietForms = async (req: Request, res: Response) => {
         plan_id:          plan?.id          ?? null,
         plan_status:      plan?.status       ?? null,   // 'generating' | 'completed' | 'failed' | null
         plan_pdf_url:     plan?.pdf_url      ?? null,
-        plan_generated:   plan?.status === 'completed', // boolean shortcut for frontend
+        plan_generated:   plan?.status === 'completed' || plan?.status === 'sent',
       };
     });
 

@@ -4,14 +4,19 @@ import { razorpay, PLANS } from '../config/razorpay';
 import { env } from '../config/env';
 import { createPayment, findPaymentByOrderId, markPaymentPaid, markPaymentFailed } from '../models/Payment';
 import { findDietFormById, updateDietForm } from '../models/DietForm';
+import { resolveCoupon, createCouponUsage } from '../models/Coupon';
 import { successResponse, errorResponse } from '../utils/response';
 import { generateAndDeliverDietPlan } from '../services/dietPlanDelivery';
 
 // POST /api/v1/payment/create-order
-// Body: { plan: '1_week' | '1_month' | '3_months', diet_form_id: number }
+// Body: { plan: '1_week' | '1_month' | '3_months', diet_form_id: number, coupon_code?: string }
 export const createOrder = async (req: Request, res: Response) => {
   try {
-    const { plan, diet_form_id } = req.body as { plan: string; diet_form_id?: number };
+    const { plan, diet_form_id, coupon_code } = req.body as {
+      plan: string;
+      diet_form_id?: number;
+      coupon_code?: string;
+    };
 
     const selectedPlan = PLANS[plan];
     if (!selectedPlan) {
@@ -29,8 +34,30 @@ export const createOrder = async (req: Request, res: Response) => {
 
     const userId = req.user?.sub ? Number(req.user.sub) : null;
 
+    // Resolve coupon if provided
+    let couponId: number | null = null;
+    let discountApplied: number | null = null;
+    let finalAmount: number = selectedPlan.amountInr;
+
+    if (coupon_code) {
+      const couponResult = await resolveCoupon(
+        coupon_code,
+        'diet_plan',
+        selectedPlan.amountInr,
+        plan,
+        userId,
+      );
+      if ('error' in couponResult) {
+        const status = couponResult.error === 'Invalid or expired coupon code' ? 404 : 400;
+        return errorResponse(res, status, couponResult.error);
+      }
+      couponId = couponResult.coupon.id;
+      discountApplied = couponResult.discountApplied;
+      finalAmount = couponResult.finalAmount;
+    }
+
     const order = await razorpay.orders.create({
-      amount: selectedPlan.amountInr * 100,
+      amount: Math.round(finalAmount * 100),
       currency: selectedPlan.currency,
       receipt: `receipt_${Date.now()}`,
     });
@@ -47,14 +74,19 @@ export const createOrder = async (req: Request, res: Response) => {
       currency: selectedPlan.currency,
       user_id: userId,
       diet_form_id,
+      coupon_id: couponId,
+      discount_applied: discountApplied,
+      final_amount: coupon_code ? finalAmount : null,
     });
 
     return successResponse(res, 201, 'Order created', {
-      order_id: order.id,
-      amount: selectedPlan.amountInr,
-      currency: selectedPlan.currency,
-      key_id: env.RAZORPAY_KEY_ID,
-      plan: selectedPlan.label,
+      order_id:         order.id,
+      amount:           selectedPlan.amountInr,
+      final_amount:     finalAmount,
+      discount_applied: discountApplied ?? 0,
+      currency:         selectedPlan.currency,
+      key_id:           env.RAZORPAY_KEY_ID,
+      plan:             selectedPlan.label,
     });
   } catch (err) {
     console.error('Create order error:', err);
@@ -100,6 +132,20 @@ export const verifyPaymentAndSubmitForm = async (req: Request, res: Response) =>
     if (!form) return errorResponse(res, 404, 'Diet form not found');
 
     await markPaymentPaid(razorpay_order_id, razorpay_payment_id, razorpay_signature, payment.diet_form_id);
+
+    // Record coupon usage now that payment is confirmed
+    if (payment.coupon_id && payment.discount_applied != null && payment.final_amount != null) {
+      await createCouponUsage({
+        coupon_id:        payment.coupon_id,
+        user_id:          payment.user_id,
+        applicable_type:  'diet_plan',
+        payment_id:       payment.id,
+        appointment_id:   null,
+        original_amount:  payment.amount,
+        discount_applied: payment.discount_applied,
+        final_amount:     payment.final_amount,
+      }).catch((e) => console.error('[payment] Failed to record coupon usage:', e));
+    }
 
     // If the form was submitted as a guest (user_id null), back-fill it now using the payment's user_id
     const userId = form.user_id ?? payment.user_id;

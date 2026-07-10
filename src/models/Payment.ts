@@ -14,15 +14,33 @@ export interface Payment {
   status: 'pending' | 'paid' | 'failed';
   user_id: number | null;
   diet_form_id: number | null;
+  coupon_id: number | null;
+  discount_applied: number | null;
+  final_amount: number | null;
   created_at: Date;
   updated_at: Date;
 }
 
-export const createPayment = async (data: Pick<Payment, 'razorpay_order_id' | 'plan' | 'amount' | 'currency' | 'user_id' | 'months_total' | 'per_month_amount'> & { diet_form_id?: number | null }) => {
+export const createPayment = async (
+  data: Pick<Payment, 'razorpay_order_id' | 'plan' | 'amount' | 'currency' | 'user_id' | 'months_total' | 'per_month_amount'>
+    & { diet_form_id?: number | null; coupon_id?: number | null; discount_applied?: number | null; final_amount?: number | null },
+) => {
   const result = await execute(
-    `INSERT INTO payments (razorpay_order_id, plan, amount, months_total, per_month_amount, currency, user_id, diet_form_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [data.razorpay_order_id, data.plan, data.amount, data.months_total, data.per_month_amount, data.currency, data.user_id, data.diet_form_id ?? null],
+    `INSERT INTO payments (razorpay_order_id, plan, amount, months_total, per_month_amount, currency, user_id, diet_form_id, coupon_id, discount_applied, final_amount)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      data.razorpay_order_id,
+      data.plan,
+      data.amount,
+      data.months_total,
+      data.per_month_amount,
+      data.currency,
+      data.user_id,
+      data.diet_form_id ?? null,
+      data.coupon_id ?? null,
+      data.discount_applied ?? null,
+      data.final_amount ?? null,
+    ],
   );
   return findPaymentById(result.insertId);
 };

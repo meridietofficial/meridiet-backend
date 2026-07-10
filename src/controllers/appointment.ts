@@ -26,7 +26,7 @@ import {
   getBookedSlots,
   isSlotTaken,
   findUnpaidSlotAppointment,
-  updateAppointmentOrderId,
+  updateAppointmentOnRetry,
   setAgoraChannel,
   endCallSession,
   markUserJoined,
@@ -50,6 +50,7 @@ import {
   type FollowUpListTab,
 } from '../models/Appointment';
 import { buildAvailableDates } from '../utils/availability';
+import { resolveCoupon, createCouponUsage } from '../models/Coupon';
 import { successResponse, errorResponse } from '../utils/response';
 import { createRescheduleHistory, getRescheduleHistory } from '../models/AppointmentRescheduleHistory';
 import { creditDietitianForAppointment } from '../models/DietitianWallet';
@@ -152,6 +153,7 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
       duration,
       session_type,
       notes,
+      coupon_code,
     } = req.body as {
       dietitian_id?: number;
       appointment_date?: string;
@@ -162,6 +164,7 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
       duration?: number;
       session_type?: 'video_call' | 'in_person';
       notes?: string;
+      coupon_code?: string;
     };
 
     if (!dietitian_id) return errorResponse(res, 400, 'dietitian_id is required');
@@ -220,12 +223,29 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
     // --- End availability check ---
 
     const fee = Number(dietitian.appointment_fee ?? 0);
-    const amountInPaise = Math.round(fee * 100);
-    if (amountInPaise < 100) {
+    if (Math.round(fee * 100) < 100) {
       return errorResponse(res, 400, 'This dietitian has not set a valid appointment fee (minimum ₹1)');
     }
     const currency = (dietitian.appointment_currency as string) || 'INR';
     const userId = req.user?.sub ? Number(req.user.sub) : null;
+
+    // Resolve coupon if provided
+    let couponId: number | null = null;
+    let discountApplied: number | null = null;
+    let finalAmount: number = fee;
+
+    if (coupon_code) {
+      const couponResult = await resolveCoupon(coupon_code, 'appointment', fee, null, userId);
+      if ('error' in couponResult) {
+        const status = couponResult.error === 'Invalid or expired coupon code' ? 404 : 400;
+        return errorResponse(res, status, couponResult.error);
+      }
+      couponId = couponResult.coupon.id;
+      discountApplied = couponResult.discountApplied;
+      finalAmount = couponResult.finalAmount;
+    }
+
+    const chargeInPaise = Math.round(finalAmount * 100);
 
     // If the same user previously opened Razorpay but cancelled without paying,
     // their unpaid appointment row still holds the unique slot in the DB.
@@ -233,23 +253,25 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
     const staleAppointment = await findUnpaidSlotAppointment(dietitian_id, appointment_date, slot, userId);
     if (staleAppointment) {
       const freshOrder = await razorpay.orders.create({
-        amount: amountInPaise,
+        amount: chargeInPaise,
         currency,
         receipt: `appt_${Date.now()}`,
       });
-      await updateAppointmentOrderId(staleAppointment.id, freshOrder.id);
+      await updateAppointmentOnRetry(staleAppointment.id, freshOrder.id, couponId, discountApplied, coupon_code ? finalAmount : null);
       return successResponse(res, 201, 'Order created', {
-        appointment_id: staleAppointment.id,
-        order_id: freshOrder.id,
-        amount: fee,
+        appointment_id:   staleAppointment.id,
+        order_id:         freshOrder.id,
+        amount:           fee,
+        final_amount:     finalAmount,
+        discount_applied: discountApplied ?? 0,
         currency,
-        key_id: env.RAZORPAY_KEY_ID,
+        key_id:           env.RAZORPAY_KEY_ID,
       });
     }
 
     // Create Razorpay order only after all checks pass
     const order = await razorpay.orders.create({
-      amount: amountInPaise,
+      amount: chargeInPaise,
       currency,
       receipt: `appt_${Date.now()}`,
     });
@@ -267,17 +289,22 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
       fee,
       currency,
       order_id: order.id,
+      coupon_id: couponId,
+      discount_applied: discountApplied,
+      final_amount: coupon_code ? finalAmount : null,
       notes: notes ?? null,
     });
 
     if (!appointment) return errorResponse(res, 500, 'Failed to reserve appointment slot');
 
     return successResponse(res, 201, 'Order created', {
-      appointment_id: appointment.id,
-      order_id: order.id,
-      amount: fee,
+      appointment_id:   appointment.id,
+      order_id:         order.id,
+      amount:           fee,
+      final_amount:     finalAmount,
+      discount_applied: discountApplied ?? 0,
       currency,
-      key_id: env.RAZORPAY_KEY_ID,
+      key_id:           env.RAZORPAY_KEY_ID,
     });
   } catch (err: unknown) {
     if ((err as { code?: string }).code === 'ER_DUP_ENTRY') {
@@ -326,6 +353,20 @@ export const verifyAppointmentPayment = async (req: Request, res: Response) => {
     }
 
     await updateAppointmentPayment(razorpay_order_id, razorpay_payment_id, 'paid', 'pending');
+
+    // Record coupon usage now that payment is confirmed
+    if (appointment.coupon_id && appointment.discount_applied != null && appointment.final_amount != null) {
+      await createCouponUsage({
+        coupon_id:        appointment.coupon_id,
+        user_id:          appointment.user_id,
+        applicable_type:  'appointment',
+        payment_id:       null,
+        appointment_id:   appointment.id,
+        original_amount:  appointment.fee,
+        discount_applied: appointment.discount_applied,
+        final_amount:     appointment.final_amount,
+      }).catch((e) => console.error('[appointment] Failed to record coupon usage:', e));
+    }
 
     // Fire notifications in background — don't let failures block the response
     setImmediate(async () => {

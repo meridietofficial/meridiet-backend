@@ -158,15 +158,49 @@ export const deactivateCoupon = async (id: number): Promise<void> => {
   await execute('UPDATE coupons SET is_active = 0 WHERE id = ?', [id]);
 };
 
+export interface CouponUsageDetail extends CouponUsage {
+  user_name:         string | null;
+  user_email:        string | null;
+  user_phone:        string | null;
+  // diet plan context (when applicable_type = 'diet_plan')
+  payment_plan:      string | null;
+  payment_order_id:  string | null;
+  // appointment context (when applicable_type = 'appointment')
+  appointment_date:  string | null;
+  appointment_slot:  string | null;
+  dietitian_name:    string | null;
+}
+
 export const getCouponUsages = async (
   couponId: number,
   page: number,
   limit: number,
-): Promise<{ usages: CouponUsage[]; total: number }> => {
+): Promise<{ usages: CouponUsageDetail[]; total: number }> => {
   const offset = (page - 1) * limit;
 
-  const usages = await query<CouponUsage>(
-    `SELECT * FROM coupon_usages WHERE coupon_id = ? ORDER BY used_at DESC LIMIT ${limit} OFFSET ${offset}`,
+  const usages = await query<CouponUsageDetail>(
+    `SELECT
+       cu.id, cu.coupon_id, cu.user_id, cu.applicable_type,
+       cu.payment_id, cu.appointment_id,
+       cu.original_amount, cu.discount_applied, cu.final_amount,
+       cu.used_at,
+       u.full_name                                           AS user_name,
+       u.email                                               AS user_email,
+       u.phone_number                                        AS user_phone,
+       p.plan                                                AS payment_plan,
+       p.razorpay_order_id                                   AS payment_order_id,
+       DATE_FORMAT(a.appointment_date, '%Y-%m-%d')           AS appointment_date,
+       TIME_FORMAT(a.slot, '%H:%i')                          AS appointment_slot,
+       du.full_name                                          AS dietitian_name
+     FROM coupon_usages cu
+     LEFT JOIN users u         ON u.id  = cu.user_id
+     LEFT JOIN payments p      ON p.id  = cu.payment_id
+     LEFT JOIN appointments a  ON a.id  = cu.appointment_id
+     LEFT JOIN dietitians d    ON d.id  = a.dietitian_id
+     LEFT JOIN users du        ON du.id = d.user_id
+     WHERE cu.coupon_id = ?
+     ORDER BY cu.used_at DESC
+     LIMIT ${limit} OFFSET ${offset}`,
     [couponId],
   );
 
@@ -192,6 +226,116 @@ export const countTotalCouponUsage = async (couponId: number): Promise<number> =
     [couponId],
   );
   return rows[0]?.cnt ?? 0;
+};
+
+export const getAllCouponUsages = async (
+  page: number,
+  limit: number,
+  couponId?: number,
+  applicableType?: string,
+): Promise<{ usages: CouponUsageDetail[]; total: number }> => {
+  const offset = (page - 1) * limit;
+
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (couponId)       { conditions.push('cu.coupon_id = ?');       params.push(couponId); }
+  if (applicableType) { conditions.push('cu.applicable_type = ?'); params.push(applicableType); }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const usages = await query<CouponUsageDetail>(
+    `SELECT
+       cu.id, cu.coupon_id, cu.user_id, cu.applicable_type,
+       cu.payment_id, cu.appointment_id,
+       cu.original_amount, cu.discount_applied, cu.final_amount,
+       cu.used_at,
+       c.code                                                AS coupon_code,
+       u.full_name                                           AS user_name,
+       u.email                                               AS user_email,
+       u.phone_number                                        AS user_phone,
+       p.plan                                                AS payment_plan,
+       p.razorpay_order_id                                   AS payment_order_id,
+       DATE_FORMAT(a.appointment_date, '%Y-%m-%d')           AS appointment_date,
+       TIME_FORMAT(a.slot, '%H:%i')                          AS appointment_slot,
+       du.full_name                                          AS dietitian_name
+     FROM coupon_usages cu
+     JOIN coupons c            ON c.id  = cu.coupon_id
+     LEFT JOIN users u         ON u.id  = cu.user_id
+     LEFT JOIN payments p      ON p.id  = cu.payment_id
+     LEFT JOIN appointments a  ON a.id  = cu.appointment_id
+     LEFT JOIN dietitians d    ON d.id  = a.dietitian_id
+     LEFT JOIN users du        ON du.id = d.user_id
+     ${where}
+     ORDER BY cu.used_at DESC
+     LIMIT ${limit} OFFSET ${offset}`,
+    params,
+  );
+
+  const countRows = await query<{ total: number }>(
+    `SELECT COUNT(*) AS total FROM coupon_usages cu ${where}`,
+    params,
+  );
+
+  return { usages, total: countRows[0]?.total ?? 0 };
+};
+
+export interface CouponResolution {
+  coupon: Coupon;
+  discountApplied: number;
+  finalAmount: number;
+}
+
+// Validates a coupon code against all business rules and calculates the discount.
+// Returns the resolved amounts or an error string — callers decide the HTTP status.
+export const resolveCoupon = async (
+  code: string,
+  applicableType: 'diet_plan' | 'appointment',
+  amount: number,
+  plan: string | null,
+  userId: number | null,
+): Promise<CouponResolution | { error: string }> => {
+  const coupon = await findCouponByCode(code);
+  if (!coupon) return { error: 'Invalid or expired coupon code' };
+
+  if (coupon.applicable_on !== 'both' && coupon.applicable_on !== applicableType) {
+    return { error: `This coupon is not applicable on ${applicableType}` };
+  }
+
+  if (applicableType === 'diet_plan' && coupon.applicable_plans) {
+    if (!plan) return { error: 'plan is required for this coupon' };
+    const allowed = coupon.applicable_plans.split(',').map((p) => p.trim());
+    if (!allowed.includes(plan)) {
+      return { error: `This coupon is not valid for the "${plan}" plan` };
+    }
+  }
+
+  if (coupon.min_order_amount !== null && amount < coupon.min_order_amount) {
+    return { error: `Minimum order amount is ₹${coupon.min_order_amount}` };
+  }
+
+  if (coupon.max_uses !== null) {
+    const totalUsed = await countTotalCouponUsage(coupon.id);
+    if (totalUsed >= coupon.max_uses) return { error: 'This coupon has reached its usage limit' };
+  }
+
+  if (userId) {
+    const userUsed = await countCouponUsageByUser(coupon.id, userId);
+    if (userUsed >= coupon.max_uses_per_user) {
+      return { error: 'You have already used this coupon the maximum number of times' };
+    }
+  }
+
+  let discountApplied: number;
+  if (coupon.discount_type === 'percentage') {
+    discountApplied = (amount * coupon.discount_value) / 100;
+    if (coupon.max_discount_amount !== null) {
+      discountApplied = Math.min(discountApplied, coupon.max_discount_amount);
+    }
+  } else {
+    discountApplied = Math.min(coupon.discount_value, amount);
+  }
+  discountApplied = Math.round(discountApplied * 100) / 100;
+
+  return { coupon, discountApplied, finalAmount: Math.max(amount - discountApplied, 0) };
 };
 
 export const createCouponUsage = async (

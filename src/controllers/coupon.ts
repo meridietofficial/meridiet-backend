@@ -6,6 +6,8 @@ import {
   updateCoupon,
   deactivateCoupon,
   getCouponUsages,
+  getAllCouponUsages,
+  resolveCoupon,
   type CreateCouponData,
   type UpdateCouponData,
 } from '../models/Coupon';
@@ -258,6 +260,50 @@ export const adminDeactivateCoupon = async (req: Request, res: Response) => {
   }
 };
 
+// ── User: POST /api/v1/coupons/validate ───────────────────────────────────────
+export const validateCoupon = async (req: Request, res: Response) => {
+  try {
+    const { code, applicable_type, amount, plan } = req.body as Record<string, unknown>;
+
+    if (!code || typeof code !== 'string') return errorResponse(res, 400, 'code is required');
+    if (!applicable_type || !['diet_plan', 'appointment'].includes(applicable_type as string)) {
+      return errorResponse(res, 400, 'applicable_type must be "diet_plan" or "appointment"');
+    }
+    const parsedAmount = Number(amount);
+    if (!amount || isNaN(parsedAmount) || parsedAmount <= 0) {
+      return errorResponse(res, 400, 'amount must be a positive number');
+    }
+
+    const userId = req.user ? Number(req.user.sub) : null;
+    const result = await resolveCoupon(
+      code,
+      applicable_type as 'diet_plan' | 'appointment',
+      parsedAmount,
+      plan != null ? String(plan) : null,
+      userId,
+    );
+
+    if ('error' in result) {
+      const status = result.error === 'Invalid or expired coupon code' ? 404 : 400;
+      return errorResponse(res, status, result.error);
+    }
+
+    const { coupon, discountApplied, finalAmount } = result;
+    return successResponse(res, 200, 'Coupon applied successfully', {
+      coupon_id:        coupon.id,
+      code:             coupon.code,
+      discount_type:    coupon.discount_type,
+      discount_value:   coupon.discount_value,
+      original_amount:  parsedAmount,
+      discount_applied: discountApplied,
+      final_amount:     finalAmount,
+    });
+  } catch (err) {
+    console.error('Validate coupon error:', err);
+    return errorResponse(res, 500, 'Failed to validate coupon');
+  }
+};
+
 // ── Admin: GET /api/v1/admin/coupons/:id/usages ───────────────────────────────
 export const adminGetCouponUsages = async (req: Request, res: Response) => {
   try {
@@ -280,6 +326,33 @@ export const adminGetCouponUsages = async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('Get coupon usages error:', err);
+    return errorResponse(res, 500, 'Failed to fetch coupon usages');
+  }
+};
+
+// ── Admin: GET /api/v1/admin/coupon-usages ────────────────────────────────────
+// All redemptions across all coupons. Filters: ?coupon_id=&applicable_type=&page=&limit=
+export const adminGetAllCouponUsages = async (req: Request, res: Response) => {
+  try {
+    const page           = Math.max(Number(req.query.page) || 1, 1);
+    const limit          = Math.min(Number(req.query.limit) || 20, 100);
+    const couponId       = req.query.coupon_id ? Number(req.query.coupon_id) : undefined;
+    const applicableType = req.query.applicable_type as string | undefined;
+
+    if (applicableType && !['diet_plan', 'appointment'].includes(applicableType)) {
+      return errorResponse(res, 400, 'applicable_type must be "diet_plan" or "appointment"');
+    }
+
+    const { usages, total } = await getAllCouponUsages(page, limit, couponId, applicableType);
+
+    return successResponse(res, 200, 'Coupon usages fetched', usages, {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    });
+  } catch (err) {
+    console.error('Get all coupon usages error:', err);
     return errorResponse(res, 500, 'Failed to fetch coupon usages');
   }
 };

@@ -17,6 +17,9 @@ export interface Appointment {
   payment_status: 'unpaid' | 'paid' | 'refunded';
   payment_id: string | null;
   order_id: string | null;
+  coupon_id: number | null;
+  discount_applied: number | null;
+  final_amount: number | null;
   notes: string | null;
   dietitian_notes: string | null;
   missed_reason: string | null;
@@ -62,6 +65,9 @@ export interface CreateAppointmentData {
   fee: number;
   currency?: string;
   order_id?: string | null;
+  coupon_id?: number | null;
+  discount_applied?: number | null;
+  final_amount?: number | null;
   notes?: string | null;
   parent_appointment_id?: number | null;
   is_follow_up?: boolean;
@@ -74,7 +80,7 @@ const APPOINTMENT_SELECT = `
   DATE_FORMAT(appointment_date, '%Y-%m-%d') AS appointment_date,
   TIME_FORMAT(slot, '%H:%i')                AS slot,
   duration, session_type,
-  fee, currency, status, payment_status, payment_id, order_id, notes, dietitian_notes, missed_reason, missed_type,
+  fee, currency, status, payment_status, payment_id, order_id, coupon_id, discount_applied, final_amount, notes, dietitian_notes, missed_reason, missed_type,
   user_rating, user_review, user_reviewed_at,
   dietitian_rating, dietitian_review, dietitian_reviewed_at,
   parent_appointment_id, is_follow_up, follow_up_type,
@@ -88,8 +94,10 @@ const APPOINTMENT_SELECT = `
 export const createAppointment = async (data: CreateAppointmentData) => {
   const result = await execute(
     `INSERT INTO appointments
-       (dietitian_id, user_id, name, email, phone, appointment_date, slot, duration, session_type, fee, currency, order_id, notes, parent_appointment_id, is_follow_up, follow_up_type)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (dietitian_id, user_id, name, email, phone, appointment_date, slot, duration, session_type,
+        fee, currency, order_id, coupon_id, discount_applied, final_amount,
+        notes, parent_appointment_id, is_follow_up, follow_up_type)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.dietitian_id,
       data.user_id ?? null,
@@ -103,6 +111,9 @@ export const createAppointment = async (data: CreateAppointmentData) => {
       data.fee,
       data.currency ?? 'INR',
       data.order_id ?? null,
+      data.coupon_id ?? null,
+      data.discount_applied ?? null,
+      data.final_amount ?? null,
       data.notes ?? null,
       data.parent_appointment_id ?? null,
       data.is_follow_up ? 1 : 0,
@@ -433,6 +444,20 @@ export const findUnpaidSlotAppointment = async (
 
 export const updateAppointmentOrderId = async (id: number, order_id: string) => {
   await query('UPDATE appointments SET order_id = ? WHERE id = ?', [order_id, id]);
+};
+
+// Used when retrying payment on an existing unpaid appointment (fresh Razorpay order + new coupon state).
+export const updateAppointmentOnRetry = async (
+  id: number,
+  order_id: string,
+  couponId: number | null,
+  discountApplied: number | null,
+  finalAmount: number | null,
+) => {
+  await execute(
+    'UPDATE appointments SET order_id = ?, coupon_id = ?, discount_applied = ?, final_amount = ? WHERE id = ?',
+    [order_id, couponId, discountApplied, finalAmount, id],
+  );
 };
 
 export const rescheduleAppointment = async (
