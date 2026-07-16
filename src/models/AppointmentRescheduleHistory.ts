@@ -38,6 +38,14 @@ export const createRescheduleHistory = async (data: {
   );
 };
 
+export const countRescheduleHistory = async (appointmentId: number): Promise<number> => {
+  const rows = await query<{ cnt: number }>(
+    'SELECT COUNT(*) AS cnt FROM appointment_reschedule_history WHERE appointment_id = ?',
+    [appointmentId],
+  );
+  return Number(rows[0]?.cnt ?? 0);
+};
+
 export const getRescheduleHistory = async (appointmentId: number) => {
   return query<RescheduleHistory>(
     `SELECT

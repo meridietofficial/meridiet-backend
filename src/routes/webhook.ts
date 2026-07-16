@@ -12,17 +12,17 @@ export const webhookRouter = Router();
 webhookRouter.post('/agora', agoraWebhook);
 
 // POST /webhooks/razorpayx — Razorpay X payout status updates
-// Raw body needed for signature verification — mount before express.json()
 webhookRouter.post('/razorpayx', async (req: Request, res: Response) => {
   try {
     const signature = req.headers['x-razorpay-signature'] as string;
     const secret    = env.RAZORPAY_X_WEBHOOK_SECRET;
 
     if (secret) {
-      const rawBody = JSON.stringify(req.body);
+      const rawBody: Buffer | undefined = (req as unknown as Record<string, unknown>).rawBody as Buffer | undefined;
+      const bodyStr = rawBody ? rawBody.toString('utf8') : JSON.stringify(req.body);
       const expected = crypto
         .createHmac('sha256', secret)
-        .update(rawBody)
+        .update(bodyStr)
         .digest('hex');
 
       if (signature !== expected) {
@@ -35,23 +35,27 @@ webhookRouter.post('/razorpayx', async (req: Request, res: Response) => {
 
     if (!payout?.id) return res.json({ status: 'ignored' });
 
-    // Map Razorpay payout event → our status
     const STATUS_MAP: Record<string, WithdrawalStatus> = {
       'payout.queued':     'pending',
       'payout.pending':    'pending',
+      'payout.initiated':  'processing',
       'payout.processing': 'processing',
       'payout.processed':  'processed',
+      'payout.updated':    'processed',
       'payout.failed':     'failed',
       'payout.reversed':   'reversed',
+      'payout.rejected':   'cancelled',
       'payout.cancelled':  'cancelled',
     };
 
     const status = STATUS_MAP[event];
     if (!status) return res.json({ status: 'ignored' });
 
+    const failureReason = payout.status_details?.description ?? payout.error_description ?? undefined;
+
     await updateWithdrawalFromWebhook(payout.id, status, {
       utr:            payout.utr ?? undefined,
-      failure_reason: payout.error_description ?? undefined,
+      failure_reason: failureReason,
     });
 
     console.log(`Razorpay X webhook: ${event} → payout ${payout.id} → ${status}`);

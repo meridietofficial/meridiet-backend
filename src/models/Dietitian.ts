@@ -30,6 +30,7 @@ export interface Dietitian {
   awards: AwardEntry[] | string | null;
   availability: Record<string, string[]> | string | null;
   profile_photo: string | null;
+  logo_url: string | null;
   degree_certificate: string | null;
   registration_certificate: string | null;
   id_proof: string | null;
@@ -79,6 +80,7 @@ export interface UpdateDietitianData {
   awards?: AwardEntry[] | null;
   availability?: Record<string, string[]> | null;
   profile_photo?: string | null;
+  logo_url?: string | null;
   degree_certificate?: string | null;
   registration_certificate?: string | null;
   id_proof?: string | null;
@@ -134,6 +136,7 @@ export const formatDietitianRow = (d: DietitianWithUser) => ({
   appointment_currency: d.appointment_currency ?? 'INR',
   documents: {
     profile_photo: d.profile_photo,
+    logo_url: d.logo_url ?? null,
     degree_certificate: d.degree_certificate,
     registration_certificate: d.registration_certificate,
     id_proof: d.id_proof,
@@ -230,7 +233,7 @@ const DIETITIAN_USER_SELECT = `
     d.id, d.user_id, d.state, d.city, d.registration_number,
     d.experience, d.specialization, d.date_of_birth, d.gender, d.bio,
     d.languages, d.services, d.degrees, d.awards, d.availability,
-    d.profile_photo, d.degree_certificate, d.registration_certificate,
+    d.profile_photo, d.logo_url, d.degree_certificate, d.registration_certificate,
     d.id_proof, d.experience_certificate, d.is_verified, d.is_online,
     d.appointment_fee, d.appointment_currency, d.created_at, d.updated_at,
     u.full_name, u.email, u.phone_code, u.phone_number, u.is_active, u.avatar_url
@@ -249,14 +252,69 @@ export const findDietitianByRegistrationNumber = async (registration_number: str
   return rows[0] ?? null;
 };
 
-export const getAllDietitians = async (page: number, limit: number, is_verified: 0 | 1) => {
+export interface AdminDietitianFilters {
+  page: number;
+  limit: number;
+  is_verified: 0 | 1;
+  search?: string;
+  status?: string;
+  startDate?: string;
+  endDate?: string;
+  sortBy?: string;
+  sortOrder?: string;
+}
+
+export const getDietitiansPaginated = async (filters: AdminDietitianFilters) => {
+  const { page, limit, is_verified, search, status, startDate, endDate, sortBy, sortOrder } = filters;
   const offset = (page - 1) * limit;
-  const rows = await query<DietitianWithUser>(
-    `${DIETITIAN_USER_SELECT} AND d.is_verified = ${is_verified} ORDER BY d.created_at DESC LIMIT ${limit} OFFSET ${offset}`,
-  );
-  const countRows = await query<{ total: number }>(
-    `SELECT COUNT(*) AS total FROM dietitians d JOIN users u ON d.user_id = u.id WHERE u.is_delete = 0 AND d.is_verified = ${is_verified}`,
-  );
+
+  const conditions: string[] = ['u.is_delete = 0', `d.is_verified = ${is_verified}`];
+  const params: unknown[] = [];
+
+  if (search) {
+    const like = `%${search}%`;
+    conditions.push('(u.full_name LIKE ? OR u.email LIKE ? OR u.phone_number LIKE ?)');
+    params.push(like, like, like);
+  }
+
+  if (status === 'active') {
+    conditions.push('u.is_active = 1');
+  } else if (status === 'blocked') {
+    conditions.push('u.is_active = 0');
+  }
+
+  if (startDate) { conditions.push('DATE(d.created_at) >= ?'); params.push(startDate); }
+  if (endDate)   { conditions.push('DATE(d.created_at) <= ?'); params.push(endDate); }
+
+  const VALID_SORT: Record<string, string> = { full_name: 'u.full_name', created_at: 'd.created_at' };
+  const sortField = VALID_SORT[sortBy ?? ''] ?? 'd.created_at';
+  const order = sortOrder?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
+  const where = conditions.join(' AND ');
+
+  const [rows, countRows] = await Promise.all([
+    query<DietitianWithUser>(
+      `SELECT
+        d.id, d.user_id, d.state, d.city, d.registration_number,
+        d.experience, d.specialization, d.date_of_birth, d.gender, d.bio,
+        d.languages, d.services, d.degrees, d.awards, d.availability,
+        d.profile_photo, d.logo_url, d.degree_certificate, d.registration_certificate,
+        d.id_proof, d.experience_certificate, d.is_verified, d.is_online,
+        d.appointment_fee, d.appointment_currency, d.created_at, d.updated_at,
+        u.full_name, u.email, u.phone_code, u.phone_number, u.is_active, u.avatar_url
+       FROM dietitians d
+       JOIN users u ON d.user_id = u.id
+       WHERE ${where}
+       ORDER BY ${sortField} ${order}
+       LIMIT ${limit} OFFSET ${offset}`,
+      params,
+    ),
+    query<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM dietitians d JOIN users u ON d.user_id = u.id WHERE ${where}`,
+      params,
+    ),
+  ]);
+
   return { rows, total: countRows[0]?.total ?? 0 };
 };
 

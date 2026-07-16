@@ -16,6 +16,7 @@ import { banksRouter } from './banks';
 import { followUpsRouter } from './followUps';
 import { userRouter } from './user';
 import { couponRouter } from './coupon';
+import { courseRouter } from './course';
 
 export const router = Router();
 
@@ -35,4 +36,5 @@ router.use('/banks', banksRouter);
 router.use('/follow-ups', followUpsRouter);
 router.use('/user', userRouter);
 router.use('/coupons', couponRouter);
+router.use('/course', courseRouter);
 router.use('/', settingsRouter);

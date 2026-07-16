@@ -3,7 +3,18 @@ import { authenticate, authorize } from '../middlewares/authenticate';
 import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDietFormRequests, getDietChartDetails, previewDietPlan, getDashboardStats, getDashboardRevenue, getDashboardUserGrowth, getDashboardConsultations, getSystemOverview, getPaidDietCharts } from '../controllers/admin';
 import { listDietPlansForAdmin, getDietPlanForAdmin, editDietPlan, sendDietPlanToUser } from '../controllers/adminDietPlan';
 import { adminCreateCoupon, adminListCoupons, adminGetCoupon, adminUpdateCoupon, adminDeactivateCoupon, adminGetCouponUsages, adminGetAllCouponUsages } from '../controllers/coupon';
-import { adminGetAppointments, adminGetAppointmentById } from '../controllers/adminAppointment';
+import { adminListEnquiries, adminGetEnquiry, adminUpdateEnquiryStatus, adminListEnrollments, adminGetEnrollment, adminCourseStats } from '../controllers/adminCourse';
+import {
+  adminGetAppointments,
+  adminGetAppointmentById,
+  adminApprovePayment,
+  adminGetPendingApprovalsList,
+  adminGetPaymentHistoryList,
+  adminGetNoShowQueueHandler,
+  adminGetPendingNoShowApprovalsHandler,
+  adminMarkNoShow,
+  adminApproveNoShow,
+} from '../controllers/adminAppointment';
 import {
   getBmiCategories, createBmiCategory, updateBmiCategory, deleteBmiCategory,
   getActivityMultipliers, updateActivityMultiplier,
@@ -89,8 +100,16 @@ adminRouter.put ('/diet-plans/:plan_id',     authenticate, authorize('admin'), e
 adminRouter.post('/diet-plans/:plan_id/send', authenticate, authorize('admin'), sendDietPlanToUser);
 
 // ── Appointment management ────────────────────────────────────────────────────
-adminRouter.get('/appointments',     authenticate, authorize('admin'), adminGetAppointments);
-adminRouter.get('/appointments/:id', authenticate, authorize('admin'), adminGetAppointmentById);
+// Static routes must be before /:id to avoid conflict
+adminRouter.get ('/appointments/pending-approval',         authenticate, authorize('admin'), adminGetPendingApprovalsList);
+adminRouter.get ('/appointments/payment-history',          authenticate, authorize('admin'), adminGetPaymentHistoryList);
+adminRouter.get ('/appointments/no-show-queue',            authenticate, authorize('admin'), adminGetNoShowQueueHandler);
+adminRouter.get ('/appointments/pending-no-show-approval', authenticate, authorize('admin'), adminGetPendingNoShowApprovalsHandler);
+adminRouter.get ('/appointments',                          authenticate, authorize('admin'), adminGetAppointments);
+adminRouter.get ('/appointments/:id',                      authenticate, authorize('admin'), adminGetAppointmentById);
+adminRouter.post('/appointments/:id/approve-payment',      authenticate, authorize('admin'), adminApprovePayment);
+adminRouter.post('/appointments/:id/mark-no-show',         authenticate, authorize('admin'), adminMarkNoShow);
+adminRouter.post('/appointments/:id/approve-no-show',      authenticate, authorize('admin'), adminApproveNoShow);
 
 // ── Coupon management ─────────────────────────────────────────────────────────
 adminRouter.post  ('/coupons',           authenticate, authorize('admin'), adminCreateCoupon);
@@ -100,3 +119,11 @@ adminRouter.patch ('/coupons/:id',       authenticate, authorize('admin'), admin
 adminRouter.delete('/coupons/:id',       authenticate, authorize('admin'), adminDeactivateCoupon);
 adminRouter.get   ('/coupons/:id/usages',authenticate, authorize('admin'), adminGetCouponUsages);
 adminRouter.get   ('/coupon-usages',     authenticate, authorize('admin'), adminGetAllCouponUsages);
+
+// ── Course management ─────────────────────────────────────────────────────────
+adminRouter.get  ('/course/stats',                    authenticate, authorize('admin'), adminCourseStats);
+adminRouter.get  ('/course/enquiries',                authenticate, authorize('admin'), adminListEnquiries);
+adminRouter.get  ('/course/enquiries/:id',            authenticate, authorize('admin'), adminGetEnquiry);
+adminRouter.patch('/course/enquiries/:id/status',     authenticate, authorize('admin'), adminUpdateEnquiryStatus);
+adminRouter.get  ('/course/enrollments',              authenticate, authorize('admin'), adminListEnrollments);
+adminRouter.get  ('/course/enrollments/:id',          authenticate, authorize('admin'), adminGetEnrollment);

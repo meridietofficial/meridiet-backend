@@ -7,13 +7,16 @@ import {
   findDietPlanById,
   findDietPlanWithFormById,
   findDietPlansByDietitianId,
+  findManualDietPlansByDietitianId,
   createDraftDietPlan,
+  createManualDraftDietPlan,
   updateDietPlanStatus,
   updateDraftPlanData,
   markDietPlanSent,
 } from '../models/DietPlan';
 import type { WeekPlan, FeaturedRecipe } from '../models/DietPlan';
 import { generateAndDeliverDietPlan, deliverDietPlanToUser } from '../services/dietPlanDelivery';
+import { debitDietitianForDietPlanGeneration, MANUAL_PLAN_COST } from '../models/DietitianWallet';
 import { successResponse, errorResponse } from '../utils/response';
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -88,6 +91,49 @@ export const saveDraft = async (req: Request, res: Response) => {
   }
 };
 
+// ── POST /api/v1/dietitian/diet-plans/manual ──────────────────────────────────
+// Dietitian creates a manual diet plan for any external client (no appointment needed).
+// Body: full_name, email, whatsapp (required) + all health/lifestyle form fields.
+// ₹100 is deducted from wallet at generation time (POST /diet-forms/:id/generate).
+export const saveManualDraft = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user?.sub);
+    const dietitian = await getDietitianOrFail(userId, res);
+    if (!dietitian) return;
+
+    const { full_name, email, whatsapp, ...formFields } = req.body as Record<string, unknown>;
+
+    if (!full_name || String(full_name).trim() === '') {
+      return errorResponse(res, 400, 'full_name is required');
+    }
+
+    const form = await createDietForm({
+      user_id:      null,
+      full_name:    String(full_name).trim(),
+      email:        email ? String(email).trim() : null,
+      whatsapp:     whatsapp ? String(whatsapp).trim() : null,
+      contact_name: String(full_name).trim(),
+      plan_type:    2, // always 1 month (4 weeks) for manual plans
+      ...formFields,
+    });
+    if (!form) return errorResponse(res, 500, 'Failed to create diet form');
+
+    const plan = await createManualDraftDietPlan(form.id, dietitian.id);
+    if (!plan) return errorResponse(res, 500, 'Failed to create draft plan');
+
+    return successResponse(res, 201, 'Manual draft created successfully', {
+      plan_id: plan.id,
+      form_id: form.id,
+      status:  plan.status,
+      cost:    MANUAL_PLAN_COST,
+      note:    `₹${MANUAL_PLAN_COST} will be deducted from your wallet when you generate the plan`,
+    });
+  } catch (err) {
+    console.error('Save manual draft error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
 // ── PUT /api/v1/dietitian/diet-forms/:id ──────────────────────────────────────
 // Update the diet form fields of a draft (dietitian edits form data before generating).
 // Body: same form fields as saveDraft (all optional).
@@ -138,6 +184,22 @@ export const generateFromDraft = async (req: Request, res: Response) => {
     }
     if (plan.status !== 'draft') {
       return errorResponse(res, 400, 'Plan must be in draft status to generate');
+    }
+
+    // Manual plans (no appointment) cost ₹100 from the dietitian's wallet
+    const isManualPlan = plan.appointment_id === null && plan.user_id === null;
+    if (isManualPlan) {
+      const debit = await debitDietitianForDietPlanGeneration(dietitian.id, plan.id);
+      if (!debit.debited) {
+        if (debit.reason === 'insufficient_balance') {
+          return errorResponse(res, 402, `Insufficient wallet balance. You need at least ₹${MANUAL_PLAN_COST} to generate a manual diet plan.`);
+        }
+        if (debit.reason === 'already_charged') {
+          // Already paid — safe to continue (retry after a failed generation)
+        } else {
+          return errorResponse(res, 500, 'Failed to process wallet deduction');
+        }
+      }
     }
 
     // Run AI pipeline in background — dietitian reviews and sends separately via /send
@@ -225,6 +287,10 @@ export const sendDietitianPlan = async (req: Request, res: Response) => {
 
     const plan = await getOwnedPlanOrFail(planId, dietitian.id, res);
     if (!plan) return;
+
+    if (plan.appointment_id === null && plan.user_id === null) {
+      return errorResponse(res, 400, 'Manual plans are delivered by downloading the PDF and sending directly to your client.');
+    }
 
     if (plan.status === 'generating') {
       return errorResponse(res, 400, 'Plan is still being generated. Please wait until it is ready.');
@@ -321,6 +387,35 @@ export const listDietitianPlans = async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('List dietitian plans error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// ── GET /api/v1/dietitian/diet-plans/manual ───────────────────────────────────
+// List all manual diet plans created by the dietitian (no appointment, no platform user).
+// Query: ?status=draft|completed|generating|failed|archived&page=1&limit=10
+export const listManualDietitianPlans = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user?.sub);
+    const dietitian = await getDietitianOrFail(userId, res);
+    if (!dietitian) return;
+
+    const page   = Math.max(1, Number(req.query.page)  || 1);
+    const limit  = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+    const status = req.query.status as string | undefined;
+
+    const VALID = ['generating', 'completed', 'failed', 'draft', 'archived', 'sent'];
+    if (status && !VALID.includes(status)) {
+      return errorResponse(res, 400, `status must be one of: ${VALID.join(', ')}`);
+    }
+
+    const { plans, total } = await findManualDietPlansByDietitianId(dietitian.id, status, page, limit);
+    return successResponse(res, 200, 'Manual diet plans fetched', {
+      plans,
+      pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+    });
+  } catch (err) {
+    console.error('List manual diet plans error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

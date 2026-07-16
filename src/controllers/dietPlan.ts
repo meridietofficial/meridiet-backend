@@ -49,7 +49,7 @@ export const previewDietPlanHtml = async (req: Request, res: Response) => {
 
     const plan = await findDietPlanByFormId(form_id);
     if (!plan) return errorResponse(res, 404, 'No diet plan found for this form');
-    if (plan.status !== 'completed') {
+    if (plan.status !== 'completed' && plan.status !== 'sent') {
       return errorResponse(res, 400, `Plan is not ready yet (status: ${plan.status})`);
     }
 

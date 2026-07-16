@@ -213,6 +213,7 @@ export const updateDietitianProfile = async (req: Request, res: Response) => {
       appointmentCurrency?: string;
       documents?: {
         profilePhoto?: string;
+        logoUrl?: string | null;
         degreeCertificate?: string;
         registrationCertificate?: string;
         idProof?: string;
@@ -243,11 +244,12 @@ export const updateDietitianProfile = async (req: Request, res: Response) => {
     if (degrees        !== undefined) dietitianUpdates.degrees        = degrees;
     if (awards         !== undefined) dietitianUpdates.awards         = awards;
     if (availability   !== undefined) dietitianUpdates.availability   = availability;
-    if (documents?.profilePhoto          !== undefined) dietitianUpdates.profile_photo           = documents.profilePhoto;
-    if (documents?.degreeCertificate     !== undefined) dietitianUpdates.degree_certificate      = documents.degreeCertificate;
-    if (documents?.registrationCertificate !== undefined) dietitianUpdates.registration_certificate = documents.registrationCertificate;
-    if (documents?.idProof               !== undefined) dietitianUpdates.id_proof               = documents.idProof;
-    if (documents?.experienceCertificate !== undefined) dietitianUpdates.experience_certificate  = documents.experienceCertificate;
+    if (documents?.profilePhoto            !== undefined) dietitianUpdates.profile_photo            = documents.profilePhoto;
+    if (documents?.logoUrl                 !== undefined) dietitianUpdates.logo_url                 = documents.logoUrl;
+    if (documents?.degreeCertificate       !== undefined) dietitianUpdates.degree_certificate        = documents.degreeCertificate;
+    if (documents?.registrationCertificate !== undefined) dietitianUpdates.registration_certificate  = documents.registrationCertificate;
+    if (documents?.idProof                 !== undefined) dietitianUpdates.id_proof                  = documents.idProof;
+    if (documents?.experienceCertificate   !== undefined) dietitianUpdates.experience_certificate    = documents.experienceCertificate;
     if (appointmentFee       !== undefined) {
       const fee = Number(appointmentFee);
       if (isNaN(fee) || fee < 0) return errorResponse(res, 400, 'appointmentFee must be a non-negative number');

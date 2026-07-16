@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { findUserByEmail, findUserById, checkPassword, updateUser, softDeleteUser, updateUserPassword, getUsersPaginated } from '../models/User';
-import { getAllDietitians, findDietitianById, verifyDietitian, formatDietitianRow } from '../models/Dietitian';
+import { getDietitiansPaginated, findDietitianById, verifyDietitian, formatDietitianRow } from '../models/Dietitian';
 import { query } from '../config/database';
 import { findDietFormById, type DietForm } from '../models/DietForm';
 import { findDietPlanByFormId } from '../models/DietPlan';
@@ -110,13 +110,19 @@ export const refreshAdminToken = async (req: Request, res: Response) => {
   }
 };
 
-// GET /api/v1/admin/dietitians?page=1&limit=10  (verified only)
+// GET /api/v1/admin/dietitians?page=1&limit=10&search=&status=active|blocked&startDate=&endDate=&sortBy=full_name|created_at&sortOrder=asc|desc
 export const getDietitianList = async (req: Request, res: Response) => {
   try {
-    const page = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 10));
+    const page      = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit     = Math.min(10000, Math.max(1, parseInt(req.query.limit as string) || 10));
+    const search    = (req.query.search    as string | undefined)?.trim() || undefined;
+    const status    = req.query.status    as string | undefined;
+    const startDate = req.query.startDate as string | undefined;
+    const endDate   = req.query.endDate   as string | undefined;
+    const sortBy    = req.query.sortBy    as string | undefined;
+    const sortOrder = req.query.sortOrder as string | undefined;
 
-    const { rows, total } = await getAllDietitians(page, limit, 1);
+    const { rows, total } = await getDietitiansPaginated({ page, limit, is_verified: 1, search, status, startDate, endDate, sortBy, sortOrder });
     const totalPages = Math.ceil(total / limit);
 
     return successResponse(
@@ -132,13 +138,19 @@ export const getDietitianList = async (req: Request, res: Response) => {
   }
 };
 
-// GET /api/v1/admin/dietitian-requests?page=1&limit=10  (pending / not yet verified)
+// GET /api/v1/admin/dietitian-requests?page=1&limit=10&search=&status=active|blocked&startDate=&endDate=&sortBy=full_name|created_at&sortOrder=asc|desc
 export const getDietitianRequests = async (req: Request, res: Response) => {
   try {
-    const page = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 10));
+    const page      = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit     = Math.min(10000, Math.max(1, parseInt(req.query.limit as string) || 10));
+    const search    = (req.query.search    as string | undefined)?.trim() || undefined;
+    const status    = req.query.status    as string | undefined;
+    const startDate = req.query.startDate as string | undefined;
+    const endDate   = req.query.endDate   as string | undefined;
+    const sortBy    = req.query.sortBy    as string | undefined;
+    const sortOrder = req.query.sortOrder as string | undefined;
 
-    const { rows, total } = await getAllDietitians(page, limit, 0);
+    const { rows, total } = await getDietitiansPaginated({ page, limit, is_verified: 0, search, status, startDate, endDate, sortBy, sortOrder });
     const totalPages = Math.ceil(total / limit);
 
     return successResponse(

@@ -347,6 +347,82 @@ export const createDraftDietPlan = async (
   return rows[0] ? parse(rows[0]) : null;
 };
 
+export const findManualDietPlansByDietitianId = async (
+  dietitianId: number,
+  status: string | undefined,
+  page: number,
+  limit: number,
+) => {
+  const offset = (page - 1) * limit;
+  const whereStatus = status ? 'AND dp.status = ?' : '';
+  const params: unknown[] = status ? [dietitianId, status] : [dietitianId];
+
+  const [rows, countRows] = await Promise.all([
+    query<DietPlanListRow>(
+      `SELECT
+         dp.id, dp.form_id, dp.appointment_id, dp.user_id,
+         dp.client_name, dp.status, dp.primary_goal, dp.plan_duration, dp.diet_type,
+         dp.pdf_url, dp.created_at, dp.updated_at,
+         NULL                                        AS appointment_date,
+         NULL                                        AS slot,
+         NULL                                        AS user_full_name,
+         NULL                                        AS user_avatar_url,
+         f.full_name                                 AS form_full_name,
+         f.age                                       AS form_age,
+         f.gender                                    AS form_gender,
+         f.height                                    AS form_height,
+         f.height_unit                               AS form_height_unit,
+         f.weight                                    AS form_weight,
+         f.weight_unit                               AS form_weight_unit,
+         f.goals                                     AS form_goals,
+         f.activity_level                            AS form_activity_level,
+         f.diet_type                                 AS form_diet_type,
+         f.medical_conditions                        AS form_medical_conditions,
+         f.plan_type                                 AS form_plan_type
+       FROM diet_plans dp
+       LEFT JOIN diet_forms f ON dp.form_id = f.id
+       WHERE dp.dietitian_id = ?
+         AND dp.appointment_id IS NULL
+         AND dp.user_id IS NULL
+         ${whereStatus}
+       ORDER BY dp.created_at DESC
+       LIMIT ${limit} OFFSET ${offset}`,
+      params,
+    ),
+    query<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM diet_plans dp
+       WHERE dp.dietitian_id = ?
+         AND dp.appointment_id IS NULL
+         AND dp.user_id IS NULL
+         ${whereStatus}`,
+      params,
+    ),
+  ]);
+
+  const plans = rows.map((r) => ({
+    ...r,
+    client_name:              r.client_name ?? r.form_full_name ?? null,
+    form_goals:               parseJson<string[]>(r.form_goals as unknown as string | null),
+    form_medical_conditions:  parseJson<string[]>(r.form_medical_conditions as unknown as string | null),
+  }));
+
+  return { plans, total: countRows[0]?.total ?? 0 };
+};
+
+export const createManualDraftDietPlan = async (
+  form_id: number,
+  dietitian_id: number,
+) => {
+  const result = await execute(
+    `INSERT INTO diet_plans
+       (form_id, user_id, dietitian_id, appointment_id, status)
+     VALUES (?, NULL, ?, NULL, 'draft')`,
+    [form_id, dietitian_id],
+  );
+  const rows = await query<DietPlan>('SELECT * FROM diet_plans WHERE id = ? LIMIT 1', [result.insertId]);
+  return rows[0] ? parse(rows[0]) : null;
+};
+
 export interface DietPlanListRow {
   id: number;
   form_id: number;
@@ -415,14 +491,18 @@ export const findDietPlansByDietitianId = async (
        LEFT JOIN appointments a  ON dp.appointment_id = a.id
        LEFT JOIN users u         ON dp.user_id = u.id AND u.is_delete = 0
        LEFT JOIN diet_forms f    ON dp.form_id = f.id
-       WHERE dp.dietitian_id = ? ${whereStatus}
+       WHERE dp.dietitian_id = ?
+         AND NOT (dp.appointment_id IS NULL AND dp.user_id IS NULL)
+         ${whereStatus}
        ORDER BY dp.created_at DESC
        LIMIT ${limit} OFFSET ${offset}`,
       params,
     ),
     query<{ total: number }>(
       `SELECT COUNT(*) AS total FROM diet_plans dp
-       WHERE dp.dietitian_id = ? ${whereStatus}`,
+       WHERE dp.dietitian_id = ?
+         AND NOT (dp.appointment_id IS NULL AND dp.user_id IS NULL)
+         ${whereStatus}`,
       params,
     ),
   ]);

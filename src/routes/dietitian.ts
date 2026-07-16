@@ -2,12 +2,14 @@ import { Router } from 'express';
 import { registerDietitian, getDietitianProfile, getDietitianById, updateDietitianProfile, changeDietitianPassword, updateOnlineStatus, deleteMyAccount } from '../controllers/dietitian';
 import {
   saveDraft,
+  saveManualDraft,
   updateDraft,
   generateFromDraft,
   editGeneratedPlan,
   sendDietitianPlan,
   archivePlan,
   listDietitianPlans,
+  listManualDietitianPlans,
   getDietitianPlan,
 } from '../controllers/dietitianDietPlan';
 import {
@@ -52,7 +54,13 @@ dietitianRouter.delete('/account', authenticate, authorize('dietitian'), deleteM
 
 // ── Diet Form Management (dietitian only) ─────────────────────────────────────
 
-// POST /api/v1/dietitian/diet-forms          — fill form & save as draft
+// POST /api/v1/dietitian/diet-plans/manual   — create manual plan for any client (no appointment)
+dietitianRouter.post('/diet-plans/manual', authenticate, authorize('dietitian'), saveManualDraft);
+
+// GET  /api/v1/dietitian/diet-plans/manual   — list all manual diet plans
+dietitianRouter.get('/diet-plans/manual', authenticate, authorize('dietitian'), listManualDietitianPlans);
+
+// POST /api/v1/dietitian/diet-forms          — fill form & save as draft (appointment-linked)
 dietitianRouter.post('/diet-forms', authenticate, authorize('dietitian'), saveDraft);
 
 // GET  /api/v1/dietitian/diet-forms          — list all diet forms (filter by status)

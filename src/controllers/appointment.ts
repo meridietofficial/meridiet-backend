@@ -44,6 +44,7 @@ import {
   updateDietitianNotes,
   rescheduleAppointment,
   markAppointmentMissedWithType,
+  markPaymentApproved,
   getFollowUpListSummary,
   listFollowUpAppointments,
   MissedType,
@@ -52,8 +53,7 @@ import {
 import { buildAvailableDates } from '../utils/availability';
 import { resolveCoupon, createCouponUsage } from '../models/Coupon';
 import { successResponse, errorResponse } from '../utils/response';
-import { createRescheduleHistory, getRescheduleHistory } from '../models/AppointmentRescheduleHistory';
-import { creditDietitianForAppointment } from '../models/DietitianWallet';
+import { createRescheduleHistory, getRescheduleHistory, countRescheduleHistory } from '../models/AppointmentRescheduleHistory';
 import { findDietFormByAppointmentId } from '../models/DietForm';
 import { findDietPlanByAppointmentId } from '../models/DietPlan';
 import { sendEmail } from '../services/email';
@@ -629,19 +629,7 @@ export const updateAppointmentStatusHandler = async (req: Request, res: Response
       await endCallSession(id).catch((e) => console.error('[completed] endCallSession failed:', e));
     }
 
-    // Credit dietitian wallet when manually marked completed and payment was collected
-    if (status === 'completed' && appointment.payment_status === 'paid') {
-      try {
-        const result = await creditDietitianForAppointment(dietitian.id, id, appointment.fee);
-        if (!result.credited) {
-          console.warn(`Dietitian wallet credit skipped for appointment ${id}: ${result.reason}`);
-        }
-      } catch (err) {
-        // Appointment is already marked completed — do not reverse it.
-        // Log clearly so this can be fixed manually if needed.
-        console.error(`CRITICAL: Dietitian wallet credit FAILED for appointment ${id} (dietitian ${dietitian.id}, fee ${appointment.fee}). Manual fix required.`, err);
-      }
-    }
+    // Payment credit is handled by admin via POST /admin/appointments/:id/approve-payment
 
     // Notify user when appointment is completed — prompt them to rate the dietitian
     if (status === 'completed') {
@@ -851,6 +839,12 @@ export const cancelMyAppointment = async (req: Request, res: Response) => {
     }
     if (appointment.status === 'completed') {
       return errorResponse(res, 409, 'Cannot cancel a completed appointment');
+    }
+    if (appointment.status === 'missed') {
+      return errorResponse(res, 409, 'Cannot cancel a missed appointment');
+    }
+    if (appointment.payment_status === 'paid') {
+      return errorResponse(res, 400, 'This appointment has already been paid. Please contact support to request a cancellation and refund.');
     }
 
     await updateAppointmentStatus(id, 'cancelled');
@@ -1178,6 +1172,11 @@ export const getRescheduleSlots = async (req: Request, res: Response) => {
       return errorResponse(res, 400, 'Only confirmed or missed appointments can be rescheduled');
     }
 
+    const rescheduleCount = await countRescheduleHistory(id);
+    if (rescheduleCount >= 1) {
+      return errorResponse(res, 400, 'This appointment has already been rescheduled once and cannot be rescheduled again');
+    }
+
     const days = Math.min(Number(req.query.days) || 30, 60);
 
     const schedule = typeof dietitian.availability === 'string'
@@ -1380,6 +1379,11 @@ export const rescheduleAppointmentHandler = async (req: Request, res: Response) 
 
     if (!['missed', 'confirmed'].includes(appointment.status)) {
       return errorResponse(res, 400, 'Only missed or confirmed appointments can be rescheduled');
+    }
+
+    const rescheduleCount = await countRescheduleHistory(id);
+    if (rescheduleCount >= 1) {
+      return errorResponse(res, 400, 'This appointment has already been rescheduled once and cannot be rescheduled again');
     }
 
     const { appointment_date, slot, reason } = req.body as {
@@ -1641,7 +1645,6 @@ export const scheduleFollowUp = async (req: Request, res: Response) => {
       appointment_date,
       slot,
       duration,
-      fee,
       session_type,
       follow_up_type,
       notes,
@@ -1649,7 +1652,6 @@ export const scheduleFollowUp = async (req: Request, res: Response) => {
       appointment_date?: string;
       slot?: string;
       duration?: number;
-      fee?: number;
       session_type?: 'video_call' | 'in_person';
       follow_up_type?: string;
       notes?: string;
@@ -1678,8 +1680,6 @@ export const scheduleFollowUp = async (req: Request, res: Response) => {
       return errorResponse(res, 409, 'This slot is already booked. Please choose another.');
     }
 
-    const followUpFee = fee ?? parent.fee;
-
     const followUp = await createAppointment({
       dietitian_id: dietitian.id,
       user_id: parent.user_id,
@@ -1690,7 +1690,7 @@ export const scheduleFollowUp = async (req: Request, res: Response) => {
       slot,
       duration: duration ?? parent.duration,
       session_type: session_type ?? parent.session_type,
-      fee: followUpFee,
+      fee: 0,
       currency: parent.currency,
       notes: notes ?? null,
       parent_appointment_id: parentId,
@@ -1700,8 +1700,9 @@ export const scheduleFollowUp = async (req: Request, res: Response) => {
 
     if (!followUp) return errorResponse(res, 500, 'Failed to create follow-up appointment');
 
-    // Auto-confirm since the dietitian is scheduling it directly
+    // Auto-confirm and mark payment approved (follow-ups are complimentary — no payment flow)
     await updateAppointmentStatus(followUp.id, 'confirmed');
+    await markPaymentApproved(followUp.id, null);
 
     const confirmed = await findAppointmentById(followUp.id);
 

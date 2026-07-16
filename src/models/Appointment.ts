@@ -15,6 +15,8 @@ export interface Appointment {
   currency: string;
   status: 'pending' | 'confirmed' | 'cancelled' | 'completed' | 'missed';
   payment_status: 'unpaid' | 'paid' | 'refunded';
+  payment_approved_at: Date | null;
+  payment_approved_by: number | null;
   payment_id: string | null;
   order_id: string | null;
   coupon_id: number | null;
@@ -23,7 +25,7 @@ export interface Appointment {
   notes: string | null;
   dietitian_notes: string | null;
   missed_reason: string | null;
-  missed_type: 'patient_no_show' | 'dietitian_no_show' | 'technical_issue' | 'network_issue' | 'other' | null;
+  missed_type: 'patient_no_show' | 'dietitian_no_show' | 'technical_issue' | 'network_issue' | 'other' | 'both_no_show' | null;
   user_rating: number | null;
   user_review: string | null;
   user_reviewed_at: Date | null;
@@ -80,7 +82,7 @@ const APPOINTMENT_SELECT = `
   DATE_FORMAT(appointment_date, '%Y-%m-%d') AS appointment_date,
   TIME_FORMAT(slot, '%H:%i')                AS slot,
   duration, session_type,
-  fee, currency, status, payment_status, payment_id, order_id, coupon_id, discount_applied, final_amount, notes, dietitian_notes, missed_reason, missed_type,
+  fee, currency, status, payment_status, payment_approved_at, payment_approved_by, payment_id, order_id, coupon_id, discount_applied, final_amount, notes, dietitian_notes, missed_reason, missed_type,
   user_rating, user_review, user_reviewed_at,
   dietitian_rating, dietitian_review, dietitian_reviewed_at,
   parent_appointment_id, is_follow_up, follow_up_type,
@@ -466,15 +468,29 @@ export const rescheduleAppointment = async (
   slot: string,
   missed_reason?: string | null,
 ) => {
+  // Clear missed_type so a rescheduled+completed appointment gets normal (full) payment
   await execute(
     `UPDATE appointments
-     SET appointment_date = ?, slot = ?, status = 'confirmed', missed_reason = COALESCE(?, missed_reason)
+     SET appointment_date = ?, slot = ?, status = 'confirmed',
+         missed_type = NULL, missed_reason = COALESCE(?, missed_reason)
      WHERE id = ?`,
     [appointment_date, slot, missed_reason ?? null, id],
   );
 };
 
-export type MissedType = 'patient_no_show' | 'dietitian_no_show' | 'technical_issue' | 'network_issue' | 'other';
+export const markPaymentApproved = async (
+  appointmentId: number,
+  approvedBy: number | null,
+) => {
+  await execute(
+    `UPDATE appointments
+     SET payment_approved_at = NOW(), payment_approved_by = ?
+     WHERE id = ?`,
+    [approvedBy, appointmentId],
+  );
+};
+
+export type MissedType = 'patient_no_show' | 'dietitian_no_show' | 'technical_issue' | 'network_issue' | 'other' | 'both_no_show';
 
 export const markAppointmentMissedWithType = async (
   id: number,
@@ -487,6 +503,136 @@ export const markAppointmentMissedWithType = async (
      WHERE id = ?`,
     [missed_type, missed_reason ?? null, id],
   );
+};
+
+export const markAppointmentPaymentRefunded = async (id: number) => {
+  await execute(
+    `UPDATE appointments SET payment_status = 'refunded' WHERE id = ?`,
+    [id],
+  );
+};
+
+// ── No-show queue ─────────────────────────────────────────────────────────────
+// Past confirmed+paid appointments where admin still needs to act.
+// For video_call: shows who didn't join. For in_person: admin must verify manually.
+export interface NoShowQueueItem {
+  id: number;
+  appointment_date: string;
+  slot: string;
+  duration: number;
+  session_type: string;
+  fee: number;
+  currency: string;
+  patient_name: string;
+  patient_email: string | null;
+  patient_phone: string | null;
+  dietitian_id: number;
+  dietitian_name: string;
+  dietitian_email: string;
+  dietitian_phone: string | null;
+  user_joined_at: Date | null;
+  dietitian_joined_at: Date | null;
+  created_at: Date;
+}
+
+export const adminGetNoShowQueue = async (
+  page = 1,
+  limit = 20,
+  search?: string,
+) => {
+  const safePage  = Math.max(1, page);
+  const safeLimit = Math.min(100, Math.max(1, limit));
+  const offset    = (safePage - 1) * safeLimit;
+
+  const conditions: string[] = [
+    "a.status = 'confirmed'",
+    "a.payment_status = 'paid'",
+    "a.is_follow_up = 0",
+    // appointment slot time has passed (give 30 min grace after scheduled time)
+    "TIMESTAMP(a.appointment_date, a.slot) < DATE_SUB(NOW(), INTERVAL 30 MINUTE)",
+  ];
+  const params: unknown[] = [];
+
+  if (search) {
+    conditions.push('(a.name LIKE ? OR a.email LIKE ? OR du.full_name LIKE ?)');
+    const like = `%${search}%`;
+    params.push(like, like, like);
+  }
+
+  const where = `WHERE ${conditions.join(' AND ')}`;
+
+  const [rows, countRows] = await Promise.all([
+    query<NoShowQueueItem & {
+      dietitian_name: string; dietitian_email: string; dietitian_phone: string | null;
+    }>(
+      `SELECT
+         a.id, DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS appointment_date,
+         TIME_FORMAT(a.slot, '%H:%i') AS slot,
+         a.duration, a.session_type, a.fee, a.currency,
+         a.name   AS patient_name,
+         a.email  AS patient_email,
+         a.phone  AS patient_phone,
+         d.id     AS dietitian_id,
+         du.full_name AS dietitian_name,
+         du.email     AS dietitian_email,
+         CONCAT(COALESCE(du.phone_code,''), du.phone_number) AS dietitian_phone,
+         a.user_joined_at, a.dietitian_joined_at,
+         a.created_at
+       FROM appointments a
+       JOIN dietitians d  ON a.dietitian_id = d.id
+       JOIN users du      ON d.user_id = du.id
+       ${where}
+       ORDER BY a.appointment_date DESC, a.slot DESC
+       LIMIT ${safeLimit} OFFSET ${offset}`,
+      params,
+    ),
+    query<{ total: number }>(
+      `SELECT COUNT(*) AS total
+       FROM appointments a
+       JOIN dietitians d  ON a.dietitian_id = d.id
+       JOIN users du      ON d.user_id = du.id
+       ${where}`,
+      params,
+    ),
+  ]);
+
+  return {
+    appointments: rows.map((r) => ({
+      id:               r.id,
+      appointment_date: r.appointment_date,
+      slot:             r.slot,
+      duration:         r.duration,
+      session_type:     r.session_type,
+      fee:              r.fee,
+      currency:         r.currency,
+      patient: {
+        name:  r.patient_name,
+        email: r.patient_email ?? null,
+        phone: r.patient_phone ?? null,
+      },
+      dietitian: {
+        id:    r.dietitian_id,
+        name:  r.dietitian_name,
+        email: r.dietitian_email,
+        phone: r.dietitian_phone ?? null,
+      },
+      call_tracking: r.session_type === 'video_call' ? {
+        user_joined_at:      r.user_joined_at ?? null,
+        dietitian_joined_at: r.dietitian_joined_at ?? null,
+        patient_no_show:     r.user_joined_at === null,
+        dietitian_no_show:   r.dietitian_joined_at === null,
+      } : {
+        user_joined_at:      null,
+        dietitian_joined_at: null,
+        patient_no_show:     null,
+        dietitian_no_show:   null,
+      },
+      created_at: r.created_at,
+    })),
+    total: Number(countRows[0]?.total ?? 0),
+    page:  safePage,
+    limit: safeLimit,
+  };
 };
 
 // ── Reminder queries ──────────────────────────────────────────────────────────
@@ -1365,6 +1511,8 @@ export const adminGetAppointmentDetail = async (id: number) => {
     session_type: string;
     status: string;
     payment_status: string;
+    payment_approved_at: Date | null;
+    payment_approved_by: number | null;
     payment_id: string | null;
     order_id: string | null;
     fee: number;
@@ -1410,7 +1558,8 @@ export const adminGetAppointmentDetail = async (id: number) => {
        DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS appointment_date,
        TIME_FORMAT(a.slot, '%H:%i')                AS slot,
        a.duration, a.session_type,
-       a.status, a.payment_status, a.payment_id, a.order_id,
+       a.status, a.payment_status, a.payment_approved_at, a.payment_approved_by,
+       a.payment_id, a.order_id,
        a.fee, a.currency,
        a.notes, a.dietitian_notes, a.missed_reason, a.missed_type,
        a.user_rating, a.user_review, a.user_reviewed_at,
@@ -1463,6 +1612,8 @@ export const adminGetAppointmentDetail = async (id: number) => {
     session_type: r.session_type,
     status: r.status,
     payment_status: r.payment_status,
+    payment_approved_at: r.payment_approved_at ?? null,
+    payment_approved_by: r.payment_approved_by ?? null,
     payment_id: r.payment_id,
     order_id: r.order_id,
     fee: r.fee,
@@ -1506,5 +1657,314 @@ export const adminGetAppointmentDetail = async (id: number) => {
       state: r.dietitian_state,
     },
     follow_ups: followUps,
+  };
+};
+
+// ── Admin payment approval queries ────────────────────────────────────────────
+
+const ADMIN_PAYMENT_SELECT = `
+  SELECT
+    a.id,
+    DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS appointment_date,
+    TIME_FORMAT(a.slot, '%H:%i')                AS slot,
+    a.duration,
+    a.session_type,
+    a.status,
+    a.payment_status,
+    a.fee,
+    a.currency,
+    a.missed_type,
+    a.user_joined_at,
+    a.dietitian_joined_at,
+    a.created_at,
+    a.name          AS patient_name,
+    a.email         AS patient_email,
+    a.phone         AS patient_phone,
+    d.id            AS dietitian_id,
+    du.full_name    AS dietitian_name,
+    du.email        AS dietitian_email,
+    CONCAT(COALESCE(du.phone_code,''), du.phone_number) AS dietitian_phone,
+    d.profile_photo AS dietitian_photo
+  FROM appointments a
+  JOIN dietitians d  ON a.dietitian_id = d.id
+  JOIN users du      ON d.user_id = du.id
+`;
+
+const mapPendingRow = (r: {
+  id: number; appointment_date: string; slot: string; duration: number;
+  session_type: string; status: string; payment_status: string;
+  fee: number; currency: string; missed_type: string | null;
+  user_joined_at: Date | null; dietitian_joined_at: Date | null;
+  created_at: Date;
+  patient_name: string; patient_email: string | null; patient_phone: string | null;
+  dietitian_id: number; dietitian_name: string; dietitian_email: string | null;
+  dietitian_phone: string; dietitian_photo: string | null;
+}) => ({
+  id:               r.id,
+  appointment_date: r.appointment_date,
+  slot:             r.slot,
+  duration:         r.duration,
+  session_type:     r.session_type,
+  status:           r.status,
+  payment_status:   r.payment_status,
+  fee:              r.fee,
+  currency:         r.currency,
+  is_no_show:       r.missed_type === 'patient_no_show',
+  missed_type:      r.missed_type,
+  created_at:       r.created_at,
+  call_tracking: {
+    user_joined_at:      r.user_joined_at ?? null,
+    dietitian_joined_at: r.dietitian_joined_at ?? null,
+  },
+  patient: {
+    name:  r.patient_name,
+    email: r.patient_email,
+    phone: r.patient_phone,
+  },
+  dietitian: {
+    id:    r.dietitian_id,
+    name:  r.dietitian_name,
+    email: r.dietitian_email,
+    phone: r.dietitian_phone || null,
+    photo: r.dietitian_photo,
+  },
+});
+
+// Missed appointments with missed_type set but no financial action taken yet (step 2 pending)
+export const adminGetPendingNoShowApprovals = async (
+  page = 1,
+  limit = 20,
+  search?: string,
+) => {
+  const safePage  = Math.max(1, page);
+  const safeLimit = Math.min(100, Math.max(1, limit));
+  const offset    = (safePage - 1) * safeLimit;
+
+  const searchCond  = search ? 'AND (a.name LIKE ? OR a.email LIKE ? OR a.phone LIKE ?)' : '';
+  const searchParam = search ? [`%${search}%`, `%${search}%`, `%${search}%`] : [];
+
+  type PendingRow = Parameters<typeof mapPendingRow>[0];
+
+  const [rows, countRows] = await Promise.all([
+    query<PendingRow>(
+      `${ADMIN_PAYMENT_SELECT}
+       WHERE a.status = 'missed'
+         AND a.missed_type IS NOT NULL
+         AND a.payment_approved_at IS NULL
+         ${searchCond}
+       ORDER BY a.appointment_date DESC, a.slot DESC
+       LIMIT ${safeLimit} OFFSET ${offset}`,
+      searchParam,
+    ),
+    query<{ total: number }>(
+      `SELECT COUNT(*) AS total
+       FROM appointments a
+       JOIN dietitians d  ON a.dietitian_id = d.id
+       JOIN users du      ON d.user_id = du.id
+       WHERE a.status = 'missed'
+         AND a.missed_type IS NOT NULL
+         AND a.payment_approved_at IS NULL
+         ${searchCond}`,
+      searchParam,
+    ),
+  ]);
+
+  return {
+    appointments: rows.map(mapPendingRow),
+    total: Number(countRows[0]?.total ?? 0),
+    page:  safePage,
+    limit: safeLimit,
+  };
+};
+
+// Appointments completed + paid but admin has not approved payment yet
+export const adminGetPendingApprovals = async (
+  page = 1,
+  limit = 20,
+  search?: string,
+) => {
+  const safePage  = Math.max(1, page);
+  const safeLimit = Math.min(100, Math.max(1, limit));
+  const offset    = (safePage - 1) * safeLimit;
+
+  const searchCond  = search ? 'AND (a.name LIKE ? OR a.email LIKE ? OR a.phone LIKE ?)' : '';
+  const searchParam = search ? [`%${search}%`, `%${search}%`, `%${search}%`] : [];
+
+  type PendingRow = Parameters<typeof mapPendingRow>[0];
+
+  const [rows, countRows] = await Promise.all([
+    query<PendingRow>(
+      `${ADMIN_PAYMENT_SELECT}
+       WHERE a.status = 'completed'
+         AND a.payment_status = 'paid'
+         AND a.payment_approved_at IS NULL
+         ${searchCond}
+       ORDER BY a.appointment_date DESC, a.slot DESC
+       LIMIT ${safeLimit} OFFSET ${offset}`,
+      searchParam,
+    ),
+    query<{ total: number }>(
+      `SELECT COUNT(*) AS total
+       FROM appointments a
+       JOIN dietitians d  ON a.dietitian_id = d.id
+       JOIN users du      ON d.user_id = du.id
+       WHERE a.status = 'completed'
+         AND a.payment_status = 'paid'
+         AND a.payment_approved_at IS NULL
+         ${searchCond}`,
+      searchParam,
+    ),
+  ]);
+
+  return {
+    appointments: rows.map(mapPendingRow),
+    total: Number(countRows[0]?.total ?? 0),
+    page:  safePage,
+    limit: safeLimit,
+  };
+};
+
+// Appointments whose payment has already been approved — joined with wallet tx for actual credited amount
+export const adminGetPaymentHistory = async (
+  page = 1,
+  limit = 20,
+  search?: string,
+  dietitian_id?: number,
+  date_from?: string,
+  date_to?: string,
+) => {
+  const safePage  = Math.max(1, page);
+  const safeLimit = Math.min(100, Math.max(1, limit));
+  const offset    = (safePage - 1) * safeLimit;
+
+  const conditions: string[] = [
+    "a.payment_approved_at IS NOT NULL",
+  ];
+  const params: unknown[] = [];
+
+  if (search) {
+    conditions.push('(a.name LIKE ? OR a.email LIKE ? OR a.phone LIKE ?)');
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+  }
+  if (dietitian_id) { conditions.push('a.dietitian_id = ?'); params.push(dietitian_id); }
+  if (date_from)    { conditions.push('a.appointment_date >= ?'); params.push(date_from); }
+  if (date_to)      { conditions.push('a.appointment_date <= ?'); params.push(date_to); }
+
+  const where = `WHERE ${conditions.join(' AND ')}`;
+
+  const [rows, countRows] = await Promise.all([
+    query<{
+      id: number; appointment_date: string; slot: string; duration: number;
+      session_type: string; status: string; payment_status: string;
+      fee: number; currency: string; missed_type: string | null;
+      payment_approved_at: Date; payment_approved_by: number | null;
+      approved_by_name: string | null;
+      user_joined_at: Date | null; dietitian_joined_at: Date | null;
+      created_at: Date;
+      patient_name: string; patient_email: string | null; patient_phone: string | null;
+      dietitian_id: number; dietitian_name: string; dietitian_email: string | null;
+      dietitian_phone: string; dietitian_photo: string | null;
+      // from wallet transaction
+      tx_source: string | null;
+      tx_gross_amount: number | null;
+      tx_commission: number | null;
+      tx_net_amount: number | null;
+      tx_created_at: Date | null;
+    }>(
+      `SELECT
+         a.id,
+         DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS appointment_date,
+         TIME_FORMAT(a.slot, '%H:%i')                AS slot,
+         a.duration, a.session_type, a.status, a.payment_status,
+         a.fee, a.currency, a.missed_type,
+         a.payment_approved_at, a.payment_approved_by,
+         approver.full_name                          AS approved_by_name,
+         a.user_joined_at, a.dietitian_joined_at,
+         a.created_at,
+         a.name          AS patient_name,
+         a.email         AS patient_email,
+         a.phone         AS patient_phone,
+         d.id            AS dietitian_id,
+         du.full_name    AS dietitian_name,
+         du.email        AS dietitian_email,
+         CONCAT(COALESCE(du.phone_code,''), du.phone_number) AS dietitian_phone,
+         d.profile_photo AS dietitian_photo,
+         dwt.source      AS tx_source,
+         dwt.gross_amount AS tx_gross_amount,
+         dwt.commission  AS tx_commission,
+         dwt.net_amount  AS tx_net_amount,
+         dwt.created_at  AS tx_created_at
+       FROM appointments a
+       JOIN dietitians d   ON a.dietitian_id = d.id
+       JOIN users du       ON d.user_id = du.id
+       LEFT JOIN users approver ON approver.id = a.payment_approved_by
+       LEFT JOIN dietitian_wallet_transactions dwt
+         ON dwt.appointment_id = a.id
+         AND dwt.source IN ('appointment_completion', 'no_show_compensation', 'no_show_penalty')
+       ${where}
+       ORDER BY a.payment_approved_at DESC
+       LIMIT ${safeLimit} OFFSET ${offset}`,
+      params,
+    ),
+    query<{ total: number }>(
+      `SELECT COUNT(*) AS total
+       FROM appointments a
+       JOIN dietitians d  ON a.dietitian_id = d.id
+       JOIN users du      ON d.user_id = du.id
+       ${where}`,
+      params,
+    ),
+  ]);
+
+  return {
+    appointments: rows.map((r) => ({
+      id:               r.id,
+      appointment_date: r.appointment_date,
+      slot:             r.slot,
+      duration:         r.duration,
+      session_type:     r.session_type,
+      status:           r.status,
+      payment_status:   r.payment_status,
+      fee:              r.fee,
+      currency:         r.currency,
+      is_no_show:       r.missed_type === 'patient_no_show',
+      missed_type:      r.missed_type,
+      payment_approved_at: r.payment_approved_at,
+      approved_by: {
+        id:   r.payment_approved_by,
+        name: r.approved_by_name ?? null,
+      },
+      created_at: r.created_at,
+      call_tracking: {
+        user_joined_at:      r.user_joined_at ?? null,
+        dietitian_joined_at: r.dietitian_joined_at ?? null,
+      },
+      patient: {
+        name:  r.patient_name,
+        email: r.patient_email,
+        phone: r.patient_phone,
+      },
+      dietitian: {
+        id:    r.dietitian_id,
+        name:  r.dietitian_name,
+        email: r.dietitian_email,
+        phone: r.dietitian_phone || null,
+        photo: r.dietitian_photo,
+      },
+      payment_breakdown: r.tx_source ? {
+        source:           r.tx_source,
+        type:             r.tx_source === 'no_show_penalty' ? 'debit' : 'credit',
+        gross_amount:     Number(r.tx_gross_amount),
+        commission:       Number(r.tx_commission),
+        net_amount:       Number(r.tx_net_amount),
+        // 'credit' → amount paid to dietitian; 'debit' → penalty taken from dietitian
+        amount_credited:  r.tx_source === 'no_show_penalty' ? 0           : Number(r.tx_net_amount),
+        penalty_deducted: r.tx_source === 'no_show_penalty' ? Number(r.tx_net_amount) : 0,
+        processed_at:     r.tx_created_at,
+      } : null,
+    })),
+    total: Number(countRows[0]?.total ?? 0),
+    page:  safePage,
+    limit: safeLimit,
   };
 };

@@ -27,3 +27,9 @@ export const getConsultationFee = async () => {
     currency: currency ?? 'INR',
   };
 };
+
+// Course enrollment fee (seeded as 24999 in migration 080)
+export const getCourseFee = async (): Promise<number> => {
+  const raw = await getSetting('course_fee');
+  return raw != null ? Number(raw) : 24999;
+};

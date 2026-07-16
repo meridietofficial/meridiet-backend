@@ -83,16 +83,19 @@ export const requestWithdrawalHandler = async (req: Request, res: Response) => {
 
     if (!contactId) {
       // Fetch dietitian's user details for name/email/phone
-      const userRows = await query<{ name: string; email: string; mobile: string }>(
-        'SELECT name, email, mobile FROM users WHERE id = ? LIMIT 1',
+      const userRows = await query<{ full_name: string; email: string; phone_number: string | null; phone_code: string | null }>(
+        'SELECT full_name, email, phone_number, phone_code FROM users WHERE id = ? LIMIT 1',
         [dietitian.user_id],
       );
       const user = userRows[0];
+      const phone = user?.phone_number
+        ? `${user.phone_code ?? ''}${user.phone_number}`.trim()
+        : undefined;
 
       const contact = await createContact({
-        name:         user?.name ?? `Dietitian ${dietitian.id}`,
+        name:         user?.full_name ?? `Dietitian ${dietitian.id}`,
         email:        user?.email,
-        contact:      user?.mobile,
+        contact:      phone,
         reference_id: `dietitian_${dietitian.id}`,
       });
       contactId = contact.id;

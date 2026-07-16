@@ -98,6 +98,9 @@ const envSchema = z.object({
     .string()
     .length(64, 'ACCOUNT_ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes)'),
 
+  // Admin notification email — receives course enquiry and enrollment alerts
+  ADMIN_EMAIL: z.string().email().default('meridietofficial@gmail.com'),
+
   // Agora — 1-to-1 video calls with cloud recording
   AGORA_APP_ID: z.string().default(''),
   AGORA_APP_CERTIFICATE: z.string().default(''),
