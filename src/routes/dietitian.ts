@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { registerDietitian, getDietitianProfile, getDietitianById, updateDietitianProfile, changeDietitianPassword, updateOnlineStatus, deleteMyAccount } from '../controllers/dietitian';
+import { getDietitianProfile, getDietitianById, updateDietitianProfile, changeDietitianPassword, updateOnlineStatus, deleteMyAccount } from '../controllers/dietitian';
+import { sendRegistrationOtp, verifyRegistrationOtp, createRegistrationOrder, verifyRegistrationPayment, markRegistrationPaymentFailed } from '../controllers/dietitianRegistration';
 import {
   saveDraft,
   saveManualDraft,
@@ -35,7 +36,12 @@ import { authenticate, authorize } from '../middlewares/authenticate';
 
 export const dietitianRouter = Router();
 
-dietitianRouter.post('/register', registerDietitian);
+// Registration with payment — ₹2499 one-time fee
+dietitianRouter.post('/register/send-otp',        sendRegistrationOtp);
+dietitianRouter.post('/register/verify-otp',      verifyRegistrationOtp);
+dietitianRouter.post('/register/create-order',    createRegistrationOrder);
+dietitianRouter.post('/register/verify-payment',  verifyRegistrationPayment);
+dietitianRouter.post('/register/failed',          markRegistrationPaymentFailed);
 
 // GET  /api/v1/dietitian/profile  — logged-in dietitian's own profile
 dietitianRouter.get('/profile', authenticate, authorize('dietitian'), getDietitianProfile);

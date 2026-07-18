@@ -16,6 +16,7 @@ export interface User {
   wallet_balance: number;
   reset_token_hash: string | null;
   reset_token_expires_at: Date | null;
+  password_changed_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -133,7 +134,7 @@ export const softDeleteUser = async (id: number) => {
 
 export const updateUserPassword = async (id: number, newPassword: string) => {
   const hashed = await bcrypt.hash(newPassword, 12);
-  await execute('UPDATE users SET password = ? WHERE id = ?', [hashed, id]);
+  await execute('UPDATE users SET password = ?, password_changed_at = NOW() WHERE id = ?', [hashed, id]);
 };
 
 // Store a hashed password-reset token + its expiry against a user.

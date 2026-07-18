@@ -39,6 +39,18 @@ export const markOtpVerified = async (phoneCode: string, phoneNumber: string): P
   );
 };
 
+// Returns a verified OTP record if it was verified within the last 30 minutes
+export const getVerifiedOtp = async (phoneCode: string, phoneNumber: string): Promise<PhoneOtp | null> => {
+  const rows = await query<PhoneOtp>(
+    `SELECT * FROM phone_otps
+     WHERE phone_code = ? AND phone_number = ? AND verified = 1
+       AND created_at >= NOW() - INTERVAL 30 MINUTE
+     ORDER BY created_at DESC LIMIT 1`,
+    [phoneCode, phoneNumber],
+  );
+  return rows[0] ?? null;
+};
+
 export const deleteOtps = async (phoneCode: string, phoneNumber: string): Promise<void> => {
   await execute(
     `DELETE FROM phone_otps WHERE phone_code = ? AND phone_number = ?`,
