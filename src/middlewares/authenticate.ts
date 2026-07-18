@@ -9,6 +9,7 @@ export interface JwtPayload {
   email: string;
   role: string;
   iat?: number;
+  tokenVersion?: number;
 }
 
 // Adds req.user so it's available in all route handlers
@@ -36,15 +37,17 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
     return errorResponse(res, 401, 'Invalid or expired token');
   }
 
-  // Invalidate tokens issued before the last password change
-  if (payload.iat) {
+  try {
     const user = await findUserById(Number(payload.sub));
-    if (user?.password_changed_at) {
-      const changedAt = Math.floor(new Date(user.password_changed_at).getTime() / 1000);
-      if (payload.iat < changedAt) {
-        return errorResponse(res, 401, 'Session expired. Please log in again.');
-      }
+    if (!user) return errorResponse(res, 401, 'Session expired. Please log in again.');
+
+    // Token version mismatch means password was changed — kill the session.
+    // Old tokens without tokenVersion are treated as version 0 (DB default) for graceful rollout.
+    if ((payload.tokenVersion ?? 0) !== user.token_version) {
+      return errorResponse(res, 401, 'Session expired. Please log in again.');
     }
+  } catch {
+    return errorResponse(res, 500, 'Authentication error. Please try again.');
   }
 
   req.user = payload;

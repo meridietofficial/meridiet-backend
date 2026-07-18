@@ -9,9 +9,9 @@ import { successResponse, errorResponse } from '../utils/response';
 import { sendEmail } from '../services/email';
 import { dietitianWelcomeEmail } from '../services/emails/dietitianWelcome';
 
-const generateToken = (userId: number, email: string | null, role: string) => {
+const generateToken = (userId: number, email: string | null, role: string, tokenVersion: number) => {
   return jwt.sign(
-    { sub: userId, email, role },
+    { sub: userId, email, role, tokenVersion },
     env.JWT_SECRET,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     { expiresIn: env.JWT_ACCESS_EXPIRES_IN } as any,
@@ -119,7 +119,7 @@ export const registerDietitian = async (req: Request, res: Response) => {
 
     if (!dietitian) return errorResponse(res, 500, 'Failed to create dietitian profile');
 
-    const token = generateToken(user.id, user.email, user.role);
+    const token = generateToken(user.id, user.email, user.role, user.token_version);
 
     // Fire-and-forget acknowledgment email. A mail failure must not break
     // registration, so we don't await it and just log any error.

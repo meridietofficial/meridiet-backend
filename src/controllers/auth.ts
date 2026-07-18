@@ -17,9 +17,9 @@ const RESET_TOKEN_TTL_MINUTES = 60;
 
 const hashToken = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
 
-const generateToken = (userId: number, email: string | null, role: string) => {
+const generateToken = (userId: number, email: string | null, role: string, tokenVersion: number) => {
   return jwt.sign(
-    { sub: userId, email, role },
+    { sub: userId, email, role, tokenVersion },
     env.JWT_SECRET,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     { expiresIn: env.JWT_ACCESS_EXPIRES_IN } as any,
@@ -55,7 +55,7 @@ export const register = async (req: Request, res: Response) => {
     const user = await createUser({ full_name, email, password, phone_code, phone_number, role: safeRole });
     if (!user) return errorResponse(res, 500, 'Failed to create user');
 
-    const token = generateToken(user.id, user.email, user.role);
+    const token = generateToken(user.id, user.email, user.role, user.token_version);
 
     if (user.email) {
       const { subject, html, text } = userWelcomeEmail(user.full_name);
@@ -127,7 +127,7 @@ export const login = async (req: Request, res: Response) => {
     const isValid = await checkPassword(password, user.password);
     if (!isValid) return errorResponse(res, 401, 'Invalid credentials');
 
-    const token = generateToken(user.id, user.email, user.role);
+    const token = generateToken(user.id, user.email, user.role, user.token_version);
 
     // For dietitians, return the full profile so the client can run its validations.
     let dietitian = null;
@@ -219,7 +219,7 @@ export const googleLogin = async (req: Request, res: Response) => {
       return errorResponse(res, 403, 'Account is deactivated. Please contact support.');
     }
 
-    const token = generateToken(user.id, user.email, user.role);
+    const token = generateToken(user.id, user.email, user.role, user.token_version);
 
     const message =
       action === 'registered' ? 'Google registration successful' :

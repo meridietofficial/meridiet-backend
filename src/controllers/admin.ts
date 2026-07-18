@@ -10,18 +10,18 @@ import { successResponse, errorResponse } from '../utils/response';
 import { sendEmail } from '../services/email';
 import { dietitianApprovedEmail } from '../services/emails/dietitianApproved';
 
-const generateAccessToken = (userId: number, email: string | null, role: string) => {
+const generateAccessToken = (userId: number, email: string | null, role: string, tokenVersion: number) => {
   return jwt.sign(
-    { sub: userId, email, role },
+    { sub: userId, email, role, tokenVersion },
     env.JWT_SECRET,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     { expiresIn: env.JWT_ACCESS_EXPIRES_IN } as any,
   );
 };
 
-const generateRefreshToken = (userId: number, email: string | null, role: string) => {
+const generateRefreshToken = (userId: number, email: string | null, role: string, tokenVersion: number) => {
   return jwt.sign(
-    { sub: userId, email, role },
+    { sub: userId, email, role, tokenVersion },
     env.JWT_REFRESH_SECRET,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     { expiresIn: env.JWT_REFRESH_EXPIRES_IN } as any,
@@ -57,8 +57,8 @@ export const adminLogin = async (req: Request, res: Response) => {
       return errorResponse(res, 401, 'Invalid email or password');
     }
 
-    const accessToken = generateAccessToken(user.id, user.email, user.role);
-    const refreshToken = generateRefreshToken(user.id, user.email, user.role);
+    const accessToken = generateAccessToken(user.id, user.email, user.role, user.token_version);
+    const refreshToken = generateRefreshToken(user.id, user.email, user.role, user.token_version);
 
     return successResponse(res, 200, 'Login successful', {
       tokens: { accessToken, refreshToken },
@@ -87,7 +87,7 @@ export const refreshAdminToken = async (req: Request, res: Response) => {
     const refreshToken = req.body?.refreshToken ?? req.body?.refresh_token;
     if (!refreshToken) return errorResponse(res, 400, 'refreshToken is required');
 
-    let payload: { sub: string; email: string | null; role: string };
+    let payload: { sub: string; email: string | null; role: string; tokenVersion?: number };
     try {
       payload = jwt.verify(refreshToken, env.JWT_REFRESH_SECRET) as typeof payload;
     } catch {
@@ -98,8 +98,12 @@ export const refreshAdminToken = async (req: Request, res: Response) => {
     if (!user || user.role !== 'admin') return errorResponse(res, 401, 'Invalid refresh token');
     if (!user.is_active) return errorResponse(res, 403, 'Account is deactivated. Please contact support.');
 
-    const accessToken = generateAccessToken(user.id, user.email, user.role);
-    const newRefreshToken = generateRefreshToken(user.id, user.email, user.role);
+    if ((payload.tokenVersion ?? 0) !== user.token_version) {
+      return errorResponse(res, 401, 'Session expired. Please log in again.');
+    }
+
+    const accessToken = generateAccessToken(user.id, user.email, user.role, user.token_version);
+    const newRefreshToken = generateRefreshToken(user.id, user.email, user.role, user.token_version);
 
     return successResponse(res, 200, 'Token refreshed', {
       tokens: { accessToken, refreshToken: newRefreshToken },
