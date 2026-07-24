@@ -37,6 +37,7 @@ export interface Dietitian {
   experience_certificate: string | null;
   is_verified: boolean;
   is_online: boolean;
+  sync_offline_slots: boolean;
   appointment_fee: number;
   appointment_currency: string;
   earnings_balance: number;
@@ -234,7 +235,7 @@ const DIETITIAN_USER_SELECT = `
     d.experience, d.specialization, d.date_of_birth, d.gender, d.bio,
     d.languages, d.services, d.degrees, d.awards, d.availability,
     d.profile_photo, d.logo_url, d.degree_certificate, d.registration_certificate,
-    d.id_proof, d.experience_certificate, d.is_verified, d.is_online,
+    d.id_proof, d.experience_certificate, d.is_verified, d.is_online, d.sync_offline_slots,
     d.appointment_fee, d.appointment_currency, d.created_at, d.updated_at,
     u.full_name, u.email, u.phone_code, u.phone_number, u.is_active, u.avatar_url
   FROM dietitians d
@@ -499,6 +500,10 @@ export const createDietitian = async (data: CreateDietitianData) => {
 
 export const setDietitianOnlineStatus = async (id: number, isOnline: boolean) => {
   await execute('UPDATE dietitians SET is_online = ? WHERE id = ?', [isOnline ? 1 : 0, id]);
+};
+
+export const setSyncOfflineSlots = async (id: number, enabled: boolean) => {
+  await execute('UPDATE dietitians SET sync_offline_slots = ? WHERE id = ?', [enabled ? 1 : 0, id]);
 };
 
 export const updateDietitian = async (id: number, data: UpdateDietitianData) => {

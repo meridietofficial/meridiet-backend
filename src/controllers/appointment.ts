@@ -47,24 +47,28 @@ import {
   markPaymentApproved,
   getFollowUpListSummary,
   listFollowUpAppointments,
+  markOfflinePaymentPaid,
+  updateDietPlanSent,
+  updateDietPlanFileUrl,
+  deleteDietPlanFileUrl,
   MissedType,
   type FollowUpListTab,
 } from '../models/Appointment';
 import { buildAvailableDates } from '../utils/availability';
 import { resolveCoupon, createCouponUsage } from '../models/Coupon';
+import { uploadBufferToS3 } from '../services/uploadToS3';
 import { successResponse, errorResponse } from '../utils/response';
 import { createRescheduleHistory, getRescheduleHistory, countRescheduleHistory } from '../models/AppointmentRescheduleHistory';
 import { findDietFormByAppointmentId } from '../models/DietForm';
 import { findDietPlanByAppointmentId } from '../models/DietPlan';
 import { sendEmail } from '../services/email';
-import { appointmentConfirmationEmail, appointmentConfirmedEmail, followUpScheduledEmail } from '../services/emails/appointmentConfirmation';
+import { appointmentConfirmationEmail, followUpScheduledEmail } from '../services/emails/appointmentConfirmation';
 import { appointmentNewBookingEmail } from '../services/emails/appointmentNewBooking';
 import { appointmentRescheduledUserEmail, appointmentRescheduledDietitianEmail } from '../services/emails/appointmentRescheduled';
 import { appointmentCompletedEmail } from '../services/emails/appointmentCompleted';
 import {
   sendAppointmentBookedWhatsApp,
   sendDietitianNewBookingWhatsApp,
-  sendAppointmentConfirmedWhatsApp,
   sendFollowUpScheduledWhatsApp,
   sendAppointmentRescheduledWhatsApp,
   sendDietitianRescheduledWhatsApp,
@@ -93,7 +97,8 @@ export const getAvailableSlots = async (req: Request, res: Response) => {
     }
 
     const fromDate = availableDates[0].date;
-    const booked = await getBookedSlots(dietitianId, fromDate);
+    const includeOffline = Boolean(dietitian.sync_offline_slots);
+    const booked = await getBookedSlots(dietitianId, fromDate, includeOffline);
 
     // Build a Set of "date|slot" strings for O(1) lookup
     const bookedSet = new Set(booked.map((b) => `${b.appointment_date}|${b.slot}`));
@@ -216,7 +221,9 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
     }
 
     // Check if this slot is already paid/confirmed
-    const taken = await isSlotTaken(dietitian_id, appointment_date, slot);
+    // Respect sync_offline_slots: if disabled, online booking only conflicts with other online bookings
+    const includeOfflineCheck = Boolean(dietitian.sync_offline_slots);
+    const taken = await isSlotTaken(dietitian_id, appointment_date, slot, undefined, includeOfflineCheck);
     if (taken) {
       return errorResponse(res, 409, 'This slot is already booked. Please choose another.');
     }
@@ -352,7 +359,7 @@ export const verifyAppointmentPayment = async (req: Request, res: Response) => {
       return errorResponse(res, 409, 'This appointment slot was cancelled. Please book again.');
     }
 
-    await updateAppointmentPayment(razorpay_order_id, razorpay_payment_id, 'paid', 'pending');
+    await updateAppointmentPayment(razorpay_order_id, razorpay_payment_id, 'paid', 'confirmed');
 
     // Record coupon usage now that payment is confirmed
     if (appointment.coupon_id && appointment.discount_applied != null && appointment.final_amount != null) {
@@ -440,9 +447,9 @@ export const verifyAppointmentPayment = async (req: Request, res: Response) => {
       }
     });
 
-    return successResponse(res, 200, 'Payment verified. Awaiting dietitian confirmation.', {
+    return successResponse(res, 200, 'Payment verified. Appointment confirmed.', {
       appointment_id: appointment.id,
-      status: 'pending',
+      status: 'confirmed',
       payment_status: 'paid',
       appointment_date: appointment.appointment_date,
       slot: appointment.slot,
@@ -539,7 +546,7 @@ export const getDietitianAppointments = async (req: Request, res: Response) => {
     const limit = Math.min(Number(req.query.limit) || 10, 50);
     const status = req.query.status as string | undefined;
 
-    const allowedStatuses = ['pending', 'confirmed', 'cancelled', 'completed', 'missed'];
+    const allowedStatuses = ['confirmed', 'cancelled', 'completed', 'missed'];
     if (status && !allowedStatuses.includes(status)) {
       return errorResponse(res, 400, `status must be one of: ${allowedStatuses.join(', ')}`);
     }
@@ -570,7 +577,7 @@ export const updateAppointmentStatusHandler = async (req: Request, res: Response
     if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
 
     const { status } = req.body as { status?: string };
-    const allowed = ['confirmed', 'completed', 'cancelled', 'missed'] as const;
+    const allowed = ['completed', 'cancelled', 'missed'] as const;
     if (!status || !allowed.includes(status as typeof allowed[number])) {
       return errorResponse(res, 400, `status must be one of: ${allowed.join(', ')}`);
     }
@@ -584,46 +591,6 @@ export const updateAppointmentStatusHandler = async (req: Request, res: Response
 
     await updateAppointmentStatus(id, status as 'confirmed' | 'completed' | 'cancelled');
 
-    // Notify user when dietitian confirms
-    if (status === 'confirmed') {
-      setImmediate(async () => {
-        try {
-          const fullDietitian = await findDietitianById(appointment.dietitian_id);
-          const dietitianName = fullDietitian?.full_name ?? 'Your Dietitian';
-          const isVideoCall = appointment.session_type === 'video_call';
-          const baseUrl = env.APP_BASE_URL ?? 'http://localhost:3000';
-          const userJoinUrl = isVideoCall
-            ? `${baseUrl}/meet/${id}?t=${generateMeetingToken(id, userUid(id))}`
-            : undefined;
-
-          if (appointment.email) {
-            const mail = appointmentConfirmedEmail({
-              userName: appointment.name,
-              dietitianName,
-              appointmentDate: appointment.appointment_date,
-              slot: appointment.slot,
-              sessionType: appointment.session_type,
-              joinUrl: userJoinUrl,
-            });
-            await sendEmail({ to: appointment.email, subject: mail.subject, html: mail.html, text: mail.text })
-              .catch((e) => console.error('[confirm] User email failed:', e));
-          }
-
-          if (appointment.phone) {
-            await sendAppointmentConfirmedWhatsApp(
-              appointment.phone,
-              appointment.name,
-              appointment.appointment_date,
-              appointment.slot,
-              userJoinUrl,
-            ).catch((e) => console.error('[confirm] User WhatsApp failed:', e));
-          }
-        } catch (e) {
-          console.error('[confirm] Notification error:', e);
-        }
-      });
-    }
-
     // Close the video call channel when appointment is marked completed
     if (status === 'completed' && appointment.session_type === 'video_call') {
       await endCallSession(id).catch((e) => console.error('[completed] endCallSession failed:', e));
@@ -631,8 +598,8 @@ export const updateAppointmentStatusHandler = async (req: Request, res: Response
 
     // Payment credit is handled by admin via POST /admin/appointments/:id/approve-payment
 
-    // Notify user when appointment is completed — prompt them to rate the dietitian
-    if (status === 'completed') {
+    // Notify user when appointment is completed — only for online (platform) appointments
+    if (status === 'completed' && appointment.appointment_source === 'platform') {
       setImmediate(async () => {
         try {
           const fullDietitian = await findDietitianById(appointment.dietitian_id);
@@ -699,10 +666,15 @@ export const getDietitianSessions = async (req: Request, res: Response) => {
       ? req.query.tab as typeof allowed[number]
       : 'all';
 
+    const allowedSources = ['platform', 'dietitian'] as const;
+    const source = allowedSources.includes(req.query.source as typeof allowedSources[number])
+      ? req.query.source as typeof allowedSources[number]
+      : undefined;
+
     const dietitian = await findDietitianByUserId(userId);
     if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
 
-    const { summary, rows, total } = await getDietitianSessionsList(dietitian.id, tab, search, page, limit);
+    const { summary, rows, total } = await getDietitianSessionsList(dietitian.id, tab, search, page, limit, source);
 
     // Group rows by date — label is computed on the frontend in local timezone
     const dateMap = new Map<string, { date: string; count: number; sessions: unknown[] }>();
@@ -717,18 +689,22 @@ export const getDietitianSessions = async (req: Request, res: Response) => {
       const group = dateMap.get(row.appointment_date)!;
       group.count++;
       group.sessions.push({
-        id:                   row.id,
-        time:                 toAmPm(row.slot),
-        slot:                 row.slot,
-        duration:             row.duration,
-        session_type:         row.session_type,
-        status:               row.status,
-        payment_status:       row.payment_status,
-        notes:                row.notes,
-        session_number:       Number(row.session_number),
-        is_follow_up:         Boolean(row.is_follow_up),
+        id:                    row.id,
+        time:                  toAmPm(row.slot),
+        slot:                  row.slot,
+        duration:              row.duration,
+        session_type:          row.session_type,
+        status:                row.status,
+        payment_status:        row.payment_status,
+        appointment_source:    row.appointment_source,
+        payment_method:        row.payment_method ?? null,
+        notes:                 row.notes,
+        diet_plan_sent:        Boolean(row.diet_plan_sent),
+        diet_plan_file_url:    row.diet_plan_file_url ?? null,
+        session_number:        Number(row.session_number),
+        is_follow_up:          Boolean(row.is_follow_up),
         parent_appointment_id: row.parent_appointment_id ?? null,
-        user_review_done:     Boolean(row.user_review_done),
+        user_review_done:      Boolean(row.user_review_done),
         dietitian_review_done: Boolean(row.dietitian_review_done),
         diet_plan: row.diet_plan_id
           ? { id: row.diet_plan_id, form_id: row.diet_plan_form_id, status: row.diet_plan_status }
@@ -1924,5 +1900,245 @@ export const trackUserJoin = async (req: Request, res: Response): Promise<void> 
   } catch (err) {
     console.error('Track join error:', err);
     res.status(500).json({ success: false });
+  }
+};
+
+// ── Offline appointment management ────────────────────────────────────────────
+
+// POST /api/v1/appointments/offline
+// Dietitian only. Manually creates an appointment for an offline/walk-in patient.
+// Auto-confirmed, no Razorpay. No commission, no admin approval.
+// Body: { name, phone?, email?, appointment_date, slot, duration?, session_type?,
+//         fee?, payment_method?, payment_collected?, notes? }
+export const createOfflineAppointment = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const {
+      name,
+      phone,
+      email,
+      appointment_date,
+      slot,
+      duration,
+      session_type,
+      fee,
+      payment_method,
+      payment_collected,
+      notes,
+    } = req.body as {
+      name?: string;
+      phone?: string;
+      email?: string;
+      appointment_date?: string;
+      slot?: string;
+      duration?: number;
+      session_type?: 'video_call' | 'in_person';
+      fee?: number;
+      payment_method?: 'cash' | 'upi' | 'card' | 'other';
+      payment_collected?: boolean;
+      notes?: string;
+    };
+
+    if (!name)             return errorResponse(res, 400, 'name is required');
+    if (!appointment_date) return errorResponse(res, 400, 'appointment_date is required');
+    if (!slot)             return errorResponse(res, 400, 'slot is required');
+
+    if (!/^\d{2}:\d{2}$/.test(slot)) {
+      return errorResponse(res, 400, 'slot must be in HH:MM format');
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(appointment_date)) {
+      return errorResponse(res, 400, 'appointment_date must be in YYYY-MM-DD format');
+    }
+    const [yr, mo, dy] = appointment_date.split('-').map(Number);
+    const requestedDate = new Date(yr, mo - 1, dy);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (requestedDate < today) {
+      return errorResponse(res, 400, 'appointment_date cannot be in the past');
+    }
+
+    if (payment_method && !['cash', 'upi', 'card', 'other'].includes(payment_method)) {
+      return errorResponse(res, 400, 'payment_method must be one of: cash, upi, card, other');
+    }
+
+    // Slot conflict — always checks all appointments for the dietitian's own calendar
+    const taken = await isSlotTaken(dietitian.id, appointment_date, slot);
+    if (taken) {
+      return errorResponse(res, 409, 'This slot is already booked. Please choose another.');
+    }
+
+    const appointment = await createAppointment({
+      dietitian_id:       dietitian.id,
+      user_id:            null,
+      name:               name.trim(),
+      phone:              phone?.trim() ?? null,
+      email:              email?.trim() ?? null,
+      appointment_date,
+      slot,
+      duration:           duration ?? 30,
+      session_type:       session_type ?? 'in_person',
+      fee:                fee ?? 0,
+      currency:           'INR',
+      appointment_source: 'dietitian',
+      payment_method:     payment_method ?? null,
+      notes:              notes?.trim() ?? null,
+    });
+
+    if (!appointment) return errorResponse(res, 500, 'Failed to create appointment');
+
+    // Auto-confirm — no Razorpay, no pending state
+    await updateAppointmentStatus(appointment.id, 'confirmed');
+
+    // Mark as paid if dietitian collected payment at booking time
+    if (payment_collected && payment_method) {
+      await markOfflinePaymentPaid(appointment.id, payment_method);
+    }
+
+    const confirmed = await findAppointmentById(appointment.id);
+
+    return successResponse(res, 201, 'Offline appointment created successfully', confirmed);
+  } catch (err: unknown) {
+    if ((err as { code?: string }).code === 'ER_DUP_ENTRY') {
+      return errorResponse(res, 409, 'This slot is already booked. Please choose another.');
+    }
+    console.error('Create offline appointment error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// PATCH /api/v1/appointments/:id/mark-paid
+// Dietitian only. Marks an offline appointment's payment as collected.
+// Body: { payment_method: 'cash' | 'upi' | 'card' | 'other' }
+export const markOfflineAppointmentPaid = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const id     = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+    if (appointment.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
+
+    if (appointment.appointment_source !== 'dietitian') {
+      return errorResponse(res, 400, 'Only offline appointments can be marked paid this way');
+    }
+    if (appointment.payment_status === 'paid') {
+      return errorResponse(res, 409, 'Payment is already marked as collected');
+    }
+
+    const { payment_method } = req.body as { payment_method?: string };
+    const validMethods = ['cash', 'upi', 'card', 'other'];
+    if (!payment_method || !validMethods.includes(payment_method)) {
+      return errorResponse(res, 400, `payment_method must be one of: ${validMethods.join(', ')}`);
+    }
+
+    await markOfflinePaymentPaid(id, payment_method as 'cash' | 'upi' | 'card' | 'other');
+
+    return successResponse(res, 200, 'Payment marked as collected', { id, payment_status: 'paid', payment_method });
+  } catch (err) {
+    console.error('Mark offline paid error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// PATCH /api/v1/appointments/:id/diet-plan-sent
+// Dietitian only. Toggles whether the diet plan has been sent to the patient.
+// Body: { sent: boolean }
+export const toggleDietPlanSent = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const id     = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+    if (appointment.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
+
+    const { sent } = req.body as { sent?: boolean };
+    if (sent === undefined || typeof sent !== 'boolean') {
+      return errorResponse(res, 400, 'sent (boolean) is required');
+    }
+
+    await updateDietPlanSent(id, sent);
+
+    return successResponse(res, 200, `Diet plan marked as ${sent ? 'sent' : 'not sent'}`, { id, diet_plan_sent: sent });
+  } catch (err) {
+    console.error('Toggle diet plan sent error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// POST /api/v1/appointments/:id/diet-plan-file
+// Dietitian only. Uploads a diet plan PDF or image to S3 for record keeping.
+// Accepts multipart/form-data with field name "file".
+export const uploadDietPlanFile = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const id     = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+    if (appointment.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
+
+    const file = (req as Request & { file?: Express.Multer.File }).file;
+    if (!file) return errorResponse(res, 400, 'No file uploaded');
+
+    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.mimetype)) {
+      return errorResponse(res, 400, 'Only PDF, JPEG, PNG or WEBP files are allowed');
+    }
+    const maxSize = 10 * 1024 * 1024; // 10 MB
+    if (file.size > maxSize) {
+      return errorResponse(res, 400, 'File size must be under 10 MB');
+    }
+
+    const ext = file.originalname.split('.').pop()?.toLowerCase() ?? 'bin';
+    const key = `diet-plan-files/${id}_${Date.now()}.${ext}`;
+    const url = await uploadBufferToS3(file.buffer, key, file.mimetype);
+
+    await updateDietPlanFileUrl(id, url);
+
+    return successResponse(res, 200, 'Diet plan file uploaded successfully', { id, diet_plan_file_url: url });
+  } catch (err) {
+    console.error('Upload diet plan file error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// DELETE /api/v1/appointments/:id/diet-plan-file
+// Dietitian only. Removes the uploaded diet plan file reference (does not delete from S3).
+export const removeDietPlanFile = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user!.sub);
+    const id     = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+    if (appointment.dietitian_id !== dietitian.id) return errorResponse(res, 403, 'Access denied');
+
+    await deleteDietPlanFileUrl(id);
+
+    return successResponse(res, 200, 'Diet plan file removed', { id, diet_plan_file_url: null });
+  } catch (err) {
+    console.error('Remove diet plan file error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
   }
 };

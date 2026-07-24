@@ -19,11 +19,15 @@ export interface Appointment {
   payment_approved_by: number | null;
   payment_id: string | null;
   order_id: string | null;
+  appointment_source: 'platform' | 'dietitian';
+  payment_method: 'razorpay' | 'cash' | 'upi' | 'card' | 'other' | null;
   coupon_id: number | null;
   discount_applied: number | null;
   final_amount: number | null;
   notes: string | null;
   dietitian_notes: string | null;
+  diet_plan_sent: boolean;
+  diet_plan_file_url: string | null;
   missed_reason: string | null;
   missed_type: 'patient_no_show' | 'dietitian_no_show' | 'technical_issue' | 'network_issue' | 'other' | 'both_no_show' | null;
   user_rating: number | null;
@@ -67,6 +71,8 @@ export interface CreateAppointmentData {
   fee: number;
   currency?: string;
   order_id?: string | null;
+  appointment_source?: 'platform' | 'dietitian';
+  payment_method?: 'razorpay' | 'cash' | 'upi' | 'card' | 'other' | null;
   coupon_id?: number | null;
   discount_applied?: number | null;
   final_amount?: number | null;
@@ -82,7 +88,9 @@ const APPOINTMENT_SELECT = `
   DATE_FORMAT(appointment_date, '%Y-%m-%d') AS appointment_date,
   TIME_FORMAT(slot, '%H:%i')                AS slot,
   duration, session_type,
-  fee, currency, status, payment_status, payment_approved_at, payment_approved_by, payment_id, order_id, coupon_id, discount_applied, final_amount, notes, dietitian_notes, missed_reason, missed_type,
+  fee, currency, status, payment_status, payment_approved_at, payment_approved_by, payment_id, order_id,
+  appointment_source, payment_method,
+  coupon_id, discount_applied, final_amount, notes, dietitian_notes, diet_plan_sent, diet_plan_file_url, missed_reason, missed_type,
   user_rating, user_review, user_reviewed_at,
   dietitian_rating, dietitian_review, dietitian_reviewed_at,
   parent_appointment_id, is_follow_up, follow_up_type,
@@ -97,9 +105,10 @@ export const createAppointment = async (data: CreateAppointmentData) => {
   const result = await execute(
     `INSERT INTO appointments
        (dietitian_id, user_id, name, email, phone, appointment_date, slot, duration, session_type,
-        fee, currency, order_id, coupon_id, discount_applied, final_amount,
+        fee, currency, order_id, appointment_source, payment_method,
+        coupon_id, discount_applied, final_amount,
         notes, parent_appointment_id, is_follow_up, follow_up_type)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.dietitian_id,
       data.user_id ?? null,
@@ -113,6 +122,8 @@ export const createAppointment = async (data: CreateAppointmentData) => {
       data.fee,
       data.currency ?? 'INR',
       data.order_id ?? null,
+      data.appointment_source ?? 'platform',
+      data.payment_method ?? null,
       data.coupon_id ?? null,
       data.discount_applied ?? null,
       data.final_amount ?? null,
@@ -270,7 +281,7 @@ export const findAppointmentsByUserId = async (userId: number, page = 1, limit =
        JOIN users u ON d.user_id = u.id
        LEFT JOIN diet_plans dp ON dp.appointment_id = a.id
        WHERE a.user_id = ?
-         AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed')
+         AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed' OR a.appointment_source = 'dietitian')
        ORDER BY a.appointment_date DESC, a.slot ASC
        LIMIT ${limit} OFFSET ${offset}`,
       [userId],
@@ -361,7 +372,7 @@ export const findAppointmentsByDietitianId = async (
        FROM appointments a
        LEFT JOIN users u ON a.user_id = u.id AND u.is_delete = 0
        WHERE a.dietitian_id = ?
-         AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed')
+         AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed' OR a.appointment_source = 'dietitian')
          ${whereStatus}
        ORDER BY a.appointment_date DESC, a.slot ASC LIMIT ${limit} OFFSET ${offset}`,
       countParams,
@@ -408,8 +419,10 @@ export const isSlotTaken = async (
   appointment_date: string,
   slot: string,
   excludeId?: number,
+  includeOffline = true,
 ) => {
-  const excludeCond = excludeId ? 'AND id <> ?' : '';
+  const excludeCond  = excludeId ? 'AND id <> ?' : '';
+  const sourceCond   = includeOffline ? '' : "AND appointment_source = 'platform'";
   const params: unknown[] = [dietitian_id, appointment_date, slot];
   if (excludeId) params.push(excludeId);
 
@@ -418,7 +431,7 @@ export const isSlotTaken = async (
       WHERE dietitian_id = ? AND appointment_date = ? AND slot = ?
         AND status NOT IN ('cancelled', 'missed')
         AND (payment_status <> 'unpaid' OR status = 'confirmed')
-        ${excludeCond}
+        ${excludeCond} ${sourceCond}
       LIMIT 1`,
     params,
   );
@@ -508,6 +521,39 @@ export const markAppointmentMissedWithType = async (
 export const markAppointmentPaymentRefunded = async (id: number) => {
   await execute(
     `UPDATE appointments SET payment_status = 'refunded' WHERE id = ?`,
+    [id],
+  );
+};
+
+// ── Offline appointment helpers ───────────────────────────────────────────────
+
+export const markOfflinePaymentPaid = async (
+  id: number,
+  paymentMethod: 'cash' | 'upi' | 'card' | 'other',
+) => {
+  await execute(
+    `UPDATE appointments SET payment_status = 'paid', payment_method = ? WHERE id = ? AND appointment_source = 'dietitian'`,
+    [paymentMethod, id],
+  );
+};
+
+export const updateDietPlanSent = async (id: number, sent: boolean) => {
+  await execute(
+    `UPDATE appointments SET diet_plan_sent = ? WHERE id = ?`,
+    [sent ? 1 : 0, id],
+  );
+};
+
+export const updateDietPlanFileUrl = async (id: number, url: string) => {
+  await execute(
+    `UPDATE appointments SET diet_plan_file_url = ? WHERE id = ?`,
+    [url, id],
+  );
+};
+
+export const deleteDietPlanFileUrl = async (id: number) => {
+  await execute(
+    `UPDATE appointments SET diet_plan_file_url = NULL WHERE id = ?`,
     [id],
   );
 };
@@ -752,7 +798,7 @@ export const getClientsByDietitianId = async (dietitianId: number, page = 1, lim
   // Exclude ghost reservations (unpaid + still pending — patient never completed payment)
   const baseWhere = `
     a.dietitian_id = ?
-    AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed')
+    AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed' OR a.appointment_source = 'dietitian')
   `;
 
   const [rows, countRows] = await Promise.all([
@@ -802,7 +848,11 @@ export interface SessionRow {
   session_type: 'video_call' | 'in_person';
   status: string;
   payment_status: string;
+  appointment_source: 'platform' | 'dietitian';
+  payment_method: string | null;
   notes: string | null;
+  diet_plan_sent: number;
+  diet_plan_file_url: string | null;
   user_id: number | null;
   client_name: string;
   client_avatar: string | null;
@@ -822,10 +872,12 @@ export const getDietitianSessionsList = async (
   search: string | undefined,
   page: number,
   limit: number,
+  source?: 'platform' | 'dietitian',
 ) => {
   const offset = (page - 1) * limit;
   const searchCond = search ? "AND COALESCE(u.full_name, a.name) LIKE ?" : "";
   const searchParam: unknown[] = search ? [`%${search}%`] : [];
+  const sourceCond = source ? `AND a.appointment_source = '${source}'` : "";
 
   const tabCond = tab === 'upcoming'  ? "AND a.status = 'confirmed'"
     : tab === 'completed' ? "AND a.status = 'completed'"
@@ -845,8 +897,8 @@ export const getDietitianSessionsList = async (
        FROM appointments a
        LEFT JOIN users u ON a.user_id = u.id AND u.is_delete = 0
        WHERE a.dietitian_id = ?
-         AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed')
-         ${searchCond}`,
+         AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed' OR a.appointment_source = 'dietitian')
+         ${sourceCond} ${searchCond}`,
       [dietitianId, ...searchParam],
     ),
     query<SessionRow>(
@@ -858,7 +910,11 @@ export const getDietitianSessionsList = async (
          a.session_type,
          a.status,
          a.payment_status,
+         a.appointment_source,
+         a.payment_method,
          a.notes,
+         a.diet_plan_sent,
+         a.diet_plan_file_url,
          a.user_id,
          COALESCE(u.full_name, a.name)               AS client_name,
          u.avatar_url                                AS client_avatar,
@@ -882,8 +938,8 @@ export const getDietitianSessionsList = async (
        LEFT JOIN users u        ON a.user_id = u.id AND u.is_delete = 0
        LEFT JOIN diet_plans dp  ON dp.appointment_id = a.id
        WHERE a.dietitian_id = ?
-         AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed')
-         ${tabCond} ${searchCond}
+         AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed' OR a.appointment_source = 'dietitian')
+         ${tabCond} ${sourceCond} ${searchCond}
        ORDER BY a.appointment_date ASC, a.slot ASC
        LIMIT ${limit} OFFSET ${offset}`,
       [dietitianId, ...searchParam],
@@ -893,8 +949,8 @@ export const getDietitianSessionsList = async (
        FROM appointments a
        LEFT JOIN users u ON a.user_id = u.id AND u.is_delete = 0
        WHERE a.dietitian_id = ?
-         AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed')
-         ${tabCond} ${searchCond}`,
+         AND (a.payment_status <> 'unpaid' OR a.status = 'confirmed' OR a.appointment_source = 'dietitian')
+         ${tabCond} ${sourceCond} ${searchCond}`,
       [dietitianId, ...searchParam],
     ),
   ]);
@@ -977,8 +1033,15 @@ export const getDietitianDashboardStats = async (dietitianId: number): Promise<D
   };
 };
 
-// Already-taken slots for a dietitian (to subtract from available_dates)
-export const getBookedSlots = async (dietitian_id: number, fromDate: string) => {
+// Already-taken slots for a dietitian (to subtract from available_dates).
+// Pass includeOffline=false when checking slots for online patient booking
+// and the dietitian has sync_offline_slots disabled.
+export const getBookedSlots = async (
+  dietitian_id: number,
+  fromDate: string,
+  includeOffline = true,
+) => {
+  const sourceCond = includeOffline ? '' : "AND appointment_source = 'platform'";
   return query<{ appointment_date: string; slot: string }>(
     `SELECT
        DATE_FORMAT(appointment_date, '%Y-%m-%d') AS appointment_date,
@@ -986,7 +1049,8 @@ export const getBookedSlots = async (dietitian_id: number, fromDate: string) => 
      FROM appointments
      WHERE dietitian_id = ? AND appointment_date >= ?
        AND status NOT IN ('cancelled', 'missed')
-       AND (payment_status <> 'unpaid' OR status = 'confirmed')`,
+       AND (payment_status <> 'unpaid' OR status = 'confirmed')
+       ${sourceCond}`,
     [dietitian_id, fromDate],
   );
 };
@@ -1363,6 +1427,7 @@ export interface AdminAppointmentFilters {
   status?: string;
   payment_status?: string;
   session_type?: string;
+  source?: 'platform' | 'dietitian';
   dietitian_id?: number;
   date_from?: string;
   date_to?: string;
@@ -1380,10 +1445,11 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
   const conditions: string[] = [];
   const params: unknown[]    = [];
 
-  if (filters.status)        { conditions.push('a.status = ?');         params.push(filters.status); }
-  if (filters.payment_status){ conditions.push('a.payment_status = ?'); params.push(filters.payment_status); }
-  if (filters.session_type)  { conditions.push('a.session_type = ?');   params.push(filters.session_type); }
-  if (filters.dietitian_id)  { conditions.push('a.dietitian_id = ?');   params.push(filters.dietitian_id); }
+  if (filters.status)        { conditions.push('a.status = ?');              params.push(filters.status); }
+  if (filters.payment_status){ conditions.push('a.payment_status = ?');      params.push(filters.payment_status); }
+  if (filters.session_type)  { conditions.push('a.session_type = ?');        params.push(filters.session_type); }
+  if (filters.source)        { conditions.push('a.appointment_source = ?');  params.push(filters.source); }
+  if (filters.dietitian_id)  { conditions.push('a.dietitian_id = ?');        params.push(filters.dietitian_id); }
   if (filters.date_from)     { conditions.push('a.appointment_date >= ?'); params.push(filters.date_from); }
   if (filters.date_to)       { conditions.push('a.appointment_date <= ?'); params.push(filters.date_to); }
   if (filters.no_show) {
@@ -1409,6 +1475,8 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
       session_type: string;
       status: string;
       payment_status: string;
+      appointment_source: string;
+      payment_method: string | null;
       fee: number;
       currency: string;
       is_follow_up: number;
@@ -1434,6 +1502,8 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
          a.session_type,
          a.status,
          a.payment_status,
+         a.appointment_source,
+         a.payment_method,
          a.fee,
          a.currency,
          a.is_follow_up,
@@ -1475,6 +1545,8 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
       session_type: r.session_type,
       status: r.status,
       payment_status: r.payment_status,
+      appointment_source: r.appointment_source as 'platform' | 'dietitian',
+      payment_method: r.payment_method ?? null,
       fee: r.fee,
       currency: r.currency,
       is_follow_up: Boolean(r.is_follow_up),
@@ -1537,6 +1609,10 @@ export const adminGetAppointmentDetail = async (id: number) => {
     call_duration_seconds: number | null;
     user_joined_at: Date | null;
     dietitian_joined_at: Date | null;
+    appointment_source: string;
+    payment_method: string | null;
+    diet_plan_sent: number;
+    diet_plan_file_url: string | null;
     created_at: Date;
     updated_at: Date;
     // patient
@@ -1568,6 +1644,8 @@ export const adminGetAppointmentDetail = async (id: number) => {
        a.video_call_status, a.recording_url,
        a.call_started_at, a.call_ended_at, a.call_duration_seconds,
        a.user_joined_at, a.dietitian_joined_at,
+       a.appointment_source, a.payment_method,
+       a.diet_plan_sent, a.diet_plan_file_url,
        a.created_at, a.updated_at,
        a.name        AS patient_name,
        a.email       AS patient_email,
@@ -1640,6 +1718,10 @@ export const adminGetAppointmentDetail = async (id: number) => {
       user_joined_at:      r.user_joined_at ?? null,
       dietitian_joined_at: r.dietitian_joined_at ?? null,
     },
+    appointment_source: r.appointment_source as 'platform' | 'dietitian',
+    payment_method: r.payment_method ?? null,
+    diet_plan_sent: Boolean(r.diet_plan_sent),
+    diet_plan_file_url: r.diet_plan_file_url ?? null,
     created_at: r.created_at,
     updated_at: r.updated_at,
     patient: {
@@ -1798,6 +1880,7 @@ export const adminGetPendingApprovals = async (
        WHERE a.status = 'completed'
          AND a.payment_status = 'paid'
          AND a.payment_approved_at IS NULL
+         AND a.appointment_source = 'platform'
          ${searchCond}
        ORDER BY a.appointment_date DESC, a.slot DESC
        LIMIT ${safeLimit} OFFSET ${offset}`,
@@ -1811,6 +1894,7 @@ export const adminGetPendingApprovals = async (
        WHERE a.status = 'completed'
          AND a.payment_status = 'paid'
          AND a.payment_approved_at IS NULL
+         AND a.appointment_source = 'platform'
          ${searchCond}`,
       searchParam,
     ),

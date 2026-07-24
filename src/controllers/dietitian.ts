@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { createUser, findUserByEmail, findUserById, checkPassword, updateUserPassword, softDeleteUser } from '../models/User';
-import { createDietitian, findDietitianByRegistrationNumber, findDietitianByUserId, findDietitianById, updateDietitian, setDietitianOnlineStatus, formatDietitianRow } from '../models/Dietitian';
+import { createDietitian, findDietitianByRegistrationNumber, findDietitianByUserId, findDietitianById, updateDietitian, setDietitianOnlineStatus, setSyncOfflineSlots, formatDietitianRow } from '../models/Dietitian';
 import { updateUser } from '../models/User';
 import { query } from '../config/database';
 import { env } from '../config/env';
@@ -363,6 +363,36 @@ export const updateOnlineStatus = async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('Update online status error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// PATCH /api/v1/dietitian/sync-offline-slots
+// Dietitian only. Toggles whether offline bookings block online slots and vice versa.
+// Body: { enabled: boolean }
+export const updateSyncOfflineSlots = async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.user?.sub);
+    const { enabled } = req.body as { enabled?: boolean };
+
+    if (enabled === undefined || typeof enabled !== 'boolean') {
+      return errorResponse(res, 400, 'enabled (boolean) is required');
+    }
+
+    const dietitian = await findDietitianByUserId(userId);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
+
+    await setSyncOfflineSlots(dietitian.id, enabled);
+
+    return successResponse(
+      res, 200,
+      enabled
+        ? 'Sync enabled — offline bookings will block online slots and vice versa'
+        : 'Sync disabled — online and offline slots are managed separately',
+      { sync_offline_slots: enabled },
+    );
+  } catch (err) {
+    console.error('Update sync offline slots error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

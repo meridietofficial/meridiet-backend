@@ -106,6 +106,7 @@ export const adminGetAppointments = async (req: Request, res: Response) => {
       status,
       payment_status,
       session_type,
+      source,
       dietitian_id,
       date_from,
       date_to,
@@ -113,9 +114,10 @@ export const adminGetAppointments = async (req: Request, res: Response) => {
       no_show,
     } = req.query as Record<string, string | undefined>;
 
-    const validStatuses  = ['pending', 'confirmed', 'completed', 'cancelled', 'missed'];
+    const validStatuses  = ['confirmed', 'completed', 'cancelled', 'missed'];
     const validPayments  = ['unpaid', 'paid', 'refunded'];
     const validSessions  = ['video_call', 'in_person'];
+    const validSources   = ['platform', 'dietitian'];
     const validNoShow    = ['user', 'dietitian', 'any'];
 
     if (status && !validStatuses.includes(status)) {
@@ -126,6 +128,9 @@ export const adminGetAppointments = async (req: Request, res: Response) => {
     }
     if (session_type && !validSessions.includes(session_type)) {
       return errorResponse(res, 400, `session_type must be one of: ${validSessions.join(', ')}`);
+    }
+    if (source && !validSources.includes(source)) {
+      return errorResponse(res, 400, `source must be one of: ${validSources.join(', ')}`);
     }
     if (date_from && !/^\d{4}-\d{2}-\d{2}$/.test(date_from)) {
       return errorResponse(res, 400, 'date_from must be YYYY-MM-DD');
@@ -143,6 +148,7 @@ export const adminGetAppointments = async (req: Request, res: Response) => {
       status,
       payment_status,
       session_type,
+      source:         source as 'platform' | 'dietitian' | undefined,
       dietitian_id:   dietitian_id ? Number(dietitian_id) : undefined,
       date_from,
       date_to,
@@ -179,6 +185,9 @@ export const adminApprovePayment = async (req: Request, res: Response) => {
     const appointment = await findAppointmentById(id);
     if (!appointment) return errorResponse(res, 404, 'Appointment not found');
 
+    if (appointment.appointment_source === 'dietitian') {
+      return errorResponse(res, 400, 'Offline appointments are managed by the dietitian and do not require platform payment approval');
+    }
     if (appointment.status !== 'completed') {
       return errorResponse(res, 400, 'Only completed appointments can have their payment approved');
     }

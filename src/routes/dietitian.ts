@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDietitianProfile, getDietitianById, updateDietitianProfile, changeDietitianPassword, updateOnlineStatus, deleteMyAccount } from '../controllers/dietitian';
+import { getDietitianProfile, getDietitianById, updateDietitianProfile, changeDietitianPassword, updateOnlineStatus, updateSyncOfflineSlots, deleteMyAccount } from '../controllers/dietitian';
 import { sendRegistrationOtp, verifyRegistrationOtp, createRegistrationOrder, verifyRegistrationPayment, markRegistrationPaymentFailed } from '../controllers/dietitianRegistration';
 import {
   saveDraft,
@@ -54,6 +54,9 @@ dietitianRouter.put('/change-password', authenticate, authorize('dietitian'), ch
 
 // PATCH /api/v1/dietitian/online-status
 dietitianRouter.patch('/online-status', authenticate, authorize('dietitian'), updateOnlineStatus);
+
+// PATCH /api/v1/dietitian/sync-offline-slots
+dietitianRouter.patch('/sync-offline-slots', authenticate, authorize('dietitian'), updateSyncOfflineSlots);
 
 // DELETE /api/v1/dietitian/account
 dietitianRouter.delete('/account', authenticate, authorize('dietitian'), deleteMyAccount);

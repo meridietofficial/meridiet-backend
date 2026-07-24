@@ -23,6 +23,11 @@ import {
   getMedicalAdjustments, createMedicalAdjustment, updateMedicalAdjustment, deleteMedicalAdjustment,
   getGeneralSettings, updateGeneralSetting,
 } from '../controllers/nutritionConfig';
+import { listHealthGoals, createHealthGoal, updateHealthGoal, deleteHealthGoal } from '../controllers/healthGoals';
+import { listCuisinePreferences, createCuisinePreference, updateCuisinePreference, deleteCuisinePreference } from '../controllers/cuisinePreferences';
+import { listFoodAllergies, createFoodAllergy, updateFoodAllergy, deleteFoodAllergy } from '../controllers/foodAllergies';
+import { listMedicalConditions, createMedicalCondition, updateMedicalCondition, deleteMedicalCondition } from '../controllers/medicalConditions';
+import { listMedicines, createMedicine, updateMedicine, deleteMedicine } from '../controllers/medicines';
 
 export const adminRouter = Router();
 
@@ -119,6 +124,36 @@ adminRouter.patch ('/coupons/:id',       authenticate, authorize('admin'), admin
 adminRouter.delete('/coupons/:id',       authenticate, authorize('admin'), adminDeactivateCoupon);
 adminRouter.get   ('/coupons/:id/usages',authenticate, authorize('admin'), adminGetCouponUsages);
 adminRouter.get   ('/coupon-usages',     authenticate, authorize('admin'), adminGetAllCouponUsages);
+
+// ── Medicines management ──────────────────────────────────────────────────────
+adminRouter.get   ('/medicines',     authenticate, authorize('admin'), listMedicines);
+adminRouter.post  ('/medicines',     authenticate, authorize('admin'), createMedicine);
+adminRouter.put   ('/medicines/:id', authenticate, authorize('admin'), updateMedicine);
+adminRouter.delete('/medicines/:id', authenticate, authorize('admin'), deleteMedicine);
+
+// ── Medical Conditions management ────────────────────────────────────────────
+adminRouter.get   ('/medical-conditions',     authenticate, authorize('admin'), listMedicalConditions);
+adminRouter.post  ('/medical-conditions',     authenticate, authorize('admin'), createMedicalCondition);
+adminRouter.put   ('/medical-conditions/:id', authenticate, authorize('admin'), updateMedicalCondition);
+adminRouter.delete('/medical-conditions/:id', authenticate, authorize('admin'), deleteMedicalCondition);
+
+// ── Food Allergies management ─────────────────────────────────────────────────
+adminRouter.get   ('/food-allergies',     authenticate, authorize('admin'), listFoodAllergies);
+adminRouter.post  ('/food-allergies',     authenticate, authorize('admin'), createFoodAllergy);
+adminRouter.put   ('/food-allergies/:id', authenticate, authorize('admin'), updateFoodAllergy);
+adminRouter.delete('/food-allergies/:id', authenticate, authorize('admin'), deleteFoodAllergy);
+
+// ── Cuisine Preferences management ───────────────────────────────────────────
+adminRouter.get   ('/cuisine-preferences',     authenticate, authorize('admin'), listCuisinePreferences);
+adminRouter.post  ('/cuisine-preferences',     authenticate, authorize('admin'), createCuisinePreference);
+adminRouter.put   ('/cuisine-preferences/:id', authenticate, authorize('admin'), updateCuisinePreference);
+adminRouter.delete('/cuisine-preferences/:id', authenticate, authorize('admin'), deleteCuisinePreference);
+
+// ── Health Goals management ───────────────────────────────────────────────────
+adminRouter.get   ('/health-goals',     authenticate, authorize('admin'), listHealthGoals);
+adminRouter.post  ('/health-goals',     authenticate, authorize('admin'), createHealthGoal);
+adminRouter.put   ('/health-goals/:id', authenticate, authorize('admin'), updateHealthGoal);
+adminRouter.delete('/health-goals/:id', authenticate, authorize('admin'), deleteHealthGoal);
 
 // ── Course management ─────────────────────────────────────────────────────────
 adminRouter.get  ('/course/stats',                    authenticate, authorize('admin'), adminCourseStats);

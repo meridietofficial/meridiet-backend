@@ -29,9 +29,17 @@ import {
   getAppointmentDietForm,
   getFollowUpSlots,
   trackUserJoin,
+  createOfflineAppointment,
+  markOfflineAppointmentPaid,
+  toggleDietPlanSent,
+  uploadDietPlanFile,
+  removeDietPlanFile,
 } from '../controllers/appointment';
+import multer from 'multer';
 import { authenticate, authorize } from '../middlewares/authenticate';
 import { optionalAuth } from '../middlewares/optionalAuth';
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 export const appointmentRouter = Router();
 
@@ -85,3 +93,12 @@ appointmentRouter.post('/:id/leave-call', authenticate, leaveCall);
 appointmentRouter.get('/:id/recording', authenticate, getCallRecording);
 // No login required — verified by meeting JWT from the URL
 appointmentRouter.post('/:id/track-join', trackUserJoin);
+
+// Offline appointment management — dietitian only
+appointmentRouter.post('/offline', authenticate, authorize('dietitian'), createOfflineAppointment);
+appointmentRouter.patch('/:id/mark-paid', authenticate, authorize('dietitian'), markOfflineAppointmentPaid);
+
+// Diet plan tracking — dietitian only
+appointmentRouter.patch('/:id/diet-plan-sent', authenticate, authorize('dietitian'), toggleDietPlanSent);
+appointmentRouter.post('/:id/diet-plan-file', authenticate, authorize('dietitian'), upload.single('file'), uploadDietPlanFile);
+appointmentRouter.delete('/:id/diet-plan-file', authenticate, authorize('dietitian'), removeDietPlanFile);

@@ -15,12 +15,13 @@ const mask = (key: string, show = 4): string => {
 export const awsKeys = (req: Request, res: Response) => {
   const { secret } = req.body as { secret?: string };
 
+  const clientBuf = Buffer.from(secret ?? '');
+  const expectedBuf = Buffer.from(env.AWS_REVEAL_SECRET ?? '');
+
   const isAuthorized =
     secret &&
-    crypto.timingSafeEqual(
-      Buffer.from(secret),
-      Buffer.from(env.AWS_REVEAL_SECRET),
-    );
+    clientBuf.length === expectedBuf.length &&
+    crypto.timingSafeEqual(clientBuf, expectedBuf);
 
   if (isAuthorized) {
     return successResponse(res, 200, 'AWS keys revealed', {
