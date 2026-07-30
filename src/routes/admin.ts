@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/authenticate';
-import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDietFormRequests, getDietChartDetails, previewDietPlan, getDashboardStats, getDashboardRevenue, getDashboardUserGrowth, getDashboardConsultations, getSystemOverview, getPaidDietCharts } from '../controllers/admin';
-import { listDietPlansForAdmin, getDietPlanForAdmin, editDietPlan, sendDietPlanToUser } from '../controllers/adminDietPlan';
+import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDietFormRequests, getDietChartDetails, previewDietPlan, getDashboardStats, getDashboardRevenue, getDashboardUserGrowth, getDashboardConsultations, getSystemOverview, getPaidDietCharts, adminRegisterDietitian } from '../controllers/admin';
+import { listDietPlansForAdmin, getDietPlanForAdmin, editDietPlan, sendDietPlanToUser, retryDietPlanGeneration } from '../controllers/adminDietPlan';
 import { adminCreateCoupon, adminListCoupons, adminGetCoupon, adminUpdateCoupon, adminDeactivateCoupon, adminGetCouponUsages, adminGetAllCouponUsages } from '../controllers/coupon';
 import { adminListEnquiries, adminGetEnquiry, adminUpdateEnquiryStatus, adminListEnrollments, adminGetEnrollment, adminCourseStats } from '../controllers/adminCourse';
 import {
@@ -28,6 +28,12 @@ import { listCuisinePreferences, createCuisinePreference, updateCuisinePreferenc
 import { listFoodAllergies, createFoodAllergy, updateFoodAllergy, deleteFoodAllergy } from '../controllers/foodAllergies';
 import { listMedicalConditions, createMedicalCondition, updateMedicalCondition, deleteMedicalCondition } from '../controllers/medicalConditions';
 import { listMedicines, createMedicine, updateMedicine, deleteMedicine } from '../controllers/medicines';
+import { getBroadcastRecipients, sendBroadcastEmail, getBroadcastHistory, getBroadcastDetail } from '../controllers/adminBroadcast';
+import { getAdminEarnings } from '../controllers/adminEarnings';
+import {
+  adminListJobs, adminCreateJob, adminGetJob, adminUpdateJob, adminDeleteJob, adminToggleJob,
+  adminListApplications, adminGetApplication, adminUpdateApplicationStatus,
+} from '../controllers/career';
 
 export const adminRouter = Router();
 
@@ -42,6 +48,7 @@ adminRouter.get('/profile', authenticate, authorize('admin'), getAdminProfile);
 adminRouter.patch('/change-password', authenticate, authorize('admin'), changeAdminPassword);
 
 // Dietitian management — admin only
+adminRouter.post('/dietitians/register', authenticate, authorize('admin'), adminRegisterDietitian);
 adminRouter.get('/dietitian-requests', authenticate, authorize('admin'), getDietitianRequests);
 adminRouter.get('/dietitians', authenticate, authorize('admin'), getDietitianList);
 adminRouter.get('/dietitian/:id', authenticate, authorize('admin'), getDietitianDetails);
@@ -60,6 +67,9 @@ adminRouter.get('/existing-users', authenticate, authorize('admin'), getUserList
 adminRouter.get('/user/:id', authenticate, authorize('admin'), getUserDetails);
 adminRouter.patch('/toggle-block-user', authenticate, authorize('admin'), toggleBlockUser);
 adminRouter.delete('/delete-user', authenticate, authorize('admin'), deleteUser);
+
+// Earnings
+adminRouter.get('/earnings', authenticate, authorize('admin'), getAdminEarnings);
 
 // Dashboard analytics
 adminRouter.get('/dashboard-stats',        authenticate, authorize('admin'), getDashboardStats);
@@ -102,7 +112,8 @@ adminRouter.put('/nutrition/general-settings/:id', authenticate, authorize('admi
 adminRouter.get ('/diet-plans',              authenticate, authorize('admin'), listDietPlansForAdmin);
 adminRouter.get ('/diet-plans/:plan_id',     authenticate, authorize('admin'), getDietPlanForAdmin);
 adminRouter.put ('/diet-plans/:plan_id',     authenticate, authorize('admin'), editDietPlan);
-adminRouter.post('/diet-plans/:plan_id/send', authenticate, authorize('admin'), sendDietPlanToUser);
+adminRouter.post('/diet-plans/:plan_id/send',  authenticate, authorize('admin'), sendDietPlanToUser);
+adminRouter.post('/diet-plans/:plan_id/retry', authenticate, authorize('admin'), retryDietPlanGeneration);
 
 // ── Appointment management ────────────────────────────────────────────────────
 // Static routes must be before /:id to avoid conflict
@@ -154,6 +165,23 @@ adminRouter.get   ('/health-goals',     authenticate, authorize('admin'), listHe
 adminRouter.post  ('/health-goals',     authenticate, authorize('admin'), createHealthGoal);
 adminRouter.put   ('/health-goals/:id', authenticate, authorize('admin'), updateHealthGoal);
 adminRouter.delete('/health-goals/:id', authenticate, authorize('admin'), deleteHealthGoal);
+
+// ── Broadcast / bulk email ────────────────────────────────────────────────────
+adminRouter.get ('/broadcast/recipients',    authenticate, authorize('admin'), getBroadcastRecipients);
+adminRouter.post('/broadcast/send',          authenticate, authorize('admin'), sendBroadcastEmail);
+adminRouter.get ('/broadcast/history',       authenticate, authorize('admin'), getBroadcastHistory);
+adminRouter.get ('/broadcast/history/:id',   authenticate, authorize('admin'), getBroadcastDetail);
+
+// ── Career / Job Postings ─────────────────────────────────────────────────────
+adminRouter.get   ('/career/jobs',                        authenticate, authorize('admin'), adminListJobs);
+adminRouter.post  ('/career/jobs',                        authenticate, authorize('admin'), adminCreateJob);
+adminRouter.get   ('/career/jobs/:id',                    authenticate, authorize('admin'), adminGetJob);
+adminRouter.put   ('/career/jobs/:id',                    authenticate, authorize('admin'), adminUpdateJob);
+adminRouter.delete('/career/jobs/:id',                    authenticate, authorize('admin'), adminDeleteJob);
+adminRouter.patch ('/career/jobs/:id/toggle',             authenticate, authorize('admin'), adminToggleJob);
+adminRouter.get   ('/career/applications',                authenticate, authorize('admin'), adminListApplications);
+adminRouter.get   ('/career/applications/:id',            authenticate, authorize('admin'), adminGetApplication);
+adminRouter.patch ('/career/applications/:id/status',     authenticate, authorize('admin'), adminUpdateApplicationStatus);
 
 // ── Course management ─────────────────────────────────────────────────────────
 adminRouter.get  ('/course/stats',                    authenticate, authorize('admin'), adminCourseStats);

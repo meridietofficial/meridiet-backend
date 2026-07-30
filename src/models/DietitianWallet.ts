@@ -6,7 +6,7 @@ export interface DietitianWalletTransaction {
   id: number;
   dietitian_id: number;
   type: 'credit' | 'debit';
-  source: 'appointment_completion' | 'withdrawal' | 'admin_credit' | 'admin_debit' | 'no_show_compensation' | 'diet_plan_generation' | 'no_show_penalty';
+  source: 'appointment_completion' | 'withdrawal' | 'admin_credit' | 'admin_debit' | 'no_show_compensation' | 'diet_plan_generation' | 'no_show_penalty' | 'recharge';
   gross_amount: number;
   commission: number;
   net_amount: number;
@@ -335,6 +335,70 @@ export const debitDietitianForNoShowPenalty = async (
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'DIETITIAN_NOT_FOUND') {
       return { debited: false, reason: 'dietitian_not_found' };
+    }
+    throw err;
+  }
+};
+
+export type RechargeResult =
+  | { credited: true; transaction: DietitianWalletTransaction; new_balance: number }
+  | { credited: false; reason: 'dietitian_not_found' | 'already_credited' };
+
+export const creditDietitianWalletRecharge = async (
+  dietitianId: number,
+  amount: number,
+  rechargeId: number,
+): Promise<RechargeResult> => {
+  const numAmount = Number(amount); // DECIMAL columns come back as strings from mysql2
+  const refId = `recharge_${rechargeId}`;
+
+  const existing = await query<{ id: number }>(
+    `SELECT id FROM dietitian_wallet_transactions
+     WHERE dietitian_id = ? AND source = 'recharge' AND reference_id = ? LIMIT 1`,
+    [dietitianId, refId],
+  );
+  if (existing.length > 0) return { credited: false, reason: 'already_credited' };
+
+  try {
+    const { transaction, newBalance } = await withTransaction(async (conn) => {
+      const [rows] = await conn.execute<mysql.RowDataPacket[]>(
+        'SELECT id, earnings_balance, wallet_suspended, user_id FROM dietitians WHERE id = ? FOR UPDATE',
+        [dietitianId],
+      );
+      if (!rows[0]) throw new Error('DIETITIAN_NOT_FOUND');
+
+      await conn.execute(
+        'UPDATE dietitians SET earnings_balance = earnings_balance + ? WHERE id = ?',
+        [numAmount, dietitianId],
+      );
+
+      const newBal = Number(rows[0].earnings_balance) + numAmount;
+
+      // Auto-restore suspension if balance goes non-negative
+      if (rows[0].wallet_suspended && newBal >= 0) {
+        await conn.execute('UPDATE dietitians SET wallet_suspended = 0 WHERE id = ?', [dietitianId]);
+        await conn.execute('UPDATE users SET is_active = 1 WHERE id = ?', [rows[0].user_id]);
+      }
+
+      const [insertResult] = await conn.execute<mysql.ResultSetHeader>(
+        `INSERT INTO dietitian_wallet_transactions
+           (dietitian_id, type, source, gross_amount, commission, net_amount,
+            balance_after, description, reference_id, appointment_id, approved_by)
+         VALUES (?, 'credit', 'recharge', ?, 0, ?, ?, ?, ?, NULL, NULL)`,
+        [dietitianId, numAmount, numAmount, newBal, `Wallet recharge — ₹${numAmount}`, refId],
+      );
+
+      const [txRows] = await conn.execute<mysql.RowDataPacket[]>(
+        'SELECT * FROM dietitian_wallet_transactions WHERE id = ? LIMIT 1',
+        [insertResult.insertId],
+      );
+      return { transaction: txRows[0] as DietitianWalletTransaction, newBalance: newBal };
+    });
+
+    return { credited: true, transaction, new_balance: newBalance };
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message === 'DIETITIAN_NOT_FOUND') {
+      return { credited: false, reason: 'dietitian_not_found' };
     }
     throw err;
   }

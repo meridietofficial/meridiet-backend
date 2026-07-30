@@ -12,7 +12,7 @@ import {
 } from '../models/DietPlan';
 import type { WeekPlan, FeaturedRecipe } from '../models/DietPlan';
 import { getSetting } from '../models/Setting';
-import { findPaidPaymentByDietFormId, incrementMonthsGenerated } from '../models/Payment';
+import { findPaidPaymentByDietFormId, claimFirstGeneration } from '../models/Payment';
 import { creditWallet } from '../models/Wallet';
 import { sendEmail } from './email';
 import { dietPlanReadyEmail } from './emails/dietPlanReady';
@@ -30,7 +30,9 @@ const calcVitals = (form: DietForm, config: NutritionConfig) => {
   let heightCm = parseFloat(String(form.height ?? 0));
   if (form.height_unit === 'ft_in') {
     const parts = String(form.height ?? '0').split('.');
-    heightCm = parseInt(parts[0] ?? '0') * 30.48 + parseInt(parts[1] ?? '0') * 2.54;
+    const feet   = parseInt(parts[0] ?? '0') || 0;
+    const inches = parseInt(parts[1] ?? '0') || 0;  // parseInt(undefined) = NaN → 0
+    heightCm = feet * 30.48 + inches * 2.54;
   }
   let weightKg = parseFloat(String(form.weight ?? 0));
   if (form.weight_unit === 'lbs') weightKg *= 0.453592;
@@ -395,11 +397,11 @@ Avoid all dairy: no paneer, no curd, no milk, no ghee in meals.
   const lunchDistLine = hasUricAcid
     ? '100–150g paneer sabzi OR moong dal/toor dal (1.5 cups) PLUS another dal — NO rajma or chole (high-purine) — paneer MUST appear at lunch or dinner'
     : '100–150g paneer sabzi OR rajma/chole (1.5 cups) PLUS dal — paneer MUST appear at lunch or dinner, not skipped';
-  // Snack + dinner curd: 150g for poor digestion (consistent with curdAnchor above)
   const snackYogurt = hasPoorDigestion ? '150g curd (room temperature)' : '1 cup Greek yogurt (200g)';
+  // Dinner: rotate the side — curd only 2–3 nights per week, not every night
   const dinnerCurd  = hasPoorDigestion
-    ? '100g+ paneer OR 1.5 cups dal + 150g curd (soft, room temperature — not cold)'
-    : '100g+ paneer OR 1.5 cups dal + 200g curd';
+    ? '100g+ paneer OR 1.5 cups dal + a light side (rotate: 150g curd on 2–3 nights, raita or light sabzi on others — not curd every night)'
+    : '100g+ paneer OR 1.5 cups dal + a varied side (rotate across nights: 200g curd, raita, sabzi, or salad — do NOT use curd every single dinner)';
 
   // Uric acid: rajma, chole, masoor dal are high-purine — substitute with moong/toor
   const legumeAnchor = hasUricAcid
@@ -408,10 +410,10 @@ Avoid all dairy: no paneer, no curd, no milk, no ghee in meals.
       ? '2. Moong Dal (soft-cooked): minimum 2 cups cooked (~14g protein) — prefer soft moong over rajma or chole which are heavier to digest'
       : '2. Dal / Rajma / Chole / Moong: minimum 1.5 cups cooked (~15–18g protein)';
 
-  // Poor digestion: avoid curd in large amounts (can cause bloating); prefer smaller portions of soft curd
+  // Poor digestion: avoid curd in large amounts; prefer smaller portions of soft curd spread across meals (NOT as a mandatory dinner side)
   const curdAnchor = hasPoorDigestion
-    ? '3. Curd (soft, room temperature): 150g (~5–7g protein) — do NOT serve cold curd; small portions are easier to digest'
-    : '3. Curd or Greek Yogurt: minimum 200g (~7–11g protein)';
+    ? '3. Curd (soft, room temperature): 150g total across all meals (~5–7g protein) — include as breakfast side or mid-meal, NOT as the default dinner side every night; small portions are easier to digest'
+    : '3. Curd or Greek Yogurt: minimum 200g total across all meals (~7–11g protein) — can be included at breakfast (curd with oats/paratha), or as a snack, or as raita at lunch — do NOT force it into dinner every single night';
 
   return `
 VEGETARIAN HIGH-PROTEIN REQUIREMENT (MANDATORY — to hit ${nt.proteinTarget}g protein/day):
@@ -1256,9 +1258,9 @@ CRITICAL RULES:
 - CALORIE DISTRIBUTION PER MEAL — each slot must hit these kcal targets so the day total reaches ${nt.calorieMin}–${nt.calorieMax} kcal:
   • Breakfast: ${Math.round(nt.calorieTarget * 0.25)}–${Math.round(nt.calorieTarget * 0.27)} kcal — include a base item (oats/paratha/chilla/idli: 300–450 kcal) + protein source (paneer/tofu/curd: 120–260 kcal) + healthy fat (nuts/ghee: 100–175 kcal)
   • Lunch: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — include protein dish 150–200g (300–400 kcal) + legume/dal 1.5–2 cups (200–300 kcal) + 2–3 roti OR 1 cup rice (180–280 kcal)
-  • Snack: ${Math.round(nt.calorieTarget * 0.11)}–${Math.round(nt.calorieTarget * 0.13)} kcal — e.g. 50g nuts/chana (200 kcal) + 200g curd/yogurt (120 kcal), or fruit + peanut butter (220 kcal)
-  • Dinner: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — include protein dish 150g (280–400 kcal) + dal 1.5 cups (150–200 kcal) + 2 roti/1 cup rice (180–240 kcal) + curd 200ml (120 kcal)
-  If any meal falls below its target, ADD more food (extra roti, extra dal, 1 tsp ghee, 30g nuts, extra curd) — do NOT reduce another meal to compensate.
+  • Snack: ${Math.round(nt.calorieTarget * 0.11)}–${Math.round(nt.calorieTarget * 0.13)} kcal — e.g. 50g nuts/chana (200 kcal) + chaas/raita/a piece of fruit (80–120 kcal), or fruit + peanut butter (220 kcal); rotate snack items across days — do NOT default to curd/yogurt every single day
+  • Dinner: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — include protein dish 150g (280–400 kcal) + dal 1.5 cups (150–200 kcal) + 2 roti/1 cup rice (180–240 kcal) + one varied side (rotate across nights: raita 100g, sabzi, salad, soup, or curd — do NOT use curd every night)
+  If any meal falls below its target, ADD more food (extra roti, extra dal, 1 tsp ghee, 30g nuts, or a small sabzi) — do NOT reduce another meal to compensate.
 - Set "total_protein_g" as the actual SUM of all protein_g values across breakfast + lunch + snack + dinner. Do NOT just echo the target.
 - Keep total_protein_g between ${nt.proteinMin}–${nt.proteinMax} g/day.
 - Include water_liters (2.5–3.5) for each day.
@@ -1317,7 +1319,7 @@ CALORIE & MACRO TARGETS (calculated from client's TDEE of ${vitals.tdee} kcal/da
 - Daily Fiber Target: ~${nt.fiberTarget} g/day (from dal, sabzi, whole grains, fruits)
 ${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${digestiveHealthBlock(form)}${smokeAlcoholBlock(form)}${genderNutritionBlock(form, nt)}${medicationTimingBlock(form)}${cuisineEnforcementBlock(form)}${vegetarianProteinBoostBlock(form, nt)}${wheyProteinBlock(form, nt)}
 MEALS ALREADY USED IN PREVIOUS WEEKS — do NOT repeat any of these:
-${usedMeals.slice(0, 150).join(', ')}
+${usedMeals.slice(0, 400).join(', ')}
 
 INSTRUCTIONS:
 1. All meals must respect the diet type and strictly avoid disliked foods and allergens.
@@ -1332,9 +1334,9 @@ INSTRUCTIONS:
 9a. CALORIE DISTRIBUTION PER MEAL — each slot must hit these kcal targets so the day total reaches ${nt.calorieMin}–${nt.calorieMax} kcal:
   • Breakfast: ${Math.round(nt.calorieTarget * 0.25)}–${Math.round(nt.calorieTarget * 0.27)} kcal — include a base item (oats/paratha/chilla/idli: 300–450 kcal) + protein source (paneer/tofu/curd: 120–260 kcal) + healthy fat (nuts/ghee: 100–175 kcal)
   • Lunch: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — include protein dish 150–200g (300–400 kcal) + legume/dal 1.5–2 cups (200–300 kcal) + 2–3 roti OR 1 cup rice (180–280 kcal)
-  • Snack: ${Math.round(nt.calorieTarget * 0.11)}–${Math.round(nt.calorieTarget * 0.13)} kcal — e.g. 50g nuts/chana (200 kcal) + 200g curd/yogurt (120 kcal), or fruit + peanut butter (220 kcal)
-  • Dinner: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — include protein dish 150g (280–400 kcal) + dal 1.5 cups (150–200 kcal) + 2 roti/1 cup rice (180–240 kcal) + curd 200ml (120 kcal)
-  If any meal falls below its target, ADD more food (extra roti, extra dal, 1 tsp ghee, 30g nuts, extra curd) — do NOT reduce another meal to compensate.
+  • Snack: ${Math.round(nt.calorieTarget * 0.11)}–${Math.round(nt.calorieTarget * 0.13)} kcal — e.g. 50g nuts/chana (200 kcal) + chaas/raita/a piece of fruit (80–120 kcal), or fruit + peanut butter (220 kcal); rotate snack items across days — do NOT default to curd/yogurt every single day
+  • Dinner: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — include protein dish 150g (280–400 kcal) + dal 1.5 cups (150–200 kcal) + 2 roti/1 cup rice (180–240 kcal) + one varied side (rotate across nights: raita 100g, sabzi, salad, soup, or curd — do NOT use curd every night)
+  If any meal falls below its target, ADD more food (extra roti, extra dal, 1 tsp ghee, 30g nuts, or a small sabzi) — do NOT reduce another meal to compensate.
 10. Set "total_protein_g" as the actual SUM of all protein_g values across all meals. Do NOT just echo the target.
 11. Keep total_protein_g between ${nt.proteinMin}–${nt.proteinMax} g/day.
 12. Include water_liters (2.5–3.5) for each day.
@@ -1756,13 +1758,17 @@ export const generateAndDeliverDietPlan = async (
         const ref = String(payment.razorpay_payment_id ?? payment.razorpay_order_id);
 
         if (payment.plan === '3_months' && payment.months_generated === 0) {
+          // Atomically claim the first-generation slot — only one concurrent caller wins.
+          // If another call already claimed it, claimFirstGeneration returns false and we skip.
+          const claimed = await claimFirstGeneration(payment.id);
+          if (claimed) {
           // Transaction 1: cashback on full purchase amount
           if (cashbackEnabled && cashbackPercent > 0) {
             const cashbackAmount = parseFloat(((payment.amount * cashbackPercent) / 100).toFixed(2));
             await creditWallet({
               user_id: userId, source: 'reward', amount: cashbackAmount,
               description: `${cashbackPercent}% cashback from Diet Chart Generation`,
-              reference_id: ref,
+              reference_id: `${ref}_cashback`,
             });
           }
 
@@ -1772,11 +1778,10 @@ export const generateAndDeliverDietPlan = async (
             await creditWallet({
               user_id: userId, source: 'subscription', amount: subscriptionCredit,
               description: `Amount to generate 2nd and 3rd month diet plan`,
-              reference_id: ref,
+              reference_id: `${ref}_subscription`,
             });
           }
-
-          await incrementMonthsGenerated(payment.id);
+          }
         } else if (payment.plan !== '3_months') {
           // Regular cashback for 1-week / 1-month plans
           if (cashbackEnabled && cashbackPercent > 0) {

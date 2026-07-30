@@ -364,6 +364,7 @@ export const listPublicDietitians = async (filters: DietitianListFilters) => {
   const conditions: string[] = [
     'd.is_verified = 1',
     'u.is_active = 1',
+    'd.is_online = 1',
     'd.appointment_fee > 0',
     'd.availability IS NOT NULL AND JSON_LENGTH(d.availability) > 0',
   ];

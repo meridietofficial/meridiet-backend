@@ -7,7 +7,8 @@ import {
   markDietPlanSent,
 } from '../models/DietPlan';
 import { findDietFormById } from '../models/DietForm';
-import { deliverDietPlanToUser } from '../services/dietPlanDelivery';
+import { findPaidPaymentByDietFormId } from '../models/Payment';
+import { deliverDietPlanToUser, generateAndDeliverDietPlan } from '../services/dietPlanDelivery';
 import { successResponse, errorResponse } from '../utils/response';
 
 // GET /api/v1/admin/diet-plans
@@ -173,6 +174,42 @@ export const sendDietPlanToUser = async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('Admin send diet plan error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// POST /api/v1/admin/diet-plans/:plan_id/retry
+// Re-triggers AI generation for a failed plan. Kicks off in the background and returns immediately.
+// Only works when status = 'failed'. The plan record is reused (not duplicated).
+export const retryDietPlanGeneration = async (req: Request, res: Response) => {
+  try {
+    const planId = Number(req.params.plan_id);
+    if (isNaN(planId)) return errorResponse(res, 400, 'Invalid plan_id');
+
+    const plan = await findDietPlanById(planId);
+    if (!plan) return errorResponse(res, 404, 'Diet plan not found');
+
+    if (plan.dietitian_id !== null) {
+      return errorResponse(res, 403, 'This plan belongs to the dietitian appointment flow');
+    }
+    if (plan.status !== 'failed') {
+      return errorResponse(res, 400, `Plan cannot be retried in status "${plan.status}". Only failed plans can be retried.`);
+    }
+
+    // Determine weeks: 3-month subscriptions generate 4 weeks per run
+    const payment = await findPaidPaymentByDietFormId(plan.form_id);
+    const weeksOverride = payment?.plan === '3_months' ? 4 : undefined;
+
+    void generateAndDeliverDietPlan(plan.form_id, plan.user_id, weeksOverride, null, null, planId).catch((err) => {
+      console.error(`[retry] Diet plan generation failed for plan ${planId}:`, err);
+    });
+
+    return successResponse(res, 202, 'Diet plan generation started. Check back shortly — it will appear as completed when ready.', {
+      plan_id: planId,
+      form_id: plan.form_id,
+    });
+  } catch (err) {
+    console.error('Admin retry diet plan error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

@@ -32,6 +32,11 @@ import {
   requestWithdrawalHandler,
   listWithdrawalsHandler,
 } from '../controllers/withdrawal';
+import {
+  createWalletRechargeOrder,
+  verifyWalletRechargePayment,
+  markWalletRechargeFailed,
+} from '../controllers/dietitianWalletRecharge';
 import { authenticate, authorize } from '../middlewares/authenticate';
 
 export const dietitianRouter = Router();
@@ -129,6 +134,17 @@ dietitianRouter.patch('/accounts/:id/set-primary', authenticate, authorize('diet
 
 // DELETE /api/v1/dietitian/accounts/:id
 dietitianRouter.delete('/accounts/:id', authenticate, authorize('dietitian'), deleteAccountHandler);
+
+// ── Wallet Recharge (dietitian only) ──────────────────────────────────────────
+
+// POST /api/v1/dietitian/wallet/recharge/create-order
+dietitianRouter.post('/wallet/recharge/create-order', authenticate, authorize('dietitian'), createWalletRechargeOrder);
+
+// POST /api/v1/dietitian/wallet/recharge/verify-payment
+dietitianRouter.post('/wallet/recharge/verify-payment', authenticate, authorize('dietitian'), verifyWalletRechargePayment);
+
+// POST /api/v1/dietitian/wallet/recharge/failed
+dietitianRouter.post('/wallet/recharge/failed', authenticate, authorize('dietitian'), markWalletRechargeFailed);
 
 // ── Withdrawals (dietitian only) ──────────────────────────────────────────────
 

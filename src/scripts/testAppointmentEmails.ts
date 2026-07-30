@@ -6,14 +6,14 @@ import { appointmentNewBookingEmail } from '../services/emails/appointmentNewBoo
 const TEST_TO = 'manish@yopmail.com';
 
 const SAMPLE = {
-  userName:        'Manish Kumar',
-  dietitianName:   'Kajal Panday',
+  userName: 'Manish Kumar',
+  dietitianName: 'Kajal Panday',
   appointmentDate: '2026-07-10',
-  slot:            '10:00',
-  sessionType:     'video_call' as const,
-  fee:             500,
-  currency:        'INR',
-  patientNotes:    'I want to lose weight and improve my overall diet.',
+  slot: '10:00',
+  sessionType: 'video_call' as const,
+  fee: 500,
+  currency: 'INR',
+  patientNotes: 'I want to lose weight and improve my overall diet.',
 };
 
 const run = async () => {
@@ -21,14 +21,14 @@ const run = async () => {
 
   // ── 1. User confirmation email ───────────────────────────────────────────────
   const userMail = appointmentConfirmationEmail({
-    userName:        SAMPLE.userName,
-    dietitianName:   SAMPLE.dietitianName,
+    userName: SAMPLE.userName,
+    dietitianName: SAMPLE.dietitianName,
     appointmentDate: SAMPLE.appointmentDate,
-    slot:            SAMPLE.slot,
-    sessionType:     SAMPLE.sessionType,
-    fee:             SAMPLE.fee,
-    currency:        SAMPLE.currency,
-    joinUrl:         'https://app.meridiet.com/meet/42?t=sample_token_for_testing',
+    slot: SAMPLE.slot,
+    sessionType: SAMPLE.sessionType,
+    fee: SAMPLE.fee,
+    currency: SAMPLE.currency,
+    joinUrl: 'https://app.meridiet.com/meet/42?t=sample_token_for_testing',
   });
 
   await sendEmail({ to: TEST_TO, subject: userMail.subject, html: userMail.html, text: userMail.text });
@@ -37,12 +37,12 @@ const run = async () => {
 
   // ── 2. Dietitian new booking email ───────────────────────────────────────────
   const dietMail = appointmentNewBookingEmail({
-    dietitianName:   SAMPLE.dietitianName,
-    patientName:     SAMPLE.userName,
+    dietitianName: SAMPLE.dietitianName,
+    patientName: SAMPLE.userName,
     appointmentDate: SAMPLE.appointmentDate,
-    slot:            SAMPLE.slot,
-    sessionType:     SAMPLE.sessionType,
-    notes:           SAMPLE.patientNotes,
+    slot: SAMPLE.slot,
+    sessionType: SAMPLE.sessionType,
+    notes: SAMPLE.patientNotes,
   });
 
   await sendEmail({ to: TEST_TO, subject: dietMail.subject, html: dietMail.html, text: dietMail.text });

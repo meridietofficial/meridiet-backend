@@ -100,3 +100,14 @@ export const incrementMonthsGenerated = async (payment_id: number) => {
     [payment_id],
   );
 };
+
+// Atomically claim the first-generation slot for a 3-month plan.
+// Returns true only if this caller was the first to claim it (affectedRows = 1).
+// Prevents double-crediting the wallet when two concurrent generation calls race.
+export const claimFirstGeneration = async (payment_id: number): Promise<boolean> => {
+  const result = await execute(
+    'UPDATE payments SET months_generated = 1 WHERE id = ? AND months_generated = 0',
+    [payment_id],
+  );
+  return result.affectedRows === 1;
+};

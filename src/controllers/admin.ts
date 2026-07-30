@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
-import { findUserByEmail, findUserById, checkPassword, updateUser, softDeleteUser, updateUserPassword, getUsersPaginated } from '../models/User';
-import { getDietitiansPaginated, findDietitianById, verifyDietitian, formatDietitianRow } from '../models/Dietitian';
+import { findUserByEmail, findUserByPhoneNumber, findUserById, checkPassword, updateUser, softDeleteUser, updateUserPassword, getUsersPaginated, createUser } from '../models/User';
+import { getDietitiansPaginated, findDietitianById, verifyDietitian, formatDietitianRow, findDietitianByRegistrationNumber, createDietitian } from '../models/Dietitian';
 import { query } from '../config/database';
 import { findDietFormById, type DietForm } from '../models/DietForm';
 import { findDietPlanByFormId } from '../models/DietPlan';
@@ -9,6 +9,7 @@ import { env } from '../config/env';
 import { successResponse, errorResponse } from '../utils/response';
 import { sendEmail } from '../services/email';
 import { dietitianApprovedEmail } from '../services/emails/dietitianApproved';
+import { dietitianWelcomeEmail } from '../services/emails/dietitianWelcome';
 
 const generateAccessToken = (userId: number, email: string | null, role: string, tokenVersion: number) => {
   return jwt.sign(
@@ -1101,6 +1102,139 @@ export const getSystemOverview = async (_req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('System overview error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// POST /api/v1/admin/dietitians/register
+export const adminRegisterDietitian = async (req: Request, res: Response) => {
+  try {
+    const {
+      fullName, email, phone, password, state, city, experience,
+      registrationNumber, specialization, dateOfBirth, gender, bio,
+      languages, services, degrees, awards, availability, documents,
+    } = req.body as {
+      fullName?: string; email?: string; phone?: string; password?: string;
+      state?: string; city?: string; experience?: string;
+      registrationNumber?: string;
+      specialization?: string[];
+      dateOfBirth?: string; gender?: string; bio?: string;
+      languages?: string[]; services?: string[];
+      degrees?: { degree: string; institute: string; year: string | null }[];
+      awards?: { title: string; organization: string; year: string | null }[];
+      availability?: Record<string, string[]>;
+      documents?: {
+        profilePhoto?: string; degreeCertificate?: string;
+        registrationCertificate?: string; idProof?: string; experienceCertificate?: string;
+      };
+    };
+
+    if (!fullName?.trim())    return errorResponse(res, 400, 'fullName is required');
+    if (!email?.trim())       return errorResponse(res, 400, 'email is required');
+    if (!phone?.trim())       return errorResponse(res, 400, 'phone is required');
+    if (!password?.trim())    return errorResponse(res, 400, 'password is required');
+    if (password.length < 6)  return errorResponse(res, 400, 'password must be at least 6 characters');
+    if (!state?.trim())       return errorResponse(res, 400, 'state is required');
+    if (!city?.trim())        return errorResponse(res, 400, 'city is required');
+    if (!experience?.trim())  return errorResponse(res, 400, 'experience is required');
+
+    const normalizedPhone = phone.replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    if (normalizedPhone.length !== 10) return errorResponse(res, 400, 'Enter a valid 10-digit Indian mobile number');
+
+    const existingEmail = await findUserByEmail(email.trim());
+    if (existingEmail) return errorResponse(res, 409, 'Email is already registered');
+
+    const existingPhone = await findUserByPhoneNumber(normalizedPhone);
+    if (existingPhone) return errorResponse(res, 409, 'Phone number is already registered');
+
+    const regNumber = (!registrationNumber || registrationNumber.trim().toUpperCase() === 'N/A')
+      ? null
+      : registrationNumber.trim();
+
+    if (regNumber) {
+      const existingReg = await findDietitianByRegistrationNumber(regNumber);
+      if (existingReg) return errorResponse(res, 409, 'Registration number is already used');
+    }
+
+    const nullIfEmpty = (val: string | null | undefined): string | null =>
+      val && val.trim() !== '' ? val.trim() : null;
+
+    const user = await createUser({
+      full_name:    fullName.trim(),
+      email:        email.trim().toLowerCase(),
+      password:     password,
+      phone_code:   '+91',
+      phone_number: normalizedPhone,
+      role:         'dietitian',
+    });
+    if (!user) return errorResponse(res, 500, 'Failed to create user account');
+
+    const cleanedDegrees = degrees
+      ?.map((d) => ({ ...d, institute: nullIfEmpty(d.institute) ?? '', year: nullIfEmpty(d.year) }))
+      ?? null;
+
+    const cleanedAwards = awards
+      ?.map((a) => ({ ...a, organization: nullIfEmpty(a.organization) ?? '', year: nullIfEmpty(a.year) }))
+      ?? null;
+
+    const dietitian = await createDietitian({
+      user_id:                  user.id,
+      state:                    state.trim(),
+      city:                     city.trim(),
+      registration_number:      regNumber,
+      experience:               experience.trim(),
+      specialization:           specialization ?? [],
+      date_of_birth:            nullIfEmpty(dateOfBirth),
+      gender:                   nullIfEmpty(gender),
+      bio:                      nullIfEmpty(bio),
+      languages:                languages ?? null,
+      services:                 services ?? null,
+      degrees:                  cleanedDegrees,
+      awards:                   cleanedAwards,
+      availability:             availability ?? null,
+      profile_photo:            nullIfEmpty(documents?.profilePhoto),
+      degree_certificate:       nullIfEmpty(documents?.degreeCertificate),
+      registration_certificate: nullIfEmpty(documents?.registrationCertificate),
+      id_proof:                 nullIfEmpty(documents?.idProof),
+      experience_certificate:   nullIfEmpty(documents?.experienceCertificate),
+    });
+    if (!dietitian) return errorResponse(res, 500, 'Failed to create dietitian profile');
+
+    if (user.email) {
+      const { subject, html, text } = dietitianWelcomeEmail(user.full_name ?? fullName);
+      void sendEmail({ to: user.email, subject, html, text }).catch((err) => {
+        console.error('Admin register dietitian welcome email failed:', err);
+      });
+    }
+
+    return successResponse(res, 201, 'Dietitian registered successfully', {
+      user: {
+        id:           user.id,
+        full_name:    user.full_name,
+        email:        user.email,
+        phone_number: user.phone_number,
+        role:         user.role,
+      },
+      dietitian: {
+        id:                  dietitian.id,
+        state:               dietitian.state,
+        city:                dietitian.city,
+        registration_number: dietitian.registration_number,
+        experience:          dietitian.experience,
+        specialization:      dietitian.specialization,
+        degrees:             dietitian.degrees,
+        is_verified:         dietitian.is_verified,
+        documents: {
+          profile_photo:            dietitian.profile_photo,
+          degree_certificate:       dietitian.degree_certificate,
+          registration_certificate: dietitian.registration_certificate,
+          id_proof:                 dietitian.id_proof,
+          experience_certificate:   dietitian.experience_certificate,
+        },
+      },
+    });
+  } catch (err) {
+    console.error('adminRegisterDietitian error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };
