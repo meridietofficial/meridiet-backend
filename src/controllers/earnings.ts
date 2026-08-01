@@ -107,16 +107,19 @@ export const getWalletOverviewHandler = async (req: Request, res: Response) => {
   }
 };
 
-// GET /api/v1/dietitian/earnings/wallet-transactions?page=1&limit=10
+// GET /api/v1/dietitian/earnings/wallet-transactions?page=1&limit=10&wallet=earnings|plan
 export const getWalletTransactionsHandler = async (req: Request, res: Response) => {
   try {
-    const page  = Math.max(Number(req.query.page)  || 1, 1);
-    const limit = Math.min(Number(req.query.limit) || 10, 50);
+    const page   = Math.max(Number(req.query.page)  || 1, 1);
+    const limit  = Math.min(Number(req.query.limit) || 10, 50);
+    const wallet = req.query.wallet === 'earnings' || req.query.wallet === 'plan'
+      ? req.query.wallet as 'earnings' | 'plan'
+      : undefined;
 
     const dietitianId = await resolveDietitianId(req, res);
     if (!dietitianId) return;
 
-    const result = await getDietitianWalletTransactions(dietitianId, page, limit);
+    const result = await getDietitianWalletTransactions(dietitianId, page, limit, wallet);
 
     return successResponse(res, 200, 'Wallet transactions fetched', result, {
       page,

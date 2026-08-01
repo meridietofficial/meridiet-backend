@@ -101,6 +101,13 @@ const envSchema = z.object({
   // Admin notification email — receives course enquiry and enrollment alerts
   ADMIN_EMAIL: z.string().email().default('meridietofficial@gmail.com'),
 
+  // GST Invoice — company registration details
+  COMPANY_GSTIN: z.string().default('27AABCM1234A1Z5'),
+  COMPANY_PAN:   z.string().default('AABCM1234A'),
+
+  // Razorpay GST tax ID — copy from Razorpay Dashboard → Settings → Tax
+  RAZORPAY_GST_TAX_ID: z.string().default(''),
+
   // Agora — 1-to-1 video calls with cloud recording
   AGORA_APP_ID: z.string().default(''),
   AGORA_APP_CERTIFICATE: z.string().default(''),

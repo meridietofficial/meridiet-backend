@@ -29,7 +29,7 @@ import { listFoodAllergies, createFoodAllergy, updateFoodAllergy, deleteFoodAlle
 import { listMedicalConditions, createMedicalCondition, updateMedicalCondition, deleteMedicalCondition } from '../controllers/medicalConditions';
 import { listMedicines, createMedicine, updateMedicine, deleteMedicine } from '../controllers/medicines';
 import { getBroadcastRecipients, sendBroadcastEmail, getBroadcastHistory, getBroadcastDetail } from '../controllers/adminBroadcast';
-import { getAdminEarnings } from '../controllers/adminEarnings';
+import { getAdminEarnings, adminCreditPlanCreditsHandler, adminCreditEarningsHandler } from '../controllers/adminEarnings';
 import {
   adminListJobs, adminCreateJob, adminGetJob, adminUpdateJob, adminDeleteJob, adminToggleJob,
   adminListApplications, adminGetApplication, adminUpdateApplicationStatus,
@@ -70,6 +70,12 @@ adminRouter.delete('/delete-user', authenticate, authorize('admin'), deleteUser)
 
 // Earnings
 adminRouter.get('/earnings', authenticate, authorize('admin'), getAdminEarnings);
+
+// Plan credits — credit a dietitian's plan wallet
+adminRouter.post('/dietitians/:id/plan-credits', authenticate, authorize('admin'), adminCreditPlanCreditsHandler);
+
+// Earnings credit — credit a dietitian's earnings wallet
+adminRouter.post('/dietitians/:id/earnings-credit', authenticate, authorize('admin'), adminCreditEarningsHandler);
 
 // Dashboard analytics
 adminRouter.get('/dashboard-stats',        authenticate, authorize('admin'), getDashboardStats);

@@ -16,7 +16,7 @@ import {
 } from '../models/DietPlan';
 import type { WeekPlan, FeaturedRecipe } from '../models/DietPlan';
 import { generateAndDeliverDietPlan, deliverDietPlanToUser } from '../services/dietPlanDelivery';
-import { debitDietitianForDietPlanGeneration, MANUAL_PLAN_COST } from '../models/DietitianWallet';
+import { debitDietitianForDietPlanGeneration, PLAN_COST_1_WEEK, PLAN_COST_1_MONTH } from '../models/DietitianWallet';
 import { successResponse, errorResponse } from '../utils/response';
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -121,12 +121,15 @@ export const saveManualDraft = async (req: Request, res: Response) => {
     const plan = await createManualDraftDietPlan(form.id, dietitian.id);
     if (!plan) return errorResponse(res, 500, 'Failed to create draft plan');
 
+    const resolvedPlanType = Number(formFields.plan_type) === 1 ? 1 : 2;
+    const planCost = resolvedPlanType === 1 ? PLAN_COST_1_WEEK : PLAN_COST_1_MONTH;
+
     return successResponse(res, 201, 'Manual draft created successfully', {
       plan_id: plan.id,
       form_id: form.id,
       status:  plan.status,
-      cost:    MANUAL_PLAN_COST,
-      note:    `₹${MANUAL_PLAN_COST} will be deducted from your wallet when you generate the plan`,
+      cost:    planCost,
+      note:    `₹${planCost} will be deducted from your wallet when you generate the plan`,
     });
   } catch (err) {
     console.error('Save manual draft error:', err);
@@ -186,19 +189,31 @@ export const generateFromDraft = async (req: Request, res: Response) => {
       return errorResponse(res, 400, 'Plan must be in draft status to generate');
     }
 
-    // Manual plans (no appointment) cost ₹100 from the dietitian's wallet
+    // Manual plans (no appointment) cost ₹50 (1-week) or ₹100 (1-month) from the dietitian's wallet
     const isManualPlan = plan.appointment_id === null && plan.user_id === null;
+    let deductedFrom: 'plan_credits' | 'earnings' | null = null;
+    let deductedAmount: number | null = null;
+
     if (isManualPlan) {
-      const debit = await debitDietitianForDietPlanGeneration(dietitian.id, plan.id);
+      const form = await findDietFormById(plan.form_id);
+      if (!form) return errorResponse(res, 404, 'Diet form associated with this plan not found');
+      if (form.plan_type !== 1 && form.plan_type !== 2) {
+        return errorResponse(res, 400, 'Plan type is not set. Please update the diet form with a valid plan type before generating.');
+      }
+      const planCost = form.plan_type === 1 ? PLAN_COST_1_WEEK : PLAN_COST_1_MONTH;
+      const debit = await debitDietitianForDietPlanGeneration(dietitian.id, plan.id, planCost);
       if (!debit.debited) {
         if (debit.reason === 'insufficient_balance') {
-          return errorResponse(res, 402, `Insufficient wallet balance. You need at least ₹${MANUAL_PLAN_COST} to generate a manual diet plan.`);
+          return errorResponse(res, 402, `Insufficient balance. You need at least ₹${planCost} in your plan credits or earnings wallet to generate this diet plan.`);
         }
         if (debit.reason === 'already_charged') {
           // Already paid — safe to continue (retry after a failed generation)
         } else {
           return errorResponse(res, 500, 'Failed to process wallet deduction');
         }
+      } else {
+        deductedFrom   = debit.deducted_from;
+        deductedAmount = planCost;
       }
     }
 
@@ -212,7 +227,10 @@ export const generateFromDraft = async (req: Request, res: Response) => {
       plan.id,
     ).catch((err) => console.error('[dietitian generate] pipeline error:', err));
 
-    return successResponse(res, 202, 'Generation started. Poll GET /diet-forms/:id until status changes to completed or failed.');
+    return successResponse(res, 202, 'Generation started. Poll GET /diet-forms/:id until status changes to completed or failed.', {
+      deducted_from:   deductedFrom,
+      deducted_amount: deductedAmount,
+    });
   } catch (err) {
     console.error('Generate from draft error:', err);
     return errorResponse(res, 500, 'Something went wrong');

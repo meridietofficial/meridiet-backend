@@ -308,6 +308,7 @@ export const getPayoutInfo = async (
 
 export interface WalletOverview {
   available_balance: number;
+  plan_credits: number;
   platform_commission_pct: number;
   // Confirmed upcoming sessions net amount — will be credited once completed
   pending_payout: number;
@@ -329,9 +330,9 @@ export const getWalletOverview = async (dietitianId: number): Promise<WalletOver
     lastMonthRows,
     withdrawnRows,
   ] = await Promise.all([
-    // Actual wallet balance
-    query<{ earnings_balance: number }>(
-      `SELECT earnings_balance FROM dietitians WHERE id = ? LIMIT 1`,
+    // Both wallet balances
+    query<{ earnings_balance: number; plan_credits: number }>(
+      `SELECT earnings_balance, plan_credits FROM dietitians WHERE id = ? LIMIT 1`,
       [dietitianId],
     ),
     // Pending payout = confirmed + paid appointments net (not yet completed)
@@ -377,6 +378,7 @@ export const getWalletOverview = async (dietitianId: number): Promise<WalletOver
   ]);
 
   const availableBalance  = Number(balanceRows[0]?.earnings_balance  ?? 0);
+  const planCredits       = Number(balanceRows[0]?.plan_credits       ?? 0);
   const pendingGross      = Number(pendingRows[0]?.gross             ?? 0);
   const thisMonthGross    = Number(thisMonthRows[0]?.gross           ?? 0);
   const lastMonthGross    = Number(lastMonthRows[0]?.gross           ?? 0);
@@ -392,6 +394,7 @@ export const getWalletOverview = async (dietitianId: number): Promise<WalletOver
 
   return {
     available_balance:            availableBalance,
+    plan_credits:                 planCredits,
     platform_commission_pct:      commPct,
     pending_payout:               pendingNet,
     earned_this_month:            thisMonthNet,

@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { query } from '../config/database';
 import { getSetting } from '../models/Setting';
+import { adminCreditEarningsWallet, adminCreditPlanCredits } from '../models/DietitianWallet';
 import { successResponse, errorResponse } from '../utils/response';
 
 type EarningMode = 'diet_plans' | 'appointments' | 'registrations' | 'courses';
@@ -370,6 +371,99 @@ export const getAdminEarnings = async (req: Request, res: Response) => {
     return successResponse(res, 200, 'Earnings fetched successfully', { mode, ...data });
   } catch (err) {
     console.error('Admin earnings error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// POST /api/v1/admin/dietitians/:id/plan-credits
+// Body: { amount: number, description?: string }
+export const adminCreditPlanCreditsHandler = async (req: Request, res: Response) => {
+  try {
+    const dietitianId = Number(req.params.id);
+    if (isNaN(dietitianId)) return errorResponse(res, 400, 'Invalid dietitian id');
+
+    const { amount, description } = req.body as { amount?: number; description?: string };
+
+    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
+      return errorResponse(res, 400, 'amount is required and must be a positive number');
+    }
+    if (!Number.isInteger(Number(amount))) {
+      return errorResponse(res, 400, 'amount must be a whole number');
+    }
+
+    const adminUserId = Number(req.user?.sub);
+
+    // Verify dietitian exists
+    const rows = await query<{ id: number; full_name: string }>(
+      'SELECT id, full_name FROM dietitians WHERE id = ? LIMIT 1',
+      [dietitianId],
+    );
+    if (!rows[0]) return errorResponse(res, 404, 'Dietitian not found');
+
+    const result = await adminCreditPlanCredits(
+      dietitianId,
+      Number(amount),
+      adminUserId,
+      description,
+    );
+
+    if (!result.credited) {
+      return errorResponse(res, 404, 'Dietitian not found');
+    }
+
+    return successResponse(res, 200, 'Plan credits added successfully', {
+      dietitian_id:  dietitianId,
+      amount_added:  Number(amount),
+      plan_credits:  result.new_balance,
+    });
+  } catch (err) {
+    console.error('adminCreditPlanCredits error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// POST /api/v1/admin/dietitians/:id/earnings-credit
+// Body: { amount: number, description?: string }
+export const adminCreditEarningsHandler = async (req: Request, res: Response) => {
+  try {
+    const dietitianId = Number(req.params.id);
+    if (isNaN(dietitianId)) return errorResponse(res, 400, 'Invalid dietitian id');
+
+    const { amount, description } = req.body as { amount?: number; description?: string };
+
+    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
+      return errorResponse(res, 400, 'amount is required and must be a positive number');
+    }
+    if (!Number.isInteger(Number(amount))) {
+      return errorResponse(res, 400, 'amount must be a whole number');
+    }
+
+    const adminUserId = Number(req.user?.sub);
+
+    const rows = await query<{ id: number }>(
+      'SELECT id FROM dietitians WHERE id = ? LIMIT 1',
+      [dietitianId],
+    );
+    if (!rows[0]) return errorResponse(res, 404, 'Dietitian not found');
+
+    const result = await adminCreditEarningsWallet(
+      dietitianId,
+      Number(amount),
+      adminUserId,
+      description,
+    );
+
+    if (!result.credited) {
+      return errorResponse(res, 404, 'Dietitian not found');
+    }
+
+    return successResponse(res, 200, 'Earnings wallet credited successfully', {
+      dietitian_id:      dietitianId,
+      amount_added:      Number(amount),
+      earnings_balance:  result.new_balance,
+    });
+  } catch (err) {
+    console.error('adminCreditEarnings error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

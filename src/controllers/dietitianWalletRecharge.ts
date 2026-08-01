@@ -90,10 +90,10 @@ export const verifyWalletRechargePayment = async (req: Request, res: Response) =
       return errorResponse(res, 409, 'Wallet already credited for this payment');
     }
 
-    return successResponse(res, 200, 'Wallet recharged successfully', {
-      amount_added:  recharge.amount,
-      new_balance:   result.new_balance,
-      transaction_id: result.transaction.id,
+    return successResponse(res, 200, 'Plan credits recharged successfully', {
+      amount_added:    recharge.amount,
+      plan_credits:    result.new_balance,
+      transaction_id:  result.transaction.id,
     });
   } catch (err) {
     console.error('Wallet recharge verify-payment error:', err);
