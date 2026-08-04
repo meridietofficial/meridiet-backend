@@ -524,6 +524,241 @@ export const updateDietPlanStatus = async (
   await execute('UPDATE diet_plans SET status = ? WHERE id = ?', [status, id]);
 };
 
+// ── Admin manual (white-label) diet plan functions ────────────────────────────
+
+export interface AdminManualDietPlanListRow {
+  id: number;
+  form_id: number;
+  dietitian_id: number;
+  status: DietPlan['status'];
+  client_name: string | null;
+  primary_goal: string | null;
+  plan_duration: string | null;
+  diet_type: string | null;
+  calorie_range: string | null;
+  pdf_url: string | null;
+  sent_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+  dietitian_name: string | null;
+  dietitian_phone: string | null;
+  form_full_name: string | null;
+  form_age: number | null;
+  form_gender: string | null;
+  form_goals: string | null;
+  form_diet_type: string | null;
+  form_medical_conditions: string | null;
+  form_plan_type: number | null;
+}
+
+export interface AdminManualDietPlanDetail extends DietPlan {
+  dietitian: {
+    id: number;
+    name: string | null;
+    phone_code: string | null;
+    phone_number: string | null;
+  } | null;
+  form: {
+    id: number;
+    full_name: string | null;
+    age: number | null;
+    gender: string | null;
+    dob: string | null;
+    height: string | null;
+    height_unit: string | null;
+    weight: number | null;
+    weight_unit: string | null;
+    goals: string[] | null;
+    activity_level: string | null;
+    work_type: string | null;
+    workout_type: string | null;
+    diet_type: string | null;
+    cuisine_preference: string[] | null;
+    food_allergies: string[] | null;
+    foods_dislike: string | null;
+    favorite_foods: string | null;
+    medical_conditions: string[] | null;
+    other_condition: string | null;
+    on_medication: string | null;
+    medications: string | null;
+    digestive_health: string | null;
+    smoke_alcohol: string | null;
+    health_notes: string | null;
+    plan_type: number | null;
+  } | null;
+}
+
+export const findAllManualDietPlansForAdmin = async (
+  status: string | undefined,
+  page: number,
+  limit: number,
+  search: string | undefined,
+) => {
+  const offset = (page - 1) * limit;
+  const conditions: string[] = [
+    'dp.dietitian_id IS NOT NULL',
+    'dp.appointment_id IS NULL',
+    'dp.user_id IS NULL',
+  ];
+  const params: unknown[] = [];
+
+  if (status) {
+    conditions.push('dp.status = ?');
+    params.push(status);
+  }
+  if (search) {
+    conditions.push('(f.full_name LIKE ? OR u.full_name LIKE ? OR u.phone_number LIKE ?)');
+    const like = `%${search}%`;
+    params.push(like, like, like);
+  }
+
+  const where = `WHERE ${conditions.join(' AND ')}`;
+
+  const [rows, countRows] = await Promise.all([
+    query<AdminManualDietPlanListRow>(
+      `SELECT
+         dp.id, dp.form_id, dp.dietitian_id, dp.status,
+         dp.client_name, dp.primary_goal, dp.plan_duration, dp.diet_type,
+         dp.calorie_range, dp.pdf_url, dp.sent_at, dp.created_at, dp.updated_at,
+         u.full_name          AS dietitian_name,
+         u.phone_number       AS dietitian_phone,
+         f.full_name          AS form_full_name,
+         f.age                AS form_age,
+         f.gender             AS form_gender,
+         f.goals              AS form_goals,
+         f.diet_type          AS form_diet_type,
+         f.medical_conditions AS form_medical_conditions,
+         f.plan_type          AS form_plan_type
+       FROM diet_plans dp
+       LEFT JOIN dietitians d  ON dp.dietitian_id = d.id
+       LEFT JOIN users u       ON d.user_id = u.id
+       LEFT JOIN diet_forms f  ON dp.form_id = f.id
+       ${where}
+       ORDER BY dp.created_at DESC
+       LIMIT ${limit} OFFSET ${offset}`,
+      params,
+    ),
+    query<{ total: number }>(
+      `SELECT COUNT(*) AS total
+       FROM diet_plans dp
+       LEFT JOIN dietitians d  ON dp.dietitian_id = d.id
+       LEFT JOIN users u       ON d.user_id = u.id
+       LEFT JOIN diet_forms f  ON dp.form_id = f.id
+       ${where}`,
+      params,
+    ),
+  ]);
+
+  const plans = rows.map((r) => ({
+    ...r,
+    client_name:             r.client_name ?? r.form_full_name ?? null,
+    form_goals:              parseJson<string[]>(r.form_goals as unknown as string | null),
+    form_medical_conditions: parseJson<string[]>(r.form_medical_conditions as unknown as string | null),
+  }));
+
+  return { plans, total: countRows[0]?.total ?? 0 };
+};
+
+export const findManualDietPlanDetailForAdmin = async (id: number): Promise<AdminManualDietPlanDetail | null> => {
+  const rows = await query<DietPlan & {
+    f_id: number | null; f_full_name: string | null; f_age: number | null;
+    f_gender: string | null; f_dob: string | null; f_height: string | null;
+    f_height_unit: string | null; f_weight: number | null; f_weight_unit: string | null;
+    f_goals: string | null; f_activity_level: string | null; f_work_type: string | null;
+    f_workout_type: string | null; f_diet_type: string | null;
+    f_cuisine_preference: string | null; f_food_allergies: string | null;
+    f_foods_dislike: string | null; f_favorite_foods: string | null;
+    f_medical_conditions: string | null; f_other_condition: string | null;
+    f_on_medication: string | null; f_medications: string | null;
+    f_digestive_health: string | null; f_smoke_alcohol: string | null;
+    f_health_notes: string | null; f_plan_type: number | null;
+    dt_id: number | null; dt_name: string | null;
+    dt_phone_code: string | null; dt_phone_number: string | null;
+  }>(
+    `SELECT dp.*,
+       f.id              AS f_id,
+       f.full_name       AS f_full_name,
+       f.age             AS f_age,
+       f.gender          AS f_gender,
+       f.dob             AS f_dob,
+       f.height          AS f_height,
+       f.height_unit     AS f_height_unit,
+       f.weight          AS f_weight,
+       f.weight_unit     AS f_weight_unit,
+       f.goals           AS f_goals,
+       f.activity_level  AS f_activity_level,
+       f.work_type       AS f_work_type,
+       f.workout_type    AS f_workout_type,
+       f.diet_type       AS f_diet_type,
+       f.cuisine_preference   AS f_cuisine_preference,
+       f.food_allergies       AS f_food_allergies,
+       f.foods_dislike        AS f_foods_dislike,
+       f.favorite_foods       AS f_favorite_foods,
+       f.medical_conditions   AS f_medical_conditions,
+       f.other_condition      AS f_other_condition,
+       f.on_medication        AS f_on_medication,
+       f.medications          AS f_medications,
+       f.digestive_health     AS f_digestive_health,
+       f.smoke_alcohol        AS f_smoke_alcohol,
+       f.health_notes         AS f_health_notes,
+       f.plan_type            AS f_plan_type,
+       d.id              AS dt_id,
+       u.full_name       AS dt_name,
+       u.phone_code      AS dt_phone_code,
+       u.phone_number    AS dt_phone_number
+     FROM diet_plans dp
+     LEFT JOIN diet_forms f  ON f.id = dp.form_id
+     LEFT JOIN dietitians d  ON d.id = dp.dietitian_id
+     LEFT JOIN users u       ON u.id = d.user_id
+     WHERE dp.id = ?
+       AND dp.dietitian_id IS NOT NULL
+       AND dp.appointment_id IS NULL
+       AND dp.user_id IS NULL
+     LIMIT 1`,
+    [id],
+  );
+  if (!rows[0]) return null;
+  const r = rows[0];
+  const plan = parse(r as unknown as DietPlan) as AdminManualDietPlanDetail;
+
+  plan.dietitian = r.dt_id == null ? null : {
+    id:           r.dt_id,
+    name:         r.dt_name,
+    phone_code:   r.dt_phone_code,
+    phone_number: r.dt_phone_number,
+  };
+
+  plan.form = r.f_id == null ? null : {
+    id:                  r.f_id,
+    full_name:           r.f_full_name,
+    age:                 r.f_age,
+    gender:              r.f_gender,
+    dob:                 r.f_dob,
+    height:              r.f_height,
+    height_unit:         r.f_height_unit,
+    weight:              r.f_weight,
+    weight_unit:         r.f_weight_unit,
+    goals:               parseJson<string[]>(r.f_goals),
+    activity_level:      r.f_activity_level,
+    work_type:           r.f_work_type,
+    workout_type:        r.f_workout_type,
+    diet_type:           r.f_diet_type,
+    cuisine_preference:  parseJson<string[]>(r.f_cuisine_preference),
+    food_allergies:      parseJson<string[]>(r.f_food_allergies),
+    foods_dislike:       r.f_foods_dislike,
+    favorite_foods:      r.f_favorite_foods,
+    medical_conditions:  parseJson<string[]>(r.f_medical_conditions),
+    other_condition:     r.f_other_condition,
+    on_medication:       r.f_on_medication,
+    medications:         r.f_medications,
+    digestive_health:    r.f_digestive_health,
+    smoke_alcohol:       r.f_smoke_alcohol,
+    health_notes:        r.f_health_notes,
+    plan_type:           r.f_plan_type,
+  };
+  return plan;
+};
+
 // ── Admin diet plan functions ─────────────────────────────────────────────────
 
 export interface AdminDietPlanListRow {

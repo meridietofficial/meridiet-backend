@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/authenticate';
 import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDietFormRequests, getDietChartDetails, previewDietPlan, getDashboardStats, getDashboardRevenue, getDashboardUserGrowth, getDashboardConsultations, getSystemOverview, getPaidDietCharts, adminRegisterDietitian } from '../controllers/admin';
-import { listDietPlansForAdmin, getDietPlanForAdmin, editDietPlan, sendDietPlanToUser, retryDietPlanGeneration } from '../controllers/adminDietPlan';
+import { listDietPlansForAdmin, getDietPlanForAdmin, editDietPlan, sendDietPlanToUser, retryDietPlanGeneration, listManualDietPlansForAdmin, getManualDietPlanForAdmin } from '../controllers/adminDietPlan';
 import { adminCreateCoupon, adminListCoupons, adminGetCoupon, adminUpdateCoupon, adminDeactivateCoupon, adminGetCouponUsages, adminGetAllCouponUsages } from '../controllers/coupon';
 import { adminListEnquiries, adminGetEnquiry, adminUpdateEnquiryStatus, adminListEnrollments, adminGetEnrollment, adminCourseStats } from '../controllers/adminCourse';
 import {
   adminGetAppointments,
+  adminGetOnlineAppointments,
+  adminGetOfflineAppointments,
   adminGetAppointmentById,
   adminApprovePayment,
   adminGetPendingApprovalsList,
@@ -114,15 +116,19 @@ adminRouter.get('/nutrition/general-settings',     authenticate, authorize('admi
 adminRouter.put('/nutrition/general-settings/:id', authenticate, authorize('admin'), updateGeneralSetting);
 
 // ── Admin diet plan review & delivery ────────────────────────────────────────
-// Dietitian reviews AI-generated plans, edits if needed, then sends to user
-adminRouter.get ('/diet-plans',              authenticate, authorize('admin'), listDietPlansForAdmin);
-adminRouter.get ('/diet-plans/:plan_id',     authenticate, authorize('admin'), getDietPlanForAdmin);
-adminRouter.put ('/diet-plans/:plan_id',     authenticate, authorize('admin'), editDietPlan);
-adminRouter.post('/diet-plans/:plan_id/send',  authenticate, authorize('admin'), sendDietPlanToUser);
-adminRouter.post('/diet-plans/:plan_id/retry', authenticate, authorize('admin'), retryDietPlanGeneration);
+// Static routes before /:plan_id to avoid Express matching "manual" as an ID
+adminRouter.get ('/diet-plans/manual',           authenticate, authorize('admin'), listManualDietPlansForAdmin);
+adminRouter.get ('/diet-plans/manual/:plan_id',  authenticate, authorize('admin'), getManualDietPlanForAdmin);
+adminRouter.get ('/diet-plans',                  authenticate, authorize('admin'), listDietPlansForAdmin);
+adminRouter.get ('/diet-plans/:plan_id',         authenticate, authorize('admin'), getDietPlanForAdmin);
+adminRouter.put ('/diet-plans/:plan_id',         authenticate, authorize('admin'), editDietPlan);
+adminRouter.post('/diet-plans/:plan_id/send',    authenticate, authorize('admin'), sendDietPlanToUser);
+adminRouter.post('/diet-plans/:plan_id/retry',   authenticate, authorize('admin'), retryDietPlanGeneration);
 
 // ── Appointment management ────────────────────────────────────────────────────
 // Static routes must be before /:id to avoid conflict
+adminRouter.get ('/appointments/online',                   authenticate, authorize('admin'), adminGetOnlineAppointments);
+adminRouter.get ('/appointments/offline',                  authenticate, authorize('admin'), adminGetOfflineAppointments);
 adminRouter.get ('/appointments/pending-approval',         authenticate, authorize('admin'), adminGetPendingApprovalsList);
 adminRouter.get ('/appointments/payment-history',          authenticate, authorize('admin'), adminGetPaymentHistoryList);
 adminRouter.get ('/appointments/no-show-queue',            authenticate, authorize('admin'), adminGetNoShowQueueHandler);

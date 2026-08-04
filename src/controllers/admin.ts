@@ -11,6 +11,20 @@ import { sendEmail } from '../services/email';
 import { dietitianApprovedEmail } from '../services/emails/dietitianApproved';
 import { dietitianWelcomeEmail } from '../services/emails/dietitianWelcome';
 
+// ── IST date helpers ──────────────────────────────────────────────────────────
+// created_at columns are DATETIME stored in UTC (MySQL default).
+// The admin UI sends IST dates (YYYY-MM-DD), so we convert to UTC before
+// using them in BETWEEN / >= / <= filters.
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // UTC+05:30
+const pad2 = (n: number) => String(n).padStart(2, '0');
+const istToUTC = (dateStr: string, endOfDay: boolean): string => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const h = endOfDay ? 23 : 0, mn = endOfDay ? 59 : 0, sc = endOfDay ? 59 : 0;
+  const utcMs = Date.UTC(y, m - 1, d, h, mn, sc) - IST_OFFSET_MS;
+  const u = new Date(utcMs);
+  return `${u.getUTCFullYear()}-${pad2(u.getUTCMonth() + 1)}-${pad2(u.getUTCDate())} ${pad2(u.getUTCHours())}:${pad2(u.getUTCMinutes())}:${pad2(u.getUTCSeconds())}`;
+};
+
 const generateAccessToken = (userId: number, email: string | null, role: string, tokenVersion: number) => {
   return jwt.sign(
     { sub: userId, email, role, tokenVersion },
@@ -353,8 +367,8 @@ export const getDietFormRequests = async (req: Request, res: Response) => {
       conditions.push(`df.plan_type = ${parseInt(planType)}`);
     }
 
-    if (startDate) { conditions.push('df.created_at >= ?'); params.push(`${startDate} 00:00:00`); }
-    if (endDate)   { conditions.push('df.created_at <= ?'); params.push(`${endDate} 23:59:59`);   }
+    if (startDate) { conditions.push('df.created_at >= ?'); params.push(istToUTC(startDate, false)); }
+    if (endDate)   { conditions.push('df.created_at <= ?'); params.push(istToUTC(endDate, true));   }
 
     const baseWhere = `WHERE ${conditions.join(' AND ')}`;
 
@@ -411,7 +425,7 @@ export const getDietFormRequests = async (req: Request, res: Response) => {
 };
 
 // GET /api/v1/admin/paid-diet-charts
-// Params: page, limit, search, planType, planStatus, startDate, endDate, sortBy, sortOrder
+// Params: page, limit, search, planType, planStatus, from, to, sortBy, sortOrder
 // Returns all diet forms that have a paid payment, along with their associated plan status.
 export const getPaidDietCharts = async (req: Request, res: Response) => {
   try {
@@ -420,8 +434,8 @@ export const getPaidDietCharts = async (req: Request, res: Response) => {
     const search     = (req.query.search as string | undefined)?.trim();
     const planType   = req.query.planType   as string | undefined;
     const planStatus = req.query.planStatus as string | undefined;
-    const startDate  = req.query.startDate  as string | undefined;
-    const endDate    = req.query.endDate    as string | undefined;
+    const from       = req.query.from       as string | undefined;
+    const to         = req.query.to         as string | undefined;
     const offset     = (page - 1) * limit;
 
     const VALID_SORT: Record<string, string> = { created_at: 'df.created_at', full_name: 'df.full_name' };
@@ -449,8 +463,8 @@ export const getPaidDietCharts = async (req: Request, res: Response) => {
       params.push(planStatus);
     }
 
-    if (startDate) { conditions.push('df.created_at >= ?'); params.push(`${startDate} 00:00:00`); }
-    if (endDate)   { conditions.push('df.created_at <= ?'); params.push(`${endDate} 23:59:59`);   }
+    if (from) { conditions.push('df.created_at >= ?'); params.push(istToUTC(from, false)); }
+    if (to)   { conditions.push('df.created_at <= ?'); params.push(istToUTC(to, true));   }
 
     const baseWhere = `WHERE ${conditions.join(' AND ')}`;
 
@@ -762,17 +776,25 @@ interface DateRange {
 
 const buildDateRange = (from?: string, to?: string): DateRange | null => {
   if (!from || !to) return null;
-  const fromDate = new Date(from);
-  const toDate   = new Date(to);
-  const days     = Math.round((toDate.getTime() - fromDate.getTime()) / 86_400_000) + 1;
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
 
-  const prevTo   = new Date(fromDate); prevTo.setDate(prevTo.getDate() - 1);
-  const prevFrom = new Date(fromDate); prevFrom.setDate(prevFrom.getDate() - days);
+  // Pure UTC arithmetic avoids local-timezone skew when computing the prev period
+  const fromMs = Date.UTC(fy, fm - 1, fd);
+  const toMs   = Date.UTC(ty, tm - 1, td);
+  const days   = Math.round((toMs - fromMs) / 86_400_000) + 1;
 
-  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  const prevToMs   = fromMs - 86_400_000;
+  const prevFromMs = fromMs - days * 86_400_000;
+
+  const fmtUTCDate = (ms: number): string => {
+    const u = new Date(ms);
+    return `${u.getUTCFullYear()}-${pad2(u.getUTCMonth() + 1)}-${pad2(u.getUTCDate())}`;
+  };
+
   return {
-    current: { from: `${from} 00:00:00`,        to: `${to} 23:59:59`              },
-    prev:    { from: `${fmt(prevFrom)} 00:00:00`, to: `${fmt(prevTo)} 23:59:59`   },
+    current: { from: istToUTC(from,                false), to: istToUTC(to,                 true) },
+    prev:    { from: istToUTC(fmtUTCDate(prevFromMs), false), to: istToUTC(fmtUTCDate(prevToMs), true) },
   };
 };
 
@@ -1018,6 +1040,7 @@ export const getDashboardConsultations = async (req: Request, res: Response) => 
       ? (req.query.period as string) : 'daily';
     const range = buildDateRange(from, to);
 
+    const baseFilter = "appointment_source = 'platform' AND session_type = 'video_call' AND status NOT IN ('cancelled', 'missed') AND payment_status = 'paid'";
     const dateFilter = range ? 'AND created_at BETWEEN ? AND ?' : '';
     const curP       = range ? [range.current.from, range.current.to] : [];
     const prevP      = range ? [range.prev.from,    range.prev.to]    : [];
@@ -1028,21 +1051,21 @@ export const getDashboardConsultations = async (req: Request, res: Response) => 
       ? `SELECT CAST(YEARWEEK(created_at, 1) AS CHAR) AS grp_key,
                 DATE_FORMAT(MIN(created_at), '%Y-%m-%d') AS week_start,
                 COUNT(*) AS count
-           FROM appointments WHERE 1=1 ${dateFilter}
+           FROM appointments WHERE ${baseFilter} ${dateFilter}
           GROUP BY YEARWEEK(created_at, 1)
           ORDER BY YEARWEEK(created_at, 1) ASC`
       : `SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS grp_key,
                 COUNT(*) AS count
-           FROM appointments WHERE 1=1 ${dateFilter}
+           FROM appointments WHERE ${baseFilter} ${dateFilter}
           GROUP BY DATE(created_at)
           ORDER BY grp_key ASC`;
 
     const [chartRows, totalData, breakdownData, prevData] = await Promise.all([
       query<ConsRow>(chartSQL, curP),
-      query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE 1=1 ${dateFilter}`, curP),
-      query<{ status: string; cnt: number }>(`SELECT status, COUNT(*) AS cnt FROM appointments WHERE 1=1 ${dateFilter} GROUP BY status`, curP),
+      query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE ${baseFilter} ${dateFilter}`, curP),
+      query<{ status: string; cnt: number }>(`SELECT status, COUNT(*) AS cnt FROM appointments WHERE ${baseFilter} ${dateFilter} GROUP BY status`, curP),
       range
-        ? query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE created_at BETWEEN ? AND ?`, prevP)
+        ? query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE ${baseFilter} AND created_at BETWEEN ? AND ?`, prevP)
         : Promise.resolve([{ total: 0 }]),
     ]);
 

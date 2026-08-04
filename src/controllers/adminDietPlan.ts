@@ -3,6 +3,8 @@ import {
   findDietPlanById,
   findDietPlanWithFormById,
   findAllDietPlansForAdmin,
+  findAllManualDietPlansForAdmin,
+  findManualDietPlanDetailForAdmin,
   updateAdminDietPlanContent,
   markDietPlanSent,
 } from '../models/DietPlan';
@@ -174,6 +176,50 @@ export const sendDietPlanToUser = async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('Admin send diet plan error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// GET /api/v1/admin/diet-plans/manual
+// Lists all white-label (manual) diet plans created by any dietitian across the platform.
+// Query: ?status=draft|generating|completed|failed|sent  &page=1  &limit=20  &search=patient_or_dietitian
+export const listManualDietPlansForAdmin = async (req: Request, res: Response) => {
+  try {
+    const page   = Math.max(1, Number(req.query.page)  || 1);
+    const limit  = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+    const status = req.query.status as string | undefined;
+    const search = req.query.search as string | undefined;
+
+    const VALID_STATUSES = ['draft', 'generating', 'completed', 'failed', 'sent'];
+    if (status && !VALID_STATUSES.includes(status)) {
+      return errorResponse(res, 400, `status must be one of: ${VALID_STATUSES.join(', ')}`);
+    }
+
+    const { plans, total } = await findAllManualDietPlansForAdmin(status, page, limit, search);
+
+    return successResponse(res, 200, 'Manual diet plans fetched', {
+      plans,
+      pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+    });
+  } catch (err) {
+    console.error('Admin list manual diet plans error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// GET /api/v1/admin/diet-plans/manual/:plan_id
+// Returns the full white-label plan: complete patient form data + generated diet chart content + dietitian info.
+export const getManualDietPlanForAdmin = async (req: Request, res: Response) => {
+  try {
+    const planId = Number(req.params.plan_id);
+    if (isNaN(planId)) return errorResponse(res, 400, 'Invalid plan_id');
+
+    const plan = await findManualDietPlanDetailForAdmin(planId);
+    if (!plan) return errorResponse(res, 404, 'Manual diet plan not found');
+
+    return successResponse(res, 200, 'Manual diet plan fetched', { plan });
+  } catch (err) {
+    console.error('Admin get manual diet plan error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

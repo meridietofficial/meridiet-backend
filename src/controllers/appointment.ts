@@ -146,6 +146,7 @@ const isSlotWithinSchedule = (slot: string, ranges: string[]): boolean => {
 
 // POST /api/v1/appointments/create-order
 // Body: { dietitian_id, appointment_date, slot, name, email?, phone?, notes? }
+// Platform bookings are always video_call — session_type is not accepted from the client.
 export const createAppointmentOrder = async (req: Request, res: Response) => {
   try {
     const {
@@ -156,7 +157,6 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
       email,
       phone,
       duration,
-      session_type,
       notes,
       coupon_code,
     } = req.body as {
@@ -167,7 +167,6 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
       email?: string;
       phone?: string;
       duration?: number;
-      session_type?: 'video_call' | 'in_person';
       notes?: string;
       coupon_code?: string;
     };
@@ -292,7 +291,7 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
       appointment_date,
       slot,
       duration: duration ?? 30,
-      session_type: session_type ?? 'video_call',
+      session_type: 'video_call',
       fee,
       currency,
       order_id: order.id,

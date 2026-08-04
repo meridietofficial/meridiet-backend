@@ -10,7 +10,6 @@ import {
   findManualDietPlansByDietitianId,
   createDraftDietPlan,
   createManualDraftDietPlan,
-  updateDietPlanStatus,
   updateDraftPlanData,
   markDietPlanSent,
 } from '../models/DietPlan';
@@ -359,27 +358,6 @@ export const sendDietitianPlan = async (req: Request, res: Response) => {
   }
 };
 
-// ── PUT /api/v1/dietitian/diet-forms/:id/archive ──────────────────────────────
-export const archivePlan = async (req: Request, res: Response) => {
-  try {
-    const userId = Number(req.user?.sub);
-    const planId = Number(req.params.id);
-    if (isNaN(planId)) return errorResponse(res, 400, 'Invalid plan id');
-
-    const dietitian = await getDietitianOrFail(userId, res);
-    if (!dietitian) return;
-
-    const plan = await getOwnedPlanOrFail(planId, dietitian.id, res);
-    if (!plan) return;
-    if (plan.status === 'archived') return errorResponse(res, 400, 'Plan is already archived');
-
-    await updateDietPlanStatus(planId, 'archived');
-    return successResponse(res, 200, 'Plan archived successfully');
-  } catch (err) {
-    console.error('Archive plan error:', err);
-    return errorResponse(res, 500, 'Something went wrong');
-  }
-};
 
 // ── GET /api/v1/dietitian/diet-forms ──────────────────────────────────────────
 // Query: ?status=draft|completed|archived|generating|sent&page=1&limit=10

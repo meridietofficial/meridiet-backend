@@ -96,6 +96,90 @@ export const adminGetPaymentHistoryList = async (req: Request, res: Response) =>
   }
 };
 
+// GET /api/v1/admin/appointments/online
+// Online (platform) appointments only — always video_call (session_type is not a filter here).
+// Query params: page, limit, status, payment_status, no_show, dietitian_id, date_from, date_to, search
+export const adminGetOnlineAppointments = async (req: Request, res: Response) => {
+  const { page, limit, status, payment_status, dietitian_id, date_from, date_to, search, no_show } =
+    req.query as Record<string, string | undefined>;
+
+  const validStatuses = ['confirmed', 'completed', 'cancelled', 'missed'];
+  const validPayments = ['unpaid', 'paid', 'refunded'];
+  const validNoShow   = ['user', 'dietitian', 'any'];
+
+  if (status         && !validStatuses.includes(status))         return errorResponse(res, 400, `status must be one of: ${validStatuses.join(', ')}`);
+  if (payment_status && !validPayments.includes(payment_status)) return errorResponse(res, 400, `payment_status must be one of: ${validPayments.join(', ')}`);
+  if (no_show        && !validNoShow.includes(no_show))          return errorResponse(res, 400, `no_show must be one of: ${validNoShow.join(', ')}`);
+  if (date_from      && !/^\d{4}-\d{2}-\d{2}$/.test(date_from)) return errorResponse(res, 400, 'date_from must be YYYY-MM-DD');
+  if (date_to        && !/^\d{4}-\d{2}-\d{2}$/.test(date_to))   return errorResponse(res, 400, 'date_to must be YYYY-MM-DD');
+
+  try {
+    const result = await adminListAppointments({
+      source:        'platform',
+      session_type:  'video_call',
+      page:          page  ? Number(page)  : 1,
+      limit:         limit ? Number(limit) : 20,
+      status, payment_status,
+      dietitian_id:  dietitian_id ? Number(dietitian_id) : undefined,
+      date_from, date_to,
+      search:        search?.trim() || undefined,
+      no_show:       no_show as 'user' | 'dietitian' | 'any' | undefined,
+    });
+
+    return successResponse(res, 200, 'Online appointments fetched', {
+      appointments: result.appointments,
+      pagination: {
+        total: result.total, page: result.page,
+        limit: result.limit, pages: Math.ceil(result.total / result.limit),
+      },
+    });
+  } catch (err) {
+    console.error('Admin get online appointments error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// GET /api/v1/admin/appointments/offline
+// Offline (white-label / dietitian-created) appointments only.
+// Query params: page, limit, status, payment_status, session_type, dietitian_id, date_from, date_to, search
+export const adminGetOfflineAppointments = async (req: Request, res: Response) => {
+  const { page, limit, status, payment_status, session_type, dietitian_id, date_from, date_to, search } =
+    req.query as Record<string, string | undefined>;
+
+  const validStatuses = ['confirmed', 'completed', 'cancelled', 'missed'];
+  const validPayments = ['unpaid', 'paid', 'refunded'];
+  const validSessions = ['video_call', 'in_person'];
+
+  if (status         && !validStatuses.includes(status))         return errorResponse(res, 400, `status must be one of: ${validStatuses.join(', ')}`);
+  if (payment_status && !validPayments.includes(payment_status)) return errorResponse(res, 400, `payment_status must be one of: ${validPayments.join(', ')}`);
+  if (session_type   && !validSessions.includes(session_type))   return errorResponse(res, 400, `session_type must be one of: ${validSessions.join(', ')}`);
+  if (date_from      && !/^\d{4}-\d{2}-\d{2}$/.test(date_from)) return errorResponse(res, 400, 'date_from must be YYYY-MM-DD');
+  if (date_to        && !/^\d{4}-\d{2}-\d{2}$/.test(date_to))   return errorResponse(res, 400, 'date_to must be YYYY-MM-DD');
+
+  try {
+    const result = await adminListAppointments({
+      source:        'dietitian',
+      page:          page  ? Number(page)  : 1,
+      limit:         limit ? Number(limit) : 20,
+      status, payment_status, session_type,
+      dietitian_id:  dietitian_id ? Number(dietitian_id) : undefined,
+      date_from, date_to,
+      search:        search?.trim() || undefined,
+    });
+
+    return successResponse(res, 200, 'Offline appointments fetched', {
+      appointments: result.appointments,
+      pagination: {
+        total: result.total, page: result.page,
+        limit: result.limit, pages: Math.ceil(result.total / result.limit),
+      },
+    });
+  } catch (err) {
+    console.error('Admin get offline appointments error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
 // GET /api/v1/admin/appointments
 // Query params: page, limit, status, payment_status, session_type, dietitian_id, date_from, date_to, search
 export const adminGetAppointments = async (req: Request, res: Response) => {

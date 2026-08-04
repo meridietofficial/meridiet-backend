@@ -140,13 +140,13 @@ export const createAppointment = async (data: CreateAppointmentData) => {
   return rows[0] ?? null;
 };
 
-export interface AppointmentDetail extends Omit<Appointment, 'email' | 'phone'> {
+export interface AppointmentDetail extends Appointment {
   avatar_url: string | null;
   user_review_done: boolean;
   dietitian_review_done: boolean;
 }
 
-type AppointmentDetailRaw = Omit<AppointmentDetail, 'user_review_done' | 'dietitian_review_done'> & {
+type AppointmentDetailRaw = Omit<AppointmentDetail, 'user_review_done' | 'dietitian_review_done' | 'follow_up'> & {
   user_review_done: number;
   dietitian_review_done: number;
 };
@@ -154,10 +154,10 @@ type AppointmentDetailRaw = Omit<AppointmentDetail, 'user_review_done' | 'dietit
 export const findAppointmentDetailById = async (id: number) => {
   const rows = await query<AppointmentDetailRaw>(
     `SELECT
-       a.id, a.dietitian_id, a.user_id, a.name,
+       a.id, a.dietitian_id, a.user_id, a.name, a.email, a.phone,
        DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS appointment_date,
        TIME_FORMAT(a.slot, '%H:%i')                AS slot,
-       a.duration, a.session_type,
+       a.duration, a.session_type, a.appointment_source, a.payment_method,
        a.fee, a.currency, a.status, a.payment_status, a.payment_id, a.order_id,
        a.notes, a.dietitian_notes, a.missed_reason, a.missed_type,
        a.user_rating, a.user_review, a.user_reviewed_at,
