@@ -3,27 +3,14 @@ import jwt from 'jsonwebtoken';
 import { findUserByEmail, findUserByPhoneNumber, findUserById, checkPassword, updateUser, softDeleteUser, updateUserPassword, getUsersPaginated, createUser } from '../models/User';
 import { getDietitiansPaginated, findDietitianById, verifyDietitian, formatDietitianRow, findDietitianByRegistrationNumber, createDietitian } from '../models/Dietitian';
 import { query } from '../config/database';
-import { findDietFormById, type DietForm } from '../models/DietForm';
-import { findDietPlanByFormId } from '../models/DietPlan';
 import { env } from '../config/env';
 import { successResponse, errorResponse } from '../utils/response';
+import { istToUTC } from '../utils/date';
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
 import { sendEmail } from '../services/email';
 import { dietitianApprovedEmail } from '../services/emails/dietitianApproved';
 import { dietitianWelcomeEmail } from '../services/emails/dietitianWelcome';
-
-// ── IST date helpers ──────────────────────────────────────────────────────────
-// created_at columns are DATETIME stored in UTC (MySQL default).
-// The admin UI sends IST dates (YYYY-MM-DD), so we convert to UTC before
-// using them in BETWEEN / >= / <= filters.
-const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // UTC+05:30
-const pad2 = (n: number) => String(n).padStart(2, '0');
-const istToUTC = (dateStr: string, endOfDay: boolean): string => {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const h = endOfDay ? 23 : 0, mn = endOfDay ? 59 : 0, sc = endOfDay ? 59 : 0;
-  const utcMs = Date.UTC(y, m - 1, d, h, mn, sc) - IST_OFFSET_MS;
-  const u = new Date(utcMs);
-  return `${u.getUTCFullYear()}-${pad2(u.getUTCMonth() + 1)}-${pad2(u.getUTCDate())} ${pad2(u.getUTCHours())}:${pad2(u.getUTCMinutes())}:${pad2(u.getUTCSeconds())}`;
-};
 
 const generateAccessToken = (userId: number, email: string | null, role: string, tokenVersion: number) => {
   return jwt.sign(
@@ -330,362 +317,6 @@ export const deleteUser = async (req: Request, res: Response) => {
   }
 };
 
-// GET /api/v1/admin/diet-form-requests
-// Params: page, limit, search, planType, startDate, endDate, sortBy, sortOrder, status
-export const getDietFormRequests = async (req: Request, res: Response) => {
-  try {
-    const page      = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit     = Math.min(10000, Math.max(1, parseInt(req.query.limit as string) || 10));
-    const search    = (req.query.search as string | undefined)?.trim();
-    const status    = req.query.status   as string | undefined;
-    const planType  = req.query.planType as string | undefined;
-    const startDate = req.query.startDate as string | undefined;
-    const endDate   = req.query.endDate   as string | undefined;
-    const offset    = (page - 1) * limit;
-
-    const VALID_SORT: Record<string, string> = { created_at: 'df.created_at', full_name: 'df.full_name' };
-    const sortField = VALID_SORT[req.query.sortBy as string ?? ''] ?? 'df.created_at';
-    const sortOrder = (req.query.sortOrder as string | undefined)?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
-
-    const validStatuses  = ['pending', 'generating', 'completed', 'failed'];
-    const validPlanTypes = ['1', '2', '3'];
-
-    const params: unknown[] = [];
-    const conditions: string[] = ['1=1'];
-
-    if (search) {
-      conditions.push('(df.full_name LIKE ? OR df.email LIKE ? OR df.whatsapp LIKE ? OR df.city LIKE ?)');
-      const like = `%${search}%`;
-      params.push(like, like, like, like);
-    }
-
-    if (status && validStatuses.includes(status)) {
-      conditions.push(status === 'pending' ? 'dp.id IS NULL' : `dp.status = '${status}'`);
-    }
-
-    if (planType && validPlanTypes.includes(planType)) {
-      conditions.push(`df.plan_type = ${parseInt(planType)}`);
-    }
-
-    if (startDate) { conditions.push('df.created_at >= ?'); params.push(istToUTC(startDate, false)); }
-    if (endDate)   { conditions.push('df.created_at <= ?'); params.push(istToUTC(endDate, true));   }
-
-    const baseWhere = `WHERE ${conditions.join(' AND ')}`;
-
-    const JSON_FIELDS = ['goals', 'cuisine_preference', 'food_allergies', 'medical_conditions', 'delivery_method'];
-
-    const [rows, countRows] = await Promise.all([
-      query<DietForm & { plan_id: number | null; status: string }>(
-        `SELECT
-          df.*,
-          dp.id AS plan_id,
-          COALESCE(dp.status, 'pending') AS status
-         FROM diet_forms df
-         LEFT JOIN diet_plans dp ON dp.id = (
-           SELECT id FROM diet_plans WHERE form_id = df.id ORDER BY created_at DESC LIMIT 1
-         )
-         LEFT JOIN payments p ON p.diet_form_id = df.id AND p.status = 'paid'
-         ${baseWhere} AND p.id IS NULL
-         ORDER BY ${sortField} ${sortOrder}
-         LIMIT ${limit} OFFSET ${offset}`,
-        params,
-      ),
-      query<{ total: number }>(
-        `SELECT COUNT(*) AS total
-           FROM diet_forms df
-           LEFT JOIN diet_plans dp ON dp.id = (
-             SELECT id FROM diet_plans WHERE form_id = df.id ORDER BY created_at DESC LIMIT 1
-           )
-           LEFT JOIN payments p ON p.diet_form_id = df.id AND p.status = 'paid'
-         ${baseWhere} AND p.id IS NULL`,
-        params,
-      ),
-    ]);
-
-    const data = rows.map((row) => {
-      const r = row as unknown as Record<string, unknown>;
-      for (const field of JSON_FIELDS) {
-        if (typeof r[field] === 'string') {
-          try { r[field] = JSON.parse(r[field] as string); } catch { /* leave as-is */ }
-        }
-      }
-      return row;
-    });
-
-    const total      = countRows[0]?.total ?? 0;
-    const totalPages = Math.ceil(total / limit);
-
-    return successResponse(res, 200, 'Diet form requests fetched successfully', data, {
-      page, limit, total, totalPages,
-    });
-  } catch (err) {
-    console.error('Get diet chart requests error:', err);
-    return errorResponse(res, 500, 'Something went wrong');
-  }
-};
-
-// GET /api/v1/admin/paid-diet-charts
-// Params: page, limit, search, planType, planStatus, from, to, sortBy, sortOrder
-// Returns all diet forms that have a paid payment, along with their associated plan status.
-export const getPaidDietCharts = async (req: Request, res: Response) => {
-  try {
-    const page       = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit      = Math.min(10000, Math.max(1, parseInt(req.query.limit as string) || 10));
-    const search     = (req.query.search as string | undefined)?.trim();
-    const planType   = req.query.planType   as string | undefined;
-    const planStatus = req.query.planStatus as string | undefined;
-    const from       = req.query.from       as string | undefined;
-    const to         = req.query.to         as string | undefined;
-    const offset     = (page - 1) * limit;
-
-    const VALID_SORT: Record<string, string> = { created_at: 'df.created_at', full_name: 'df.full_name' };
-    const sortField = VALID_SORT[req.query.sortBy as string ?? ''] ?? 'df.created_at';
-    const sortOrder = (req.query.sortOrder as string | undefined)?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
-
-    const validPlanTypes    = ['1', '2', '3'];
-    const validPlanStatuses = ['generating', 'completed', 'failed', 'sent'];
-
-    const params: unknown[] = [];
-    const conditions: string[] = ['1=1'];
-
-    if (search) {
-      conditions.push('(df.full_name LIKE ? OR df.email LIKE ? OR df.whatsapp LIKE ? OR df.city LIKE ?)');
-      const like = `%${search}%`;
-      params.push(like, like, like, like);
-    }
-
-    if (planType && validPlanTypes.includes(planType)) {
-      conditions.push(`df.plan_type = ${parseInt(planType)}`);
-    }
-
-    if (planStatus && validPlanStatuses.includes(planStatus)) {
-      conditions.push('dp.status = ?');
-      params.push(planStatus);
-    }
-
-    if (from) { conditions.push('df.created_at >= ?'); params.push(istToUTC(from, false)); }
-    if (to)   { conditions.push('df.created_at <= ?'); params.push(istToUTC(to, true));   }
-
-    const baseWhere = `WHERE ${conditions.join(' AND ')}`;
-
-    const JSON_FIELDS = ['goals', 'cuisine_preference', 'food_allergies', 'medical_conditions', 'delivery_method'];
-
-    const [rows, countRows] = await Promise.all([
-      query<DietForm & { plan_id: number | null; plan_status: string | null; pdf_url: string | null; sent_at: Date | null; payment_amount: number }>(
-        `SELECT
-          df.*,
-          dp.id          AS plan_id,
-          dp.status      AS plan_status,
-          dp.pdf_url     AS pdf_url,
-          dp.sent_at     AS sent_at,
-          p.amount       AS payment_amount
-         FROM diet_forms df
-         INNER JOIN payments p ON p.diet_form_id = df.id AND p.status = 'paid'
-         LEFT JOIN diet_plans dp ON dp.id = (
-           SELECT id FROM diet_plans WHERE form_id = df.id ORDER BY created_at DESC LIMIT 1
-         )
-         ${baseWhere}
-         ORDER BY ${sortField} ${sortOrder}
-         LIMIT ${limit} OFFSET ${offset}`,
-        params,
-      ),
-      query<{ total: number }>(
-        `SELECT COUNT(*) AS total
-           FROM diet_forms df
-           INNER JOIN payments p ON p.diet_form_id = df.id AND p.status = 'paid'
-           LEFT JOIN diet_plans dp ON dp.id = (
-             SELECT id FROM diet_plans WHERE form_id = df.id ORDER BY created_at DESC LIMIT 1
-           )
-         ${baseWhere}`,
-        params,
-      ),
-    ]);
-
-    const data = rows.map((row) => {
-      const r = row as unknown as Record<string, unknown>;
-      for (const field of JSON_FIELDS) {
-        if (typeof r[field] === 'string') {
-          try { r[field] = JSON.parse(r[field] as string); } catch { /* leave as-is */ }
-        }
-      }
-      return row;
-    });
-
-    const total      = countRows[0]?.total ?? 0;
-    const totalPages = Math.ceil(total / limit);
-
-    return successResponse(res, 200, 'Paid diet charts fetched successfully', data, {
-      page, limit, total, totalPages,
-    });
-  } catch (err) {
-    console.error('Get paid diet charts error:', err);
-    return errorResponse(res, 500, 'Something went wrong');
-  }
-};
-
-// GET /api/v1/admin/diet-form-requests/:form_id/details
-export const getDietChartDetails = async (req: Request, res: Response) => {
-  try {
-    const form_id = parseInt(req.params.form_id);
-    if (isNaN(form_id)) return errorResponse(res, 400, 'Invalid form_id');
-
-    // Get full diet form
-    const form = await findDietFormById(form_id);
-    if (!form) return errorResponse(res, 404, 'Diet form not found');
-
-    // Get user details if linked
-    let user = null;
-    if (form.user_id) {
-      const u = await findUserById(form.user_id);
-      if (u) {
-        const { password: _, is_delete: __, ...safeUser } = u as unknown as Record<string, unknown>;
-        user = safeUser;
-      }
-    }
-
-    // Get generated diet plan if exists
-    const plan = await findDietPlanByFormId(form_id);
-
-    return successResponse(res, 200, 'Diet chart details fetched successfully', {
-      form: {
-        // Identity
-        id:            form.id,
-        user_id:       form.user_id,
-        plan_type:     form.plan_type,
-
-        // Step 1 — Basic Details
-        full_name:     form.full_name,
-        age:           form.age,
-        gender:        form.gender,
-        dob:           form.dob,
-        height:        form.height,
-        height_unit:   form.height_unit,
-        weight:        form.weight,
-        weight_unit:   form.weight_unit,
-        goals:         form.goals,
-
-        // Step 2 — Lifestyle
-        activity_level: form.activity_level,
-        work_type:      form.work_type,
-        workout_type:   form.workout_type,
-
-        // Step 3 — Food Preferences
-        diet_type:          form.diet_type,
-        cuisine_preference: form.cuisine_preference,
-        food_allergies:     form.food_allergies,
-        foods_dislike:      form.foods_dislike,
-        favorite_foods:     form.favorite_foods,
-
-        // Step 4 — Health & Medical
-        medical_conditions: form.medical_conditions,
-        other_condition:    form.other_condition,
-        on_medication:      form.on_medication,
-        medications:        form.medications,
-        digestive_health:   form.digestive_health,
-        smoke_alcohol:      form.smoke_alcohol,
-        health_notes:       form.health_notes,
-
-        // Step 5 — Contact
-        contact_name:    form.contact_name,
-        whatsapp:        form.whatsapp,
-        email:           form.email,
-        delivery_method: form.delivery_method,
-        city:            form.city,
-        state:           form.state,
-        state_code:      form.state_code,
-        final_notes:     form.final_notes,
-
-        created_at: form.created_at,
-        updated_at: form.updated_at,
-      },
-      user,
-      diet_plan: plan ? {
-        plan_id:          plan.id,
-        status:           plan.status,
-        bmi:              plan.bmi,
-        bmi_category:     plan.bmi_category,
-        bmr:              plan.bmr,
-        tdee:             plan.tdee,
-        client_profile:   plan.client_profile,
-        summary: {
-          client_name:      plan.client_name,
-          calorie_range:    plan.calorie_range,
-          protein_target_g: plan.protein_target_g,
-          carbs_target_g:   plan.carbs_target_g,
-          fat_target_g:     plan.fat_target_g,
-          primary_goal:     plan.primary_goal,
-          plan_duration:    plan.plan_duration,
-          diet_type:        plan.diet_type,
-        },
-        hydration_guide:  plan.hydration_guide,
-        weeks:            plan.weeks,
-        general_tips:     plan.general_tips,
-        featured_recipes: plan.featured_recipes,
-        created_at:       plan.created_at,
-      } : null,
-    });
-  } catch (err) {
-    console.error('Get diet chart details error:', err);
-    return errorResponse(res, 500, 'Something went wrong');
-  }
-};
-
-// GET /api/v1/admin/diet-form-requests/:form_id/preview
-// Preview the AI-generated diet plan for a given form
-export const previewDietPlan = async (req: Request, res: Response) => {
-  try {
-    const form_id = parseInt(req.params.form_id);
-    if (isNaN(form_id)) return errorResponse(res, 400, 'Invalid form_id');
-
-    // Make sure the request form exists
-    const form = await findDietFormById(form_id);
-    if (!form) return errorResponse(res, 404, 'Diet form not found');
-
-    // Get the latest generated diet plan for this form
-    const plan = await findDietPlanByFormId(form_id);
-    if (!plan) {
-      return errorResponse(res, 404, 'Diet chart has not been generated for this request yet');
-    }
-
-    // Generation still in progress
-    if (plan.status === 'generating') {
-      return successResponse(res, 202, 'Diet chart is still being generated', {
-        plan_id: plan.id,
-        status:  plan.status,
-      });
-    }
-
-    // Generation failed
-    if (plan.status === 'failed') {
-      return errorResponse(res, 409, 'Diet chart generation failed for this request');
-    }
-
-    // status === 'completed' — return the full AI-generated plan
-    return successResponse(res, 200, 'Diet plan generated successfully', {
-      plan_id:          plan.id,
-      form_id:          plan.form_id,
-      client_profile:   plan.client_profile,
-      summary: {
-        client_name:      plan.client_name,
-        calorie_range:    plan.calorie_range,
-        protein_target_g: plan.protein_target_g,
-        carbs_target_g:   plan.carbs_target_g,
-        fat_target_g:     plan.fat_target_g,
-        primary_goal:     plan.primary_goal,
-        plan_duration:    plan.plan_duration,
-        diet_type:        plan.diet_type,
-      },
-      weeks:            plan.weeks,
-      hydration_guide:  plan.hydration_guide,
-      general_tips:     plan.general_tips,
-      featured_recipes: plan.featured_recipes,
-    });
-  } catch (err) {
-    console.error('Preview diet plan error:', err);
-    return errorResponse(res, 500, 'Something went wrong');
-  }
-};
-
 // PATCH /api/v1/admin/dietitians/verify
 // Body: { dietitian_id }
 export const verifyDietitianHandler = async (req: Request, res: Response) => {
@@ -807,12 +438,12 @@ const pctChange = (cur: number, prev: number): { percent: number; direction: 'up
 const fmtPeriodLabel = (period: string, grpKey: string, weekStart?: string): string => {
   if (period === 'daily') {
     const d = new Date(`${grpKey}T00:00:00`);
-    return `${d.getDate()} ${d.toLocaleString('en', { month: 'short' })}`;
+    return `${d.toLocaleString('en', { month: 'short' })} ${d.getDate()}`;
   }
   if (period === 'weekly' && weekStart) {
     const s = new Date(`${weekStart}T00:00:00`);
     const e = new Date(s); e.setDate(s.getDate() + 6);
-    const fd = (d: Date) => `${d.getDate()} ${d.toLocaleString('en', { month: 'short' })}`;
+    const fd = (d: Date) => `${d.toLocaleString('en', { month: 'short' })} ${d.getDate()}`;
     return `${fd(s)}–${fd(e)}`;
   }
   if (period === 'monthly') {
@@ -831,20 +462,47 @@ export const getDashboardStats = async (req: Request, res: Response) => {
     const { from, to } = req.query as { from?: string; to?: string };
     const range = buildDateRange(from, to);
 
+    // created_at is a DATETIME column → use UTC-converted datetime strings
     const curFilter = range ? 'AND created_at BETWEEN ? AND ?' : '';
     const curP      = range ? [range.current.from, range.current.to] : [];
     const prevP     = range ? [range.prev.from,    range.prev.to]    : [];
 
+    // appointment_date is a DATETIME column storing IST midnight values →
+    // compare with raw ISO date strings (same logic as getDashboardConsultations)
+    const hasRange        = !!(from && to);
+    const apptDateFilter  = hasRange ? 'AND appointment_date BETWEEN ? AND ?' : '';
+    const apptCurP: string[]  = hasRange ? [from!, to!] : [];
+
+    // prev period raw date strings for appointment_date comparison
+    let apptPrevP: string[] = [];
+    if (hasRange) {
+      const [fy, fm, fd] = from!.split('-').map(Number);
+      const [ty, tm, td] = to!.split('-').map(Number);
+      const fromMs     = Date.UTC(fy, fm - 1, fd);
+      const toMs       = Date.UTC(ty, tm - 1, td);
+      const days       = Math.round((toMs - fromMs) / 86_400_000) + 1;
+      const prevToMs   = fromMs - 86_400_000;
+      const prevFromMs = fromMs - days * 86_400_000;
+      const fmtDate    = (ms: number) => {
+        const u = new Date(ms);
+        return `${u.getUTCFullYear()}-${pad2(u.getUTCMonth() + 1)}-${pad2(u.getUTCDate())}`;
+      };
+      apptPrevP = [fmtDate(prevFromMs), fmtDate(prevToMs)];
+    }
+
+    // Same filter as the Consultations Overview graph
+    const consultFilter = "appointment_source = 'platform' AND session_type = 'video_call' AND payment_status = 'paid' AND status != 'cancelled'";
+
     const [usersData, dietitiansData, consultationsData, revenueData, dietChartsData] = await Promise.all([
       query<{ total: number }>(`SELECT COUNT(*) AS total FROM users WHERE role = 'user' AND is_delete = 0 ${curFilter}`, curP),
       query<{ total: number }>(`SELECT COUNT(*) AS total FROM dietitians WHERE 1=1 ${curFilter}`, curP),
-      query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE 1=1 ${curFilter}`, curP),
-      query<{ total: number }>(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'paid' ${curFilter}`, curP),
+      query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE ${consultFilter} ${apptDateFilter}`, apptCurP),
+      query<{ total: number }>(`SELECT COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS total FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${curFilter}`, curP),
       query<{ plan_type: number; cnt: number }>(
         `SELECT df.plan_type, COUNT(*) AS cnt
            FROM diet_forms df
            INNER JOIN payments p ON p.diet_form_id = df.id AND p.status = 'paid'
-          WHERE 1=1 ${curFilter.replace('created_at', 'df.created_at')}
+          WHERE 1=1 ${curFilter.replace('created_at', 'p.created_at')}
           GROUP BY df.plan_type`, curP),
     ]);
 
@@ -866,13 +524,13 @@ export const getDashboardStats = async (req: Request, res: Response) => {
       const [pu, pd, pc, pr, pdc] = await Promise.all([
         query<{ total: number }>(`SELECT COUNT(*) AS total FROM users WHERE role = 'user' AND is_delete = 0 ${prevFilter}`, prevP),
         query<{ total: number }>(`SELECT COUNT(*) AS total FROM dietitians WHERE 1=1 ${prevFilter}`, prevP),
-        query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE 1=1 ${prevFilter}`, prevP),
-        query<{ total: number }>(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'paid' ${prevFilter}`, prevP),
+        query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE ${consultFilter} AND appointment_date BETWEEN ? AND ?`, apptPrevP),
+        query<{ total: number }>(`SELECT COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS total FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${prevFilter}`, prevP),
         query<{ total: number }>(
           `SELECT COUNT(*) AS total
              FROM diet_forms df
              INNER JOIN payments p ON p.diet_form_id = df.id AND p.status = 'paid'
-            WHERE df.created_at BETWEEN ? AND ?`, prevP),
+            WHERE p.created_at BETWEEN ? AND ?`, prevP),
       ]);
       changes = {
         totalUsers:         pctChange(totalUsers,         Number(pu[0]?.total  ?? 0)),
@@ -913,36 +571,38 @@ export const getDashboardRevenue = async (req: Request, res: Response) => {
 
     interface RevRow { grp_key: string; week_start?: string; revenue: number; }
 
+    // Group by IST date so chart buckets match the admin's IST day/week/month.
+    // created_at is stored in UTC → CONVERT_TZ shifts it to IST before grouping.
     let chartSQL: string;
     if (period === 'weekly') {
       chartSQL = `
-        SELECT CAST(YEARWEEK(created_at, 1) AS CHAR) AS grp_key,
-               DATE_FORMAT(MIN(created_at), '%Y-%m-%d') AS week_start,
-               COALESCE(SUM(amount), 0) AS revenue
-          FROM payments WHERE status = 'paid' ${dateFilter}
-         GROUP BY YEARWEEK(created_at, 1)
-         ORDER BY YEARWEEK(created_at, 1) ASC`;
+        SELECT CAST(YEARWEEK(CONVERT_TZ(created_at, '+00:00', '+05:30'), 1) AS CHAR) AS grp_key,
+               DATE_FORMAT(MIN(CONVERT_TZ(created_at, '+00:00', '+05:30')), '%Y-%m-%d') AS week_start,
+               COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS revenue
+          FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${dateFilter}
+         GROUP BY YEARWEEK(CONVERT_TZ(created_at, '+00:00', '+05:30'), 1)
+         ORDER BY YEARWEEK(CONVERT_TZ(created_at, '+00:00', '+05:30'), 1) ASC`;
     } else if (period === 'monthly') {
       chartSQL = `
-        SELECT DATE_FORMAT(created_at, '%Y-%m') AS grp_key,
-               COALESCE(SUM(amount), 0) AS revenue
-          FROM payments WHERE status = 'paid' ${dateFilter}
-         GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+        SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m') AS grp_key,
+               COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS revenue
+          FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${dateFilter}
+         GROUP BY DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m')
          ORDER BY grp_key ASC`;
     } else {
       chartSQL = `
-        SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS grp_key,
-               COALESCE(SUM(amount), 0) AS revenue
-          FROM payments WHERE status = 'paid' ${dateFilter}
-         GROUP BY DATE(created_at)
+        SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m-%d') AS grp_key,
+               COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS revenue
+          FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${dateFilter}
+         GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '+05:30'))
          ORDER BY grp_key ASC`;
     }
 
     const [chartRows, totalData, prevData] = await Promise.all([
       query<RevRow>(chartSQL, curP),
-      query<{ total: number }>(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'paid' ${dateFilter}`, curP),
+      query<{ total: number }>(`SELECT COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS total FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${dateFilter}`, curP),
       range
-        ? query<{ total: number }>(`SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE status = 'paid' AND created_at BETWEEN ? AND ?`, prevP)
+        ? query<{ total: number }>(`SELECT COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS total FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL AND created_at BETWEEN ? AND ?`, prevP)
         : Promise.resolve([{ total: 0 }]),
     ]);
 
@@ -966,7 +626,7 @@ export const getDashboardRevenue = async (req: Request, res: Response) => {
 export const getDashboardUserGrowth = async (req: Request, res: Response) => {
   try {
     const { from, to } = req.query as { from?: string; to?: string };
-    const period       = ['weekly', 'monthly', 'quarterly', 'yearly'].includes(req.query.period as string)
+    const period       = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly'].includes(req.query.period as string)
       ? (req.query.period as string) : 'monthly';
     const range = buildDateRange(from, to);
 
@@ -976,35 +636,44 @@ export const getDashboardUserGrowth = async (req: Request, res: Response) => {
 
     interface GrowthRow { grp_key: string; week_start?: string; newUsers: number; }
 
+    // Group by IST date so chart buckets match the admin's IST day/week/month.
+    // created_at is stored in UTC → CONVERT_TZ shifts it to IST before grouping.
     let chartSQL: string;
-    if (period === 'weekly') {
+    if (period === 'daily') {
       chartSQL = `
-        SELECT CAST(YEARWEEK(created_at, 1) AS CHAR) AS grp_key,
-               DATE_FORMAT(MIN(created_at), '%Y-%m-%d') AS week_start,
+        SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m-%d') AS grp_key,
                COUNT(*) AS newUsers
           FROM users WHERE role = 'user' AND is_delete = 0 ${dateFilter}
-         GROUP BY YEARWEEK(created_at, 1)
-         ORDER BY YEARWEEK(created_at, 1) ASC`;
+         GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '+05:30'))
+         ORDER BY grp_key ASC`;
+    } else if (period === 'weekly') {
+      chartSQL = `
+        SELECT CAST(YEARWEEK(CONVERT_TZ(created_at, '+00:00', '+05:30'), 1) AS CHAR) AS grp_key,
+               DATE_FORMAT(MIN(CONVERT_TZ(created_at, '+00:00', '+05:30')), '%Y-%m-%d') AS week_start,
+               COUNT(*) AS newUsers
+          FROM users WHERE role = 'user' AND is_delete = 0 ${dateFilter}
+         GROUP BY YEARWEEK(CONVERT_TZ(created_at, '+00:00', '+05:30'), 1)
+         ORDER BY YEARWEEK(CONVERT_TZ(created_at, '+00:00', '+05:30'), 1) ASC`;
     } else if (period === 'quarterly') {
       chartSQL = `
-        SELECT CONCAT(YEAR(created_at), '-Q', QUARTER(created_at)) AS grp_key,
+        SELECT CONCAT(YEAR(CONVERT_TZ(created_at, '+00:00', '+05:30')), '-Q', QUARTER(CONVERT_TZ(created_at, '+00:00', '+05:30'))) AS grp_key,
                COUNT(*) AS newUsers
           FROM users WHERE role = 'user' AND is_delete = 0 ${dateFilter}
-         GROUP BY YEAR(created_at), QUARTER(created_at)
-         ORDER BY YEAR(created_at) ASC, QUARTER(created_at) ASC`;
+         GROUP BY YEAR(CONVERT_TZ(created_at, '+00:00', '+05:30')), QUARTER(CONVERT_TZ(created_at, '+00:00', '+05:30'))
+         ORDER BY YEAR(CONVERT_TZ(created_at, '+00:00', '+05:30')) ASC, QUARTER(CONVERT_TZ(created_at, '+00:00', '+05:30')) ASC`;
     } else if (period === 'yearly') {
       chartSQL = `
-        SELECT CAST(YEAR(created_at) AS CHAR) AS grp_key,
+        SELECT CAST(YEAR(CONVERT_TZ(created_at, '+00:00', '+05:30')) AS CHAR) AS grp_key,
                COUNT(*) AS newUsers
           FROM users WHERE role = 'user' AND is_delete = 0 ${dateFilter}
-         GROUP BY YEAR(created_at)
+         GROUP BY YEAR(CONVERT_TZ(created_at, '+00:00', '+05:30'))
          ORDER BY grp_key ASC`;
     } else {
       chartSQL = `
-        SELECT DATE_FORMAT(created_at, '%Y-%m') AS grp_key,
+        SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m') AS grp_key,
                COUNT(*) AS newUsers
           FROM users WHERE role = 'user' AND is_delete = 0 ${dateFilter}
-         GROUP BY DATE_FORMAT(created_at, '%Y-%m')
+         GROUP BY DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m')
          ORDER BY grp_key ASC`;
     }
 
@@ -1036,37 +705,69 @@ export const getDashboardUserGrowth = async (req: Request, res: Response) => {
 export const getDashboardConsultations = async (req: Request, res: Response) => {
   try {
     const { from, to } = req.query as { from?: string; to?: string };
-    const period       = ['daily', 'weekly'].includes(req.query.period as string)
+    const period       = ['daily', 'weekly', 'monthly'].includes(req.query.period as string)
       ? (req.query.period as string) : 'daily';
-    const range = buildDateRange(from, to);
 
-    const baseFilter = "appointment_source = 'platform' AND session_type = 'video_call' AND status NOT IN ('cancelled', 'missed') AND payment_status = 'paid'";
-    const dateFilter = range ? 'AND created_at BETWEEN ? AND ?' : '';
-    const curP       = range ? [range.current.from, range.current.to] : [];
-    const prevP      = range ? [range.prev.from,    range.prev.to]    : [];
+    // appointment_date is a DATE column (IST dates stored as-is, not UTC DATETIME).
+    // Compare directly with raw ISO date strings — no UTC conversion needed.
+    const hasRange   = !!(from && to);
+    const dateFilter = hasRange ? 'AND appointment_date BETWEEN ? AND ?' : '';
+    const curP: string[] = hasRange ? [from!, to!] : [];
+
+    // Compute prev period as raw ISO date strings
+    let prevP: string[] = [];
+    if (hasRange) {
+      const [fy, fm, fd] = from!.split('-').map(Number);
+      const [ty, tm, td] = to!.split('-').map(Number);
+      const fromMs     = Date.UTC(fy, fm - 1, fd);
+      const toMs       = Date.UTC(ty, tm - 1, td);
+      const days       = Math.round((toMs - fromMs) / 86_400_000) + 1;
+      const prevToMs   = fromMs - 86_400_000;
+      const prevFromMs = fromMs - days * 86_400_000;
+      const fmtDate    = (ms: number) => {
+        const u = new Date(ms);
+        return `${u.getUTCFullYear()}-${pad2(u.getUTCMonth() + 1)}-${pad2(u.getUTCDate())}`;
+      };
+      prevP = [fmtDate(prevFromMs), fmtDate(prevToMs)];
+    }
+
+    // Only paid, non-cancelled online video-call appointments
+    const baseFilter = "appointment_source = 'platform' AND session_type = 'video_call' AND payment_status = 'paid' AND status != 'cancelled'";
 
     interface ConsRow { grp_key: string; week_start?: string; count: number; }
 
-    const chartSQL = period === 'weekly'
-      ? `SELECT CAST(YEARWEEK(created_at, 1) AS CHAR) AS grp_key,
-                DATE_FORMAT(MIN(created_at), '%Y-%m-%d') AS week_start,
-                COUNT(*) AS count
-           FROM appointments WHERE ${baseFilter} ${dateFilter}
-          GROUP BY YEARWEEK(created_at, 1)
-          ORDER BY YEARWEEK(created_at, 1) ASC`
-      : `SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS grp_key,
-                COUNT(*) AS count
-           FROM appointments WHERE ${baseFilter} ${dateFilter}
-          GROUP BY DATE(created_at)
-          ORDER BY grp_key ASC`;
+    let chartSQL: string;
+    if (period === 'weekly') {
+      chartSQL = `SELECT CAST(YEARWEEK(appointment_date, 1) AS CHAR) AS grp_key,
+                         DATE_FORMAT(MIN(appointment_date), '%Y-%m-%d') AS week_start,
+                         COUNT(*) AS count
+                    FROM appointments WHERE ${baseFilter} ${dateFilter}
+                   GROUP BY YEARWEEK(appointment_date, 1)
+                   ORDER BY YEARWEEK(appointment_date, 1) ASC`;
+    } else if (period === 'monthly') {
+      chartSQL = `SELECT DATE_FORMAT(appointment_date, '%Y-%m') AS grp_key,
+                         COUNT(*) AS count
+                    FROM appointments WHERE ${baseFilter} ${dateFilter}
+                   GROUP BY DATE_FORMAT(appointment_date, '%Y-%m')
+                   ORDER BY grp_key ASC`;
+    } else {
+      chartSQL = `SELECT DATE_FORMAT(appointment_date, '%Y-%m-%d') AS grp_key,
+                         COUNT(*) AS count
+                    FROM appointments WHERE ${baseFilter} ${dateFilter}
+                   GROUP BY DATE(appointment_date)
+                   ORDER BY grp_key ASC`;
+    }
 
-    const [chartRows, totalData, breakdownData, prevData] = await Promise.all([
+    const [chartRows, totalData, prevData, breakdownData] = await Promise.all([
       query<ConsRow>(chartSQL, curP),
       query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE ${baseFilter} ${dateFilter}`, curP),
-      query<{ status: string; cnt: number }>(`SELECT status, COUNT(*) AS cnt FROM appointments WHERE ${baseFilter} ${dateFilter} GROUP BY status`, curP),
-      range
-        ? query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE ${baseFilter} AND created_at BETWEEN ? AND ?`, prevP)
+      hasRange
+        ? query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE ${baseFilter} AND appointment_date BETWEEN ? AND ?`, prevP)
         : Promise.resolve([{ total: 0 }]),
+      query<{ status: string; cnt: number }>(
+        `SELECT status, COUNT(*) AS cnt FROM appointments WHERE ${baseFilter} ${dateFilter} GROUP BY status`,
+        curP,
+      ),
     ]);
 
     const total     = Number(totalData[0]?.total ?? 0);
@@ -1074,20 +775,19 @@ export const getDashboardConsultations = async (req: Request, res: Response) => 
 
     const statusMap: Record<string, number> = {};
     for (const row of breakdownData) statusMap[row.status] = Number(row.cnt);
-
-    const completed = statusMap['completed'] ?? 0;
+    // missed = paid session that wasn't attended — counts as completed from revenue perspective
+    const completed = (statusMap['completed'] ?? 0) + (statusMap['missed'] ?? 0);
     const scheduled = (statusMap['pending'] ?? 0) + (statusMap['confirmed'] ?? 0);
-    const cancelled = (statusMap['cancelled'] ?? 0) + (statusMap['missed'] ?? 0);
-    const safePct   = (n: number) => total === 0 ? 0 : parseFloat(((n / total) * 100).toFixed(1));
+    const bdTotal   = completed + scheduled;
+    const safePct   = (n: number) => bdTotal === 0 ? 0 : parseFloat(((n / bdTotal) * 100).toFixed(1));
 
     return successResponse(res, 200, 'Dashboard consultations fetched successfully', {
       total,
-      change: range ? pctChange(total, prevTotal) : null,
+      change: hasRange ? pctChange(total, prevTotal) : null,
       data: chartRows.map(r => ({ label: fmtPeriodLabel(period, r.grp_key, r.week_start), count: Number(r.count) })),
       breakdown: {
         completed: { count: completed, percent: safePct(completed) },
         scheduled: { count: scheduled, percent: safePct(scheduled) },
-        cancelled: { count: cancelled, percent: safePct(cancelled) },
       },
     });
   } catch (err) {

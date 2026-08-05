@@ -10,6 +10,7 @@ export const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
+  timezone: '+00:00', // DB stores UTC via CURRENT_TIMESTAMP; tell mysql2 to read DATETIME columns as UTC so toIST() gives correct IST dates
   ssl: env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
 });
 
