@@ -11,6 +11,7 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
 import { sendEmail } from '../services/email';
 import { dietitianApprovedEmail } from '../services/emails/dietitianApproved';
 import { dietitianWelcomeEmail } from '../services/emails/dietitianWelcome';
+import { adminCreditPlanCredits } from '../models/DietitianWallet';
 
 const generateAccessToken = (userId: number, email: string | null, role: string, tokenVersion: number) => {
   return jwt.sign(
@@ -332,6 +333,14 @@ export const verifyDietitianHandler = async (req: Request, res: Response) => {
     }
 
     await verifyDietitian(dietitian_id);
+
+    // 500 free AI diet plan credits on first verification
+    void adminCreditPlanCredits(
+      dietitian_id,
+      500,
+      Number(req.user?.sub),
+      'Promotional plan credits — welcome bonus for AI diet plan generation',
+    ).catch((err) => console.error('Welcome plan credit failed:', err));
 
     // Fire-and-forget approval email; a mail failure must not fail the request.
     if (dietitian.email) {
