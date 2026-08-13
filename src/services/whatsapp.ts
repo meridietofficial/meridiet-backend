@@ -584,6 +584,64 @@ export const sendDietPlanWhatsApp = async (
   }
 };
 
+// ── Payment reminders (3 flows: 10min / 2h / 24h) ────────────────────────────
+// Each template has 1 body param: {{1}} = user name. Payment URL is static inside the template.
+
+// URL is static inside each MSG91 template — only the user's name is dynamic ({{1}})
+const sendPaymentReminderWhatsApp = async (
+  phone: string,
+  name: string,
+  templateName: string,
+  label: string,
+): Promise<void> => {
+  if (!env.MSG91_WHATSAPP_INTEGRATED_NUMBER || !templateName) {
+    console.warn(`[whatsapp] ${label} template not configured — skipping`);
+    return;
+  }
+
+  const mobile = normaliseMobile(phone);
+  if (!mobile) return;
+
+  const payload = {
+    integrated_number: env.MSG91_WHATSAPP_INTEGRATED_NUMBER,
+    content_type: 'template',
+    payload: {
+      messaging_product: 'whatsapp',
+      to: mobile,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: 'en' },
+        components: [
+          {
+            type: 'body',
+            parameters: [
+              { type: 'text', text: name },
+            ],
+          },
+        ],
+      },
+    },
+  };
+
+  const res = await fetch(MSG91_WA_URL, { method: 'POST', headers: MSG91_HEADERS, body: JSON.stringify(payload) });
+  const body = (await res.json()) as { status?: string; hasError?: boolean; data?: { message_uuid?: string }; errors?: unknown };
+  if (body.hasError) {
+    console.error(`[whatsapp] ${label} failed for ${mobile}:`, JSON.stringify(body));
+  } else {
+    console.log(`[whatsapp] ${label} queued for ${mobile} — uuid: ${body.data?.message_uuid}`);
+  }
+};
+
+export const sendPaymentReminder1WhatsApp = (phone: string, name: string) =>
+  sendPaymentReminderWhatsApp(phone, name, env.MSG91_WHATSAPP_PAYMENT_REMINDER_1_TEMPLATE, 'payment-reminder-1');
+
+export const sendPaymentReminder2WhatsApp = (phone: string, name: string) =>
+  sendPaymentReminderWhatsApp(phone, name, env.MSG91_WHATSAPP_PAYMENT_REMINDER_2_TEMPLATE, 'payment-reminder-2');
+
+export const sendPaymentReminder3WhatsApp = (phone: string, name: string) =>
+  sendPaymentReminderWhatsApp(phone, name, env.MSG91_WHATSAPP_PAYMENT_REMINDER_3_TEMPLATE, 'payment-reminder-3');
+
 // ── Appointment completed + rate your dietitian ────────────────────────────
 // Template body (3 params): {{1}} name, {{2}} date, {{3}} time
 // Button: static URL — https://meridiet.com/profile?tab=appointments (no dynamic param needed)

@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { createDietForm, updateDietForm, findDietFormById, findDietFormByUserId, findAllDietFormsByUserId } from '../models/DietForm';
+import { createDietForm, updateDietForm, findDietFormById, findDietFormByUserId, findAllDietFormsByUserId, markDietFormSubmitted } from '../models/DietForm';
 import { findDietPlanByFormId } from '../models/DietPlan';
 import { successResponse, errorResponse } from '../utils/response';
 import { sendEmail } from '../services/email';
@@ -45,6 +45,11 @@ export const finalizeDietForm = async (req: Request, res: Response) => {
     if (!form) return errorResponse(res, 404, 'Diet form not found');
 
     const userId = form.user_id;
+
+    // Mark as submitted so the payment reminder cron can track timing
+    void markDietFormSubmitted(id).catch((err) => {
+      console.error('[dietForm] markDietFormSubmitted error:', err);
+    });
 
     const deliveryMethods = (form.delivery_method as string[]) ?? [];
     const wantsEmail     = deliveryMethods.includes('email');

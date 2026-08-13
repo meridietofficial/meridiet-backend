@@ -91,6 +91,9 @@ const envSchema = z.object({
   MSG91_WHATSAPP_RESCHEDULE_TEMPLATE: z.string().default('consultation_rescheduled'),
   MSG91_WHATSAPP_DIETITIAN_RESCHEDULE_TEMPLATE: z.string().default('dietitian_appointment_rescheduled'),
   MSG91_WHATSAPP_COMPLETED_TEMPLATE: z.string().default('consultation_completed'),
+  MSG91_WHATSAPP_PAYMENT_REMINDER_1_TEMPLATE: z.string().default('md_payment_reminder_1'),
+  MSG91_WHATSAPP_PAYMENT_REMINDER_2_TEMPLATE: z.string().default('md_payment_reminder_2'),
+  MSG91_WHATSAPP_PAYMENT_REMINDER_3_TEMPLATE: z.string().default('md_payment_reminder_3'),
 
   // Encryption — AES-256-GCM key for sensitive fields (account numbers)
   // Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"

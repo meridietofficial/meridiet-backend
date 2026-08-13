@@ -52,6 +52,12 @@ export interface DietForm {
   state_code: string | null;
   final_notes: string | null;
 
+  // Payment reminder tracking
+  submitted_at: Date | null;
+  reminder_1_sent_at: Date | null;
+  reminder_2_sent_at: Date | null;
+  reminder_3_sent_at: Date | null;
+
   created_at: Date;
   updated_at: Date;
 }
@@ -140,3 +146,74 @@ export const updateDietForm = async (id: number, data: Partial<DietForm>) => {
   await execute(`UPDATE diet_forms SET ${fields} WHERE id = ?`, [...Object.values(payload), id]);
   return findDietFormById(id);
 };
+
+// ── Payment reminder helpers ──────────────────────────────────────────────────
+
+export interface PaymentReminderForm {
+  id: number;
+  full_name: string | null;
+  whatsapp: string;
+  submitted_at: Date;
+}
+
+// Called from finalizeDietForm — idempotent (only sets once)
+export const markDietFormSubmitted = async (id: number): Promise<void> => {
+  await execute(
+    'UPDATE diet_forms SET submitted_at = NOW() WHERE id = ? AND submitted_at IS NULL',
+    [id],
+  );
+};
+
+// Mark reminder N as sent for a given form
+export const markPaymentReminderSent = async (id: number, step: 1 | 2 | 3): Promise<void> => {
+  const col = `reminder_${step}_sent_at`;
+  await execute(`UPDATE diet_forms SET ${col} = NOW() WHERE id = ?`, [id]);
+};
+
+// Forms where: submitted, have whatsapp, no paid payment, R1 not sent, 10+ min since submit
+export const getDuePaymentReminder1Forms = async (): Promise<PaymentReminderForm[]> =>
+  query<PaymentReminderForm>(
+    `SELECT f.id, f.full_name, f.whatsapp, f.submitted_at
+     FROM diet_forms f
+     WHERE f.submitted_at IS NOT NULL
+       AND f.whatsapp IS NOT NULL AND f.whatsapp != ''
+       AND f.reminder_1_sent_at IS NULL
+       AND f.submitted_at <= NOW() - INTERVAL 10 MINUTE
+       AND f.submitted_at >= NOW() - INTERVAL 48 HOUR
+       AND NOT EXISTS (
+         SELECT 1 FROM payments p
+         WHERE p.diet_form_id = f.id AND p.status = 'paid'
+       )`,
+  );
+
+// Forms where: submitted, have whatsapp, no paid payment, R2 not sent, 2+ hours since submit
+export const getDuePaymentReminder2Forms = async (): Promise<PaymentReminderForm[]> =>
+  query<PaymentReminderForm>(
+    `SELECT f.id, f.full_name, f.whatsapp, f.submitted_at
+     FROM diet_forms f
+     WHERE f.submitted_at IS NOT NULL
+       AND f.whatsapp IS NOT NULL AND f.whatsapp != ''
+       AND f.reminder_2_sent_at IS NULL
+       AND f.submitted_at <= NOW() - INTERVAL 2 HOUR
+       AND f.submitted_at >= NOW() - INTERVAL 48 HOUR
+       AND NOT EXISTS (
+         SELECT 1 FROM payments p
+         WHERE p.diet_form_id = f.id AND p.status = 'paid'
+       )`,
+  );
+
+// Forms where: submitted, have whatsapp, no paid payment, R3 not sent, 24+ hours since submit
+export const getDuePaymentReminder3Forms = async (): Promise<PaymentReminderForm[]> =>
+  query<PaymentReminderForm>(
+    `SELECT f.id, f.full_name, f.whatsapp, f.submitted_at
+     FROM diet_forms f
+     WHERE f.submitted_at IS NOT NULL
+       AND f.whatsapp IS NOT NULL AND f.whatsapp != ''
+       AND f.reminder_3_sent_at IS NULL
+       AND f.submitted_at <= NOW() - INTERVAL 24 HOUR
+       AND f.submitted_at >= NOW() - INTERVAL 48 HOUR
+       AND NOT EXISTS (
+         SELECT 1 FROM payments p
+         WHERE p.diet_form_id = f.id AND p.status = 'paid'
+       )`,
+  );

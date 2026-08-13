@@ -6,6 +6,7 @@ import { env } from './config/env';
 import { startMissedAppointmentJob } from './jobs/missedAppointments';
 import { startAppointmentReminderJob } from './jobs/appointmentReminders';
 import { startBroadcastCleanupJob } from './jobs/broadcastCleanup';
+import { startPaymentReminderJob } from './jobs/paymentReminders';
 
 const getNetworkIP = (): string | null => {
   for (const ifaces of Object.values(os.networkInterfaces())) {
@@ -29,6 +30,7 @@ const startServer = async () => {
     startMissedAppointmentJob();
     startAppointmentReminderJob();
     startBroadcastCleanupJob();
+    startPaymentReminderJob();
   } catch (err) {
     console.error('❌ DB connection failed:', (err as Error).message);
   }
