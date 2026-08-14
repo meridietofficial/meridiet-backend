@@ -46,11 +46,6 @@ export const finalizeDietForm = async (req: Request, res: Response) => {
 
     const userId = form.user_id;
 
-    // Mark as submitted so the payment reminder cron can track timing
-    void markDietFormSubmitted(id).catch((err) => {
-      console.error('[dietForm] markDietFormSubmitted error:', err);
-    });
-
     const deliveryMethods = (form.delivery_method as string[]) ?? [];
     const wantsEmail     = deliveryMethods.includes('email');
     const wantsWhatsApp  = deliveryMethods.includes('whatsapp');
@@ -92,6 +87,9 @@ export const finalizeDietForm = async (req: Request, res: Response) => {
   }
 };
 
+// Step 4 fields — presence of any one means the user just completed Step 4
+const STEP4_INDICATORS = ['on_medication', 'digestive_health', 'smoke_alcohol', 'medical_conditions'];
+
 // PUT /api/v1/diet-form/:id
 // Update an existing diet form by id
 export const updateDietFormById = async (req: Request, res: Response) => {
@@ -103,6 +101,14 @@ export const updateDietFormById = async (req: Request, res: Response) => {
     if (!existing) return errorResponse(res, 404, 'Diet form not found');
 
     const form = await updateDietForm(id, req.body);
+
+    // Start the payment reminder clock when Step 4 is saved (idempotent — only sets once)
+    if (STEP4_INDICATORS.some((f) => f in req.body)) {
+      void markDietFormSubmitted(id).catch((err) => {
+        console.error('[dietForm] markDietFormSubmitted (step4) error:', err);
+      });
+    }
+
     return successResponse(res, 200, 'Diet form updated successfully', form);
   } catch (err) {
     console.error('Update diet form error:', err);

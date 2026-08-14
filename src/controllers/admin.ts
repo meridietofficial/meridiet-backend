@@ -506,7 +506,13 @@ export const getDashboardStats = async (req: Request, res: Response) => {
       query<{ total: number }>(`SELECT COUNT(*) AS total FROM users WHERE role = 'user' AND is_delete = 0 ${curFilter}`, curP),
       query<{ total: number }>(`SELECT COUNT(*) AS total FROM dietitians WHERE 1=1 ${curFilter}`, curP),
       query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE ${consultFilter} ${apptDateFilter}`, apptCurP),
-      query<{ total: number }>(`SELECT COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS total FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${curFilter}`, curP),
+      query<{ total: number }>(
+        `SELECT (
+           COALESCE((SELECT SUM(COALESCE(final_amount, amount)) FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${curFilter}), 0) +
+           COALESCE((SELECT SUM(amount) FROM dietitian_registration_payments WHERE status = 'paid' ${curFilter}), 0)
+         ) AS total`,
+        [...curP, ...curP],
+      ),
       query<{ plan_type: number; cnt: number }>(
         `SELECT df.plan_type, COUNT(*) AS cnt
            FROM diet_forms df
@@ -534,7 +540,13 @@ export const getDashboardStats = async (req: Request, res: Response) => {
         query<{ total: number }>(`SELECT COUNT(*) AS total FROM users WHERE role = 'user' AND is_delete = 0 ${prevFilter}`, prevP),
         query<{ total: number }>(`SELECT COUNT(*) AS total FROM dietitians WHERE 1=1 ${prevFilter}`, prevP),
         query<{ total: number }>(`SELECT COUNT(*) AS total FROM appointments WHERE ${consultFilter} AND appointment_date BETWEEN ? AND ?`, apptPrevP),
-        query<{ total: number }>(`SELECT COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS total FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${prevFilter}`, prevP),
+        query<{ total: number }>(
+          `SELECT (
+             COALESCE((SELECT SUM(COALESCE(final_amount, amount)) FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${prevFilter}), 0) +
+             COALESCE((SELECT SUM(amount) FROM dietitian_registration_payments WHERE status = 'paid' ${prevFilter}), 0)
+           ) AS total`,
+          [...prevP, ...prevP],
+        ),
         query<{ total: number }>(
           `SELECT COUNT(*) AS total
              FROM diet_forms df
@@ -582,45 +594,88 @@ export const getDashboardRevenue = async (req: Request, res: Response) => {
 
     // Group by IST date so chart buckets match the admin's IST day/week/month.
     // created_at is stored in UTC → CONVERT_TZ shifts it to IST before grouping.
+    // Each chart query UNIONs diet-form payments + dietitian registration payments.
     let chartSQL: string;
     if (period === 'weekly') {
       chartSQL = `
-        SELECT CAST(YEARWEEK(CONVERT_TZ(created_at, '+00:00', '+05:30'), 1) AS CHAR) AS grp_key,
-               DATE_FORMAT(MIN(CONVERT_TZ(created_at, '+00:00', '+05:30')), '%Y-%m-%d') AS week_start,
-               COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS revenue
-          FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${dateFilter}
-         GROUP BY YEARWEEK(CONVERT_TZ(created_at, '+00:00', '+05:30'), 1)
-         ORDER BY YEARWEEK(CONVERT_TZ(created_at, '+00:00', '+05:30'), 1) ASC`;
+        SELECT grp_key, MIN(week_start) AS week_start, SUM(revenue) AS revenue FROM (
+          SELECT CAST(YEARWEEK(CONVERT_TZ(created_at, '+00:00', '+05:30'), 1) AS CHAR) AS grp_key,
+                 DATE_FORMAT(MIN(CONVERT_TZ(created_at, '+00:00', '+05:30')), '%Y-%m-%d') AS week_start,
+                 COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS revenue
+            FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${dateFilter}
+           GROUP BY YEARWEEK(CONVERT_TZ(created_at, '+00:00', '+05:30'), 1)
+          UNION ALL
+          SELECT CAST(YEARWEEK(CONVERT_TZ(created_at, '+00:00', '+05:30'), 1) AS CHAR) AS grp_key,
+                 DATE_FORMAT(MIN(CONVERT_TZ(created_at, '+00:00', '+05:30')), '%Y-%m-%d') AS week_start,
+                 COALESCE(SUM(amount), 0) AS revenue
+            FROM dietitian_registration_payments WHERE status = 'paid' ${dateFilter}
+           GROUP BY YEARWEEK(CONVERT_TZ(created_at, '+00:00', '+05:30'), 1)
+        ) combined
+        GROUP BY grp_key ORDER BY grp_key ASC`;
     } else if (period === 'monthly') {
       chartSQL = `
-        SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m') AS grp_key,
-               COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS revenue
-          FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${dateFilter}
-         GROUP BY DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m')
-         ORDER BY grp_key ASC`;
+        SELECT grp_key, SUM(revenue) AS revenue FROM (
+          SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m') AS grp_key,
+                 COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS revenue
+            FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${dateFilter}
+           GROUP BY DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m')
+          UNION ALL
+          SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m') AS grp_key,
+                 COALESCE(SUM(amount), 0) AS revenue
+            FROM dietitian_registration_payments WHERE status = 'paid' ${dateFilter}
+           GROUP BY DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m')
+        ) combined
+        GROUP BY grp_key ORDER BY grp_key ASC`;
     } else {
       chartSQL = `
-        SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m-%d') AS grp_key,
-               COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS revenue
-          FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${dateFilter}
-         GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '+05:30'))
-         ORDER BY grp_key ASC`;
+        SELECT grp_key, SUM(revenue) AS revenue FROM (
+          SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m-%d') AS grp_key,
+                 COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS revenue
+            FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${dateFilter}
+           GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '+05:30'))
+          UNION ALL
+          SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m-%d') AS grp_key,
+                 COALESCE(SUM(amount), 0) AS revenue
+            FROM dietitian_registration_payments WHERE status = 'paid' ${dateFilter}
+           GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '+05:30'))
+        ) combined
+        GROUP BY grp_key ORDER BY grp_key ASC`;
     }
 
-    const [chartRows, totalData, prevData] = await Promise.all([
-      query<RevRow>(chartSQL, curP),
-      query<{ total: number }>(`SELECT COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS total FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${dateFilter}`, curP),
+    const dietRegFilter = range ? 'AND created_at BETWEEN ? AND ?' : '';
+
+    const [chartRows, totalData, prevData, dietRegData] = await Promise.all([
+      query<RevRow>(chartSQL, [...curP, ...curP]),
+      query<{ total: number }>(
+        `SELECT (
+           COALESCE((SELECT SUM(COALESCE(final_amount, amount)) FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${dateFilter}), 0) +
+           COALESCE((SELECT SUM(amount) FROM dietitian_registration_payments WHERE status = 'paid' ${dateFilter}), 0)
+         ) AS total`,
+        [...curP, ...curP],
+      ),
       range
-        ? query<{ total: number }>(`SELECT COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS total FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL AND created_at BETWEEN ? AND ?`, prevP)
+        ? query<{ total: number }>(
+            `SELECT (
+               COALESCE((SELECT SUM(COALESCE(final_amount, amount)) FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL AND created_at BETWEEN ? AND ?), 0) +
+               COALESCE((SELECT SUM(amount) FROM dietitian_registration_payments WHERE status = 'paid' AND created_at BETWEEN ? AND ?), 0)
+             ) AS total`,
+            [...prevP, ...prevP],
+          )
         : Promise.resolve([{ total: 0 }]),
+      query<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM dietitians ${dietRegFilter ? `WHERE ${dietRegFilter.replace('AND ', '')}` : ''}`,
+        curP,
+      ),
     ]);
 
-    const total     = Number(totalData[0]?.total ?? 0);
-    const prevTotal = Number(prevData[0]?.total  ?? 0);
+    const total                  = Number(totalData[0]?.total    ?? 0);
+    const prevTotal              = Number(prevData[0]?.total     ?? 0);
+    const dietitianRegistrations = Number(dietRegData[0]?.count  ?? 0);
 
     return successResponse(res, 200, 'Dashboard revenue fetched successfully', {
       total,
       change: range ? pctChange(total, prevTotal) : null,
+      dietitianRegistrations,
       data: chartRows.map(r => ({ label: fmtPeriodLabel(period, r.grp_key, r.week_start), revenue: Number(r.revenue) })),
     });
   } catch (err) {
