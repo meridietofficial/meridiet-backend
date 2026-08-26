@@ -211,6 +211,16 @@ export interface DietPlanWithForm extends DietPlan {
     smoke_alcohol: string | null;
     health_notes: string | null;
     plan_type: number | null;
+    email: string | null;
+    whatsapp: string | null;
+    city: string | null;
+    state: string | null;
+    state_code: string | null;
+    breakfast_time: string | null;
+    lunch_time: string | null;
+    evening_snack_time: string | null;
+    dinner_time: string | null;
+    whey_protein: string | null;
   } | null;
 }
 
@@ -227,6 +237,11 @@ export const findDietPlanWithFormById = async (id: number): Promise<DietPlanWith
     f_on_medication: string | null; f_medications: string | null;
     f_digestive_health: string | null; f_smoke_alcohol: string | null;
     f_health_notes: string | null; f_plan_type: number | null;
+    f_email: string | null; f_whatsapp: string | null;
+    f_city: string | null; f_state: string | null; f_state_code: string | null;
+    f_breakfast_time: string | null; f_lunch_time: string | null;
+    f_evening_snack_time: string | null; f_dinner_time: string | null;
+    f_whey_protein: string | null;
   }>(
     `SELECT dp.*,
        f.id            AS f_id,
@@ -254,7 +269,17 @@ export const findDietPlanWithFormById = async (id: number): Promise<DietPlanWith
        f.digestive_health     AS f_digestive_health,
        f.smoke_alcohol        AS f_smoke_alcohol,
        f.health_notes         AS f_health_notes,
-       f.plan_type            AS f_plan_type
+       f.plan_type            AS f_plan_type,
+       f.email                AS f_email,
+       f.whatsapp             AS f_whatsapp,
+       f.city                 AS f_city,
+       f.state                AS f_state,
+       f.state_code           AS f_state_code,
+       f.breakfast_time       AS f_breakfast_time,
+       f.lunch_time           AS f_lunch_time,
+       f.evening_snack_time   AS f_evening_snack_time,
+       f.dinner_time          AS f_dinner_time,
+       f.whey_protein         AS f_whey_protein
      FROM diet_plans dp
      LEFT JOIN diet_forms f ON f.id = dp.form_id
      WHERE dp.id = ? LIMIT 1`,
@@ -263,6 +288,7 @@ export const findDietPlanWithFormById = async (id: number): Promise<DietPlanWith
   if (!rows[0]) return null;
   const r = rows[0];
   const plan = parse(r as unknown as DietPlan) as DietPlanWithForm;
+  if (!plan.client_name && r.f_full_name) plan.client_name = r.f_full_name;
   plan.form = r.f_id == null ? null : {
     id:                  r.f_id,
     full_name:           r.f_full_name,
@@ -290,6 +316,16 @@ export const findDietPlanWithFormById = async (id: number): Promise<DietPlanWith
     smoke_alcohol:       r.f_smoke_alcohol,
     health_notes:        r.f_health_notes,
     plan_type:           r.f_plan_type,
+    email:               r.f_email,
+    whatsapp:            r.f_whatsapp,
+    city:                r.f_city,
+    state:               r.f_state,
+    state_code:          r.f_state_code,
+    breakfast_time:      r.f_breakfast_time,
+    lunch_time:          r.f_lunch_time,
+    evening_snack_time:  r.f_evening_snack_time,
+    dinner_time:         r.f_dinner_time,
+    whey_protein:        r.f_whey_protein,
   };
   return plan;
 };

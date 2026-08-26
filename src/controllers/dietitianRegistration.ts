@@ -1,17 +1,6 @@
-import crypto from 'crypto';
 import type { Request, Response } from 'express';
-import { razorpay } from '../config/razorpay';
-import { env } from '../config/env';
 import { findUserByEmail, findUserByPhoneNumber, createUser } from '../models/User';
 import { findDietitianByRegistrationNumber, createDietitian } from '../models/Dietitian';
-import {
-  upsertPendingRegistration,
-  setOrderId,
-  findByOrderId,
-  markRegistrationPaid,
-  markRegistrationFailed,
-} from '../models/DietitianRegistrationPayment';
-import { getDietitianRegistrationFee } from '../models/Setting';
 import { saveOtp, getLatestOtp, getVerifiedOtp, markOtpVerified } from '../models/PhoneOtp';
 import { generateOtp, sendOtp, verifyOtp } from '../services/otp';
 import { successResponse, errorResponse } from '../utils/response';
@@ -112,8 +101,10 @@ export const verifyRegistrationOtp = async (req: Request, res: Response) => {
   }
 };
 
-// POST /api/v1/dietitian/register/create-order
-export const createRegistrationOrder = async (req: Request, res: Response) => {
+// POST /api/v1/dietitian/register
+// Creates the account directly — no payment required at registration.
+// Account starts as pending_approval until admin approves.
+export const registerDietitian = async (req: Request, res: Response) => {
   try {
     const body = req.body as Partial<RegistrationData>;
     const { fullName, email, phone, password, state, city, experience } = body;
@@ -149,119 +140,55 @@ export const createRegistrationOrder = async (req: Request, res: Response) => {
       if (existingReg) return errorResponse(res, 409, 'Registration number is already used');
     }
 
-    const fee = await getDietitianRegistrationFee();
-
-    // Store all registration fields (including password — hashing happens on verify)
-    const pendingId = await upsertPendingRegistration(email, { ...body, registrationNumber: regNumber }, fee);
-
-    const order = await razorpay.orders.create({
-      amount: fee * 100, // paise
-      currency: 'INR',
-      receipt: `dietitian_reg_${pendingId}`,
-    });
-
-    await setOrderId(pendingId, order.id);
-
-    return successResponse(res, 201, 'Order created', {
-      order_id: order.id,
-      amount:   fee,
-      currency: 'INR',
-      key_id:   env.RAZORPAY_KEY_ID,
-    });
-  } catch (err) {
-    console.error('Dietitian registration create-order error:', err);
-    return errorResponse(res, 500, 'Failed to create payment order');
-  }
-};
-
-// POST /api/v1/dietitian/register/verify-payment
-export const verifyRegistrationPayment = async (req: Request, res: Response) => {
-  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body as {
-    razorpay_order_id?: string;
-    razorpay_payment_id?: string;
-    razorpay_signature?: string;
-  };
-
-  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
-    return errorResponse(res, 400, 'razorpay_order_id, razorpay_payment_id and razorpay_signature are required');
-  }
-
-  // Verify HMAC signature
-  const expectedSignature = crypto
-    .createHmac('sha256', env.RAZORPAY_KEY_SECRET)
-    .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-    .digest('hex');
-
-  if (expectedSignature !== razorpay_signature) {
-    await markRegistrationFailed(razorpay_order_id).catch(() => null);
-    return errorResponse(res, 400, 'Payment verification failed: invalid signature');
-  }
-
-  try {
-    const pending = await findByOrderId(razorpay_order_id);
-    if (!pending) return errorResponse(res, 404, 'Order not found');
-    if (pending.status === 'paid') return errorResponse(res, 409, 'Payment already verified');
-
-    const data: RegistrationData = typeof pending.registration_data === 'string'
-      ? JSON.parse(pending.registration_data)
-      : pending.registration_data as RegistrationData;
-
-    // Re-check uniqueness (guard against race conditions)
-    const existingEmail = await findUserByEmail(data.email);
-    if (existingEmail) return errorResponse(res, 409, 'Email is already registered');
-
-    await markRegistrationPaid(pending.id, razorpay_payment_id, razorpay_signature);
-
     const user = await createUser({
-      full_name:    data.fullName,
-      email:        data.email,
-      password:     data.password,
+      full_name:    fullName,
+      email:        email,
+      password:     password,
       phone_code:   '+91',
-      phone_number: data.phone,
+      phone_number: normalizedPhone,
       role:         'dietitian',
     });
     if (!user) return errorResponse(res, 500, 'Failed to create user');
 
-    // Clean empty-string values in degrees (year, institute may arrive as "")
-    const cleanedDegrees = data.degrees
+    const cleanedDegrees = body.degrees
       ?.map((d) => ({ ...d, institute: nullIfEmpty(d.institute) ?? '', year: nullIfEmpty(d.year) }))
       ?? null;
 
-    const cleanedAwards = data.awards
+    const cleanedAwards = body.awards
       ?.map((a) => ({ ...a, organization: nullIfEmpty(a.organization) ?? '', year: nullIfEmpty(a.year) }))
       ?? null;
 
     const dietitian = await createDietitian({
       user_id:                  user.id,
-      state:                    data.state,
-      city:                     data.city,
-      registration_number:      nullIfEmpty(data.registrationNumber),
-      experience:               data.experience,
-      specialization:           data.specialization ?? [],
-      date_of_birth:            nullIfEmpty(data.dateOfBirth),
-      gender:                   nullIfEmpty(data.gender),
-      bio:                      nullIfEmpty(data.bio),
-      languages:                data.languages ?? null,
-      services:                 data.services ?? null,
+      state:                    state,
+      city:                     city,
+      registration_number:      nullIfEmpty(regNumber),
+      experience:               experience,
+      specialization:           body.specialization ?? [],
+      date_of_birth:            nullIfEmpty(body.dateOfBirth),
+      gender:                   nullIfEmpty(body.gender),
+      bio:                      nullIfEmpty(body.bio),
+      languages:                body.languages ?? null,
+      services:                 body.services ?? null,
       degrees:                  cleanedDegrees,
       awards:                   cleanedAwards,
-      availability:             data.availability ?? null,
-      profile_photo:            nullIfEmpty(data.documents?.profilePhoto),
-      degree_certificate:       nullIfEmpty(data.documents?.degreeCertificate),
-      registration_certificate: nullIfEmpty(data.documents?.registrationCertificate),
-      id_proof:                 nullIfEmpty(data.documents?.idProof),
-      experience_certificate:   nullIfEmpty(data.documents?.experienceCertificate),
+      availability:             body.availability ?? null,
+      profile_photo:            nullIfEmpty(body.documents?.profilePhoto),
+      degree_certificate:       nullIfEmpty(body.documents?.degreeCertificate),
+      registration_certificate: nullIfEmpty(body.documents?.registrationCertificate),
+      id_proof:                 nullIfEmpty(body.documents?.idProof),
+      experience_certificate:   nullIfEmpty(body.documents?.experienceCertificate),
     });
     if (!dietitian) return errorResponse(res, 500, 'Failed to create dietitian profile');
 
     if (user.email) {
-      const { subject, html, text } = dietitianWelcomeEmail(user.full_name ?? data.fullName);
+      const { subject, html, text } = dietitianWelcomeEmail(user.full_name ?? fullName);
       void sendEmail({ to: user.email, subject, html, text }).catch((err) => {
         console.error('Dietitian welcome email failed:', err);
       });
     }
 
-    return successResponse(res, 201, 'Dietitian registered successfully', {
+    return successResponse(res, 201, 'Registration submitted successfully. Your profile is under review.', {
       user: {
         id:           user.id,
         full_name:    user.full_name,
@@ -278,6 +205,7 @@ export const verifyRegistrationPayment = async (req: Request, res: Response) => 
         specialization:      dietitian.specialization,
         degrees:             dietitian.degrees,
         is_verified:         dietitian.is_verified,
+        subscription_status: dietitian.subscription_status,
         documents: {
           profile_photo:            dietitian.profile_photo,
           degree_certificate:       dietitian.degree_certificate,
@@ -288,20 +216,7 @@ export const verifyRegistrationPayment = async (req: Request, res: Response) => 
       },
     });
   } catch (err) {
-    console.error('Dietitian registration verify-payment error:', err);
-    return errorResponse(res, 500, 'Something went wrong');
-  }
-};
-
-// POST /api/v1/dietitian/register/failed
-export const markRegistrationPaymentFailed = async (req: Request, res: Response) => {
-  try {
-    const { razorpay_order_id } = req.body as { razorpay_order_id?: string };
-    if (!razorpay_order_id) return errorResponse(res, 400, 'razorpay_order_id is required');
-    await markRegistrationFailed(razorpay_order_id);
-    return successResponse(res, 200, 'Marked as failed');
-  } catch (err) {
-    console.error('Dietitian registration mark-failed error:', err);
+    console.error('Dietitian registration error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

@@ -3,7 +3,8 @@ import { query, execute } from '../config/database';
 export interface DietitianRegistrationPayment {
   id: number;
   email: string;
-  registration_data: string; // JSON string from DB
+  dietitian_id: number | null;
+  registration_data: string;
   amount: number;
   razorpay_order_id: string | null;
   razorpay_payment_id: string | null;
@@ -14,12 +15,12 @@ export interface DietitianRegistrationPayment {
   updated_at: Date;
 }
 
+// Used during old pre-payment registration flow (kept for historical records)
 export const upsertPendingRegistration = async (
   email: string,
   registrationData: object,
   fee: number,
 ): Promise<number> => {
-  // Replace any previous pending or failed attempt for this email
   await execute("DELETE FROM dietitian_registration_payments WHERE email = ? AND status IN ('pending', 'failed')", [email]);
   const result = await execute(
     `INSERT INTO dietitian_registration_payments (email, registration_data, amount)
@@ -48,8 +49,8 @@ export const markRegistrationPaid = async (
 ): Promise<void> => {
   await execute(
     `UPDATE dietitian_registration_payments
-     SET status = 'paid', razorpay_payment_id = ?, razorpay_signature = ?, payment_verified_at = NOW()
-     WHERE id = ?`,
+        SET status = 'paid', razorpay_payment_id = ?, razorpay_signature = ?, payment_verified_at = NOW()
+      WHERE id = ?`,
     [paymentId, signature, id],
   );
 };
@@ -59,4 +60,34 @@ export const markRegistrationFailed = async (orderId: string): Promise<void> => 
     `UPDATE dietitian_registration_payments SET status = 'failed' WHERE razorpay_order_id = ?`,
     [orderId],
   );
+};
+
+// Post-trial registration fee payment
+export const createPostTrialRegistrationOrder = async (
+  dietitianId: number,
+  email: string,
+  fee: number,
+  orderId: string,
+): Promise<number> => {
+  // Clean up any previous pending/failed attempts for this dietitian
+  await execute(
+    "DELETE FROM dietitian_registration_payments WHERE dietitian_id = ? AND status IN ('pending', 'failed')",
+    [dietitianId],
+  );
+  const result = await execute(
+    `INSERT INTO dietitian_registration_payments (email, dietitian_id, registration_data, amount, razorpay_order_id)
+     VALUES (?, ?, '{}', ?, ?)`,
+    [email, dietitianId, fee, orderId],
+  );
+  return result.insertId;
+};
+
+export const findPaidRegistrationByDietitianId = async (
+  dietitianId: number,
+): Promise<DietitianRegistrationPayment | null> => {
+  const rows = await query<DietitianRegistrationPayment>(
+    "SELECT * FROM dietitian_registration_payments WHERE dietitian_id = ? AND status = 'paid' LIMIT 1",
+    [dietitianId],
+  );
+  return rows[0] ?? null;
 };

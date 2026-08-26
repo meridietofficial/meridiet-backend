@@ -36,6 +36,10 @@ export interface Dietitian {
   id_proof: string | null;
   experience_certificate: string | null;
   is_verified: boolean;
+  subscription_status: 'pending_approval' | 'trial' | 'active' | 'expired';
+  trial_starts_at: Date | null;
+  trial_ends_at: Date | null;
+  activated_at: Date | null;
   is_online: boolean;
   sync_offline_slots: boolean;
   appointment_fee: number;
@@ -133,6 +137,17 @@ export const formatDietitianRow = (d: DietitianWithUser) => ({
   awards: parseJson<AwardEntry[]>(d.awards) ?? [],
   availability: parseJson<Record<string, string[]>>(d.availability) ?? null,
   is_verified: d.is_verified,
+  subscription_status: d.subscription_status,
+  access_type: (() => {
+    if (d.subscription_status === 'active' && d.activated_at) return 'paid';
+    if (d.subscription_status === 'active') return 'paid';
+    if (d.subscription_status === 'trial') return 'trial';
+    if (d.subscription_status === 'expired') return 'expired';
+    return 'pending';
+  })(),
+  trial_starts_at: d.trial_starts_at ?? null,
+  trial_ends_at: d.trial_ends_at ?? null,
+  activated_at: d.activated_at ?? null,
   is_online: d.is_online,
   appointment_fee: Number(d.appointment_fee ?? 0),
   appointment_currency: d.appointment_currency ?? 'INR',
@@ -236,7 +251,9 @@ const DIETITIAN_USER_SELECT = `
     d.experience, d.specialization, d.date_of_birth, d.gender, d.bio,
     d.languages, d.services, d.degrees, d.awards, d.availability,
     d.profile_photo, d.logo_url, d.degree_certificate, d.registration_certificate,
-    d.id_proof, d.experience_certificate, d.is_verified, d.is_online, d.sync_offline_slots,
+    d.id_proof, d.experience_certificate, d.is_verified,
+    d.subscription_status, d.trial_starts_at, d.trial_ends_at, d.activated_at,
+    d.is_online, d.sync_offline_slots,
     d.appointment_fee, d.appointment_currency, d.created_at, d.updated_at,
     u.full_name, u.email, u.phone_code, u.phone_number, u.is_active, u.avatar_url
   FROM dietitians d
@@ -301,7 +318,9 @@ export const getDietitiansPaginated = async (filters: AdminDietitianFilters) => 
         d.experience, d.specialization, d.date_of_birth, d.gender, d.bio,
         d.languages, d.services, d.degrees, d.awards, d.availability,
         d.profile_photo, d.logo_url, d.degree_certificate, d.registration_certificate,
-        d.id_proof, d.experience_certificate, d.is_verified, d.is_online,
+        d.id_proof, d.experience_certificate, d.is_verified,
+        d.subscription_status, d.trial_starts_at, d.trial_ends_at, d.activated_at,
+        d.is_online,
         d.appointment_fee, d.appointment_currency, d.created_at, d.updated_at,
         u.full_name, u.email, u.phone_code, u.phone_number, u.is_active, u.avatar_url
        FROM dietitians d
@@ -464,7 +483,36 @@ export const getDistinctSpecializations = async () => {
 };
 
 export const verifyDietitian = async (id: number) => {
-  await execute('UPDATE dietitians SET is_verified = 1 WHERE id = ?', [id]);
+  await execute(
+    `UPDATE dietitians
+        SET is_verified = 1,
+            subscription_status = 'trial',
+            trial_starts_at = NOW(),
+            trial_ends_at = DATE_ADD(NOW(), INTERVAL 7 DAY)
+      WHERE id = ?`,
+    [id],
+  );
+};
+
+export const activateDietitianSubscription = async (id: number) => {
+  await execute(
+    `UPDATE dietitians
+        SET subscription_status = 'active', activated_at = NOW()
+      WHERE id = ?`,
+    [id],
+  );
+};
+
+export const expireTrialDietitians = async (): Promise<number> => {
+  const result = await execute(
+    `UPDATE dietitians
+        SET subscription_status = 'expired'
+      WHERE subscription_status = 'trial'
+        AND trial_ends_at IS NOT NULL
+        AND trial_ends_at < NOW()`,
+    [],
+  );
+  return result.affectedRows ?? 0;
 };
 
 export const createDietitian = async (data: CreateDietitianData) => {

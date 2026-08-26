@@ -211,14 +211,16 @@ async function getRegistrationEarnings(search: string | undefined, status: strin
     status === 'pending' ? `AND status = 'pending'` :
     status === 'failed'  ? `AND status = 'failed'` : '';
 
-  const searchCond = search ? `AND (email LIKE ? OR razorpay_order_id LIKE ? OR razorpay_payment_id LIKE ?)` : '';
-  const searchParams = search ? [`%${search}%`, `%${search}%`, `%${search}%`] : [];
+  const searchCond = search ? `AND (email LIKE ? OR razorpay_order_id LIKE ? OR razorpay_payment_id LIKE ? OR JSON_UNQUOTE(JSON_EXTRACT(registration_data, '$.fullName')) LIKE ? OR JSON_UNQUOTE(JSON_EXTRACT(registration_data, '$.phone')) LIKE ?)` : '';
+  const searchParams = search ? [`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`] : [];
 
   const baseWhere = `WHERE 1=1 ${statusCond} ${searchCond}`;
 
   const [rows, countRows, summaryRows] = await Promise.all([
     query<{
       id: number;
+      name: string | null;
+      phone: string | null;
       email: string;
       amount: number;
       status: string;
@@ -227,7 +229,10 @@ async function getRegistrationEarnings(search: string | undefined, status: strin
       payment_verified_at: string | null;
       created_at: string;
     }>(
-      `SELECT id, email, amount, status,
+      `SELECT id,
+              JSON_UNQUOTE(JSON_EXTRACT(registration_data, '$.fullName')) AS name,
+              JSON_UNQUOTE(JSON_EXTRACT(registration_data, '$.phone'))    AS phone,
+              email, amount, status,
               razorpay_order_id, razorpay_payment_id,
               DATE_FORMAT(payment_verified_at, '%Y-%m-%d %H:%i:%s') AS payment_verified_at,
               DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at

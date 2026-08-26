@@ -7,6 +7,7 @@ import { startMissedAppointmentJob } from './jobs/missedAppointments';
 import { startAppointmentReminderJob } from './jobs/appointmentReminders';
 import { startBroadcastCleanupJob } from './jobs/broadcastCleanup';
 import { startPaymentReminderJob } from './jobs/paymentReminders';
+import { startTrialExpiryJob } from './jobs/trialExpiry';
 
 const getNetworkIP = (): string | null => {
   for (const ifaces of Object.values(os.networkInterfaces())) {
@@ -31,6 +32,7 @@ const startServer = async () => {
     startAppointmentReminderJob();
     startBroadcastCleanupJob();
     startPaymentReminderJob();
+    startTrialExpiryJob();
   } catch (err) {
     console.error('❌ DB connection failed:', (err as Error).message);
   }

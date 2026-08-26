@@ -334,12 +334,12 @@ export const verifyDietitianHandler = async (req: Request, res: Response) => {
 
     await verifyDietitian(dietitian_id);
 
-    // 500 free AI diet plan credits on first verification
+    // 100 free AI diet plan credits on first verification (trial welcome bonus)
     void adminCreditPlanCredits(
       dietitian_id,
-      500,
+      100,
       Number(req.user?.sub),
-      'Promotional plan credits — welcome bonus for AI diet plan generation',
+      'Trial welcome bonus — 100 AI diet plan credits',
     ).catch((err) => console.error('Welcome plan credit failed:', err));
 
     // Fire-and-forget approval email; a mail failure must not fail the request.

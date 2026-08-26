@@ -156,12 +156,12 @@ export const verifyPaymentAndSubmitForm = async (req: Request, res: Response) =>
     }
 
     // Background: generate plan → PDF → S3 → cashback/subscription credit → email
-    if (userId) {
-      const weeksOverride = payment.plan === '3_months' ? 4 : undefined;
-      void generateAndDeliverDietPlan(form.id, userId, weeksOverride).catch((err) => {
-        console.error('[payment] delivery pipeline error:', err);
-      });
-    }
+    // Always trigger generation even for guest checkouts (userId may be null).
+    // generateAndDeliverDietPlan already handles null userId — wallet credit is skipped gracefully.
+    const weeksOverride = payment.plan === '3_months' ? 4 : undefined;
+    void generateAndDeliverDietPlan(form.id, userId, weeksOverride).catch((err) => {
+      console.error('[payment] delivery pipeline error:', err);
+    });
 
     return successResponse(res, 201, 'Payment verified successfully', {
       diet_form: form,
