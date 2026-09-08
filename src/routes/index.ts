@@ -19,6 +19,8 @@ import { couponRouter } from './coupon';
 import { courseRouter } from './course';
 import { careerRouter } from './career';
 import { invoiceRouter } from './invoice';
+import { partnershipRouter } from './partnership';
+import { sponsorCohortRouter } from './sponsorCohort';
 
 export const router = Router();
 
@@ -41,4 +43,6 @@ router.use('/coupons', couponRouter);
 router.use('/course', courseRouter);
 router.use('/career', careerRouter);
 router.use('/invoice', invoiceRouter);
+router.use('/partnership-inquiry', partnershipRouter);
+router.use('/sponsor-cohort', sponsorCohortRouter);
 router.use('/', settingsRouter);
