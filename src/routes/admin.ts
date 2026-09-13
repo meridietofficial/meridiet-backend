@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/authenticate';
-import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDashboardStats, getDashboardRevenue, getDashboardUserGrowth, getDashboardConsultations, getSystemOverview, adminRegisterDietitian } from '../controllers/admin';
+import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, toggleDietitianOffer, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDashboardStats, getDashboardRevenue, getDashboardUserGrowth, getDashboardConsultations, getSystemOverview, adminRegisterDietitian } from '../controllers/admin';
 import { listDietPlansForAdmin, getDietPlanForAdmin, editDietPlan, sendDietPlanToUser, retryDietPlanGeneration, listManualDietPlansForAdmin, getManualDietPlanForAdmin, getDietFormRequests, getPaidDietCharts, getDietChartDetails, previewDietPlan } from '../controllers/adminDietPlan';
 import { adminCreateCoupon, adminListCoupons, adminGetCoupon, adminUpdateCoupon, adminDeactivateCoupon, adminGetCouponUsages, adminGetAllCouponUsages } from '../controllers/coupon';
 import { adminListEnquiries, adminGetEnquiry, adminUpdateEnquiryStatus, adminListEnrollments, adminGetEnrollment, adminCourseStats } from '../controllers/adminCourse';
@@ -57,6 +57,7 @@ adminRouter.get('/dietitian/:id', authenticate, authorize('admin'), getDietitian
 adminRouter.patch('/toggle-block-dietitian', authenticate, authorize('admin'), toggleBlockDietitian);
 adminRouter.delete('/delete-dietitian', authenticate, authorize('admin'), deleteDietitian);
 adminRouter.patch('/dietitians/verify', authenticate, authorize('admin'), verifyDietitianHandler);
+adminRouter.patch('/dietitians/:id/toggle-offer', authenticate, authorize('admin'), toggleDietitianOffer);
 
 // Diet form requests — admin only
 adminRouter.get('/diet-form-requests', authenticate, authorize('admin'), getDietFormRequests);

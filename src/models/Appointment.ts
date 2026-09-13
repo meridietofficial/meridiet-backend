@@ -449,8 +449,9 @@ export const findUnpaidSlotAppointment = async (
   const rows = await query<Appointment>(
     `SELECT ${APPOINTMENT_SELECT} FROM appointments
       WHERE dietitian_id = ? AND appointment_date = ? AND slot = ?
-        AND payment_status = 'unpaid' AND status = 'pending'
+        AND payment_status = 'unpaid' AND status IN ('pending', 'cancelled')
         AND (user_id = ? OR (? IS NULL AND user_id IS NULL))
+      ORDER BY FIELD(status, 'pending', 'cancelled')
       LIMIT 1`,
     [dietitian_id, appointment_date, slot, userId, userId],
   );
@@ -470,7 +471,10 @@ export const updateAppointmentOnRetry = async (
   finalAmount: number | null,
 ) => {
   await execute(
-    'UPDATE appointments SET order_id = ?, coupon_id = ?, discount_applied = ?, final_amount = ? WHERE id = ?',
+    `UPDATE appointments
+        SET order_id = ?, coupon_id = ?, discount_applied = ?, final_amount = ?,
+            status = 'pending', payment_status = 'unpaid'
+      WHERE id = ?`,
     [order_id, couponId, discountApplied, finalAmount, id],
   );
 };

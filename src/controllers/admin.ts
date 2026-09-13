@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { findUserByEmail, findUserByPhoneNumber, findUserById, checkPassword, updateUser, softDeleteUser, updateUserPassword, getUsersPaginated, createUser } from '../models/User';
-import { getDietitiansPaginated, findDietitianById, verifyDietitian, formatDietitianRow, findDietitianByRegistrationNumber, createDietitian } from '../models/Dietitian';
+import { getDietitiansPaginated, findDietitianById, verifyDietitian, setDietitianOffer, formatDietitianRow, findDietitianByRegistrationNumber, createDietitian } from '../models/Dietitian';
 import { query } from '../config/database';
 import { env } from '../config/env';
 import { successResponse, errorResponse } from '../utils/response';
@@ -353,6 +353,33 @@ export const verifyDietitianHandler = async (req: Request, res: Response) => {
     return successResponse(res, 200, 'Dietitian verified successfully', { dietitian_id, is_verified: true });
   } catch (err) {
     console.error('Verify dietitian error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// PATCH /api/v1/admin/dietitians/:id/toggle-offer
+// Body: { is_under_offer: true | false }
+export const toggleDietitianOffer = async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid dietitian ID');
+
+    const { is_under_offer } = req.body as { is_under_offer?: boolean };
+    if (is_under_offer === undefined || is_under_offer === null) {
+      return errorResponse(res, 400, 'is_under_offer is required');
+    }
+
+    const dietitian = await findDietitianById(id);
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian not found');
+
+    await setDietitianOffer(id, Boolean(is_under_offer));
+
+    return successResponse(res, 200, `Dietitian ${is_under_offer ? 'added to' : 'removed from'} offer`, {
+      dietitian_id: id,
+      is_under_offer: Boolean(is_under_offer),
+    });
+  } catch (err) {
+    console.error('Toggle dietitian offer error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

@@ -46,6 +46,7 @@ export interface Dietitian {
   appointment_currency: string;
   earnings_balance: number;
   plan_credits: number;
+  is_under_offer: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -151,6 +152,7 @@ export const formatDietitianRow = (d: DietitianWithUser) => ({
   is_online: d.is_online,
   appointment_fee: Number(d.appointment_fee ?? 0),
   appointment_currency: d.appointment_currency ?? 'INR',
+  is_under_offer: Boolean(d.is_under_offer),
   documents: {
     profile_photo: d.profile_photo,
     logo_url: d.logo_url ?? null,
@@ -188,6 +190,7 @@ export const formatDietitianCard = (d: DietitianWithUser, days = 14) => {
     is_verified: d.is_verified,
     appointment_fee: Number(d.appointment_fee ?? 0),
     appointment_currency: d.appointment_currency ?? 'INR',
+    is_under_offer: Boolean(d.is_under_offer),
   };
 };
 
@@ -240,6 +243,7 @@ export const formatDietitianPublic = (
     reviewsList: [] as unknown[],
     appointment_fee: Number(d.appointment_fee ?? 0),
     appointment_currency: d.appointment_currency ?? 'INR',
+    is_under_offer: Boolean(d.is_under_offer),
     consultations: 0,
     created_at: d.created_at,
   };
@@ -254,7 +258,7 @@ const DIETITIAN_USER_SELECT = `
     d.id_proof, d.experience_certificate, d.is_verified,
     d.subscription_status, d.trial_starts_at, d.trial_ends_at, d.activated_at,
     d.is_online, d.sync_offline_slots,
-    d.appointment_fee, d.appointment_currency, d.created_at, d.updated_at,
+    d.appointment_fee, d.appointment_currency, d.is_under_offer, d.created_at, d.updated_at,
     u.full_name, u.email, u.phone_code, u.phone_number, u.is_active, u.avatar_url
   FROM dietitians d
   JOIN users u ON d.user_id = u.id
@@ -321,7 +325,7 @@ export const getDietitiansPaginated = async (filters: AdminDietitianFilters) => 
         d.id_proof, d.experience_certificate, d.is_verified,
         d.subscription_status, d.trial_starts_at, d.trial_ends_at, d.activated_at,
         d.is_online,
-        d.appointment_fee, d.appointment_currency, d.created_at, d.updated_at,
+        d.appointment_fee, d.appointment_currency, d.is_under_offer, d.created_at, d.updated_at,
         u.full_name, u.email, u.phone_code, u.phone_number, u.is_active, u.avatar_url
        FROM dietitians d
        JOIN users u ON d.user_id = u.id
@@ -442,14 +446,14 @@ export const listPublicDietitians = async (filters: DietitianListFilters) => {
   const orderBy = (() => {
     switch (filters.sort) {
       case 'available_now':
-        return 'd.is_online DESC, d.created_at DESC';
+        return 'd.is_under_offer DESC, d.is_online DESC, d.created_at DESC';
       case 'experience':
-        return 'CAST(d.experience AS UNSIGNED) DESC, d.created_at DESC';
+        return 'd.is_under_offer DESC, CAST(d.experience AS UNSIGNED) DESC, d.created_at DESC';
       case 'top_rated':
       case 'most_reviewed':
-        return 'd.is_online DESC, CAST(d.experience AS UNSIGNED) DESC, d.created_at DESC';
+        return 'd.is_under_offer DESC, d.is_online DESC, CAST(d.experience AS UNSIGNED) DESC, d.created_at DESC';
       default:
-        return 'd.created_at DESC';
+        return 'd.is_under_offer DESC, d.created_at DESC';
     }
   })();
 
@@ -491,6 +495,13 @@ export const verifyDietitian = async (id: number) => {
             trial_ends_at = DATE_ADD(NOW(), INTERVAL 7 DAY)
       WHERE id = ?`,
     [id],
+  );
+};
+
+export const setDietitianOffer = async (id: number, is_under_offer: boolean) => {
+  await execute(
+    'UPDATE dietitians SET is_under_offer = ? WHERE id = ?',
+    [is_under_offer ? 1 : 0, id],
   );
 };
 
