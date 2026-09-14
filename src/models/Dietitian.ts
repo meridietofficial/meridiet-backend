@@ -281,6 +281,7 @@ export interface AdminDietitianFilters {
   is_verified: 0 | 1;
   search?: string;
   status?: string;
+  subscriptionStatus?: string;
   startDate?: string;
   endDate?: string;
   sortBy?: string;
@@ -288,7 +289,7 @@ export interface AdminDietitianFilters {
 }
 
 export const getDietitiansPaginated = async (filters: AdminDietitianFilters) => {
-  const { page, limit, is_verified, search, status, startDate, endDate, sortBy, sortOrder } = filters;
+  const { page, limit, is_verified, search, status, subscriptionStatus, startDate, endDate, sortBy, sortOrder } = filters;
   const offset = (page - 1) * limit;
 
   const conditions: string[] = ['u.is_delete = 0', `d.is_verified = ${is_verified}`];
@@ -304,6 +305,11 @@ export const getDietitiansPaginated = async (filters: AdminDietitianFilters) => 
     conditions.push('u.is_active = 1');
   } else if (status === 'blocked') {
     conditions.push('u.is_active = 0');
+  }
+
+  if (subscriptionStatus) {
+    conditions.push('d.subscription_status = ?');
+    params.push(subscriptionStatus);
   }
 
   if (startDate) { conditions.push('DATE(d.created_at) >= ?'); params.push(startDate); }

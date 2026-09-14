@@ -1,11 +1,17 @@
+import jwt from 'jsonwebtoken';
 import type { Request, Response } from 'express';
 import { findUserByEmail, findUserByPhoneNumber, createUser } from '../models/User';
-import { findDietitianByRegistrationNumber, createDietitian } from '../models/Dietitian';
+import { findDietitianByRegistrationNumber, findDietitianByUserId, createDietitian } from '../models/Dietitian';
 import { saveOtp, getLatestOtp, getVerifiedOtp, markOtpVerified } from '../models/PhoneOtp';
 import { generateOtp, sendOtp, verifyOtp } from '../services/otp';
 import { successResponse, errorResponse } from '../utils/response';
 import { sendEmail } from '../services/email';
 import { dietitianWelcomeEmail } from '../services/emails/dietitianWelcome';
+import { env } from '../config/env';
+
+const generateToken = (userId: number, email: string | null, role: string, tokenVersion: number) =>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  jwt.sign({ sub: userId, email, role, tokenVersion }, env.JWT_SECRET, { expiresIn: env.JWT_ACCESS_EXPIRES_IN } as any);
 
 const PHONE_CODE = '91';
 
@@ -56,8 +62,13 @@ export const sendRegistrationOtp = async (req: Request, res: Response) => {
     const number = normalizePhone(phone.trim());
     if (!number) return errorResponse(res, 400, 'Enter a valid 10-digit Indian mobile number');
 
-    const existingPhone = await findUserByPhoneNumber(number);
-    if (existingPhone) return errorResponse(res, 409, 'Phone number is already registered');
+    const existingUser = await findUserByPhoneNumber(number);
+    if (existingUser) {
+      const existingDietitian = await findDietitianByUserId(existingUser.id);
+      if (existingDietitian && existingDietitian.subscription_status === 'active') {
+        return errorResponse(res, 409, 'Phone number is already registered');
+      }
+    }
 
     const otp = generateOtp();
     await saveOtp(PHONE_CODE, number, otp);
@@ -181,6 +192,8 @@ export const registerDietitian = async (req: Request, res: Response) => {
     });
     if (!dietitian) return errorResponse(res, 500, 'Failed to create dietitian profile');
 
+    const token = generateToken(user.id, user.email, user.role, user.token_version);
+
     if (user.email) {
       const { subject, html, text } = dietitianWelcomeEmail(user.full_name ?? fullName);
       void sendEmail({ to: user.email, subject, html, text }).catch((err) => {
@@ -189,6 +202,7 @@ export const registerDietitian = async (req: Request, res: Response) => {
     }
 
     return successResponse(res, 201, 'Registration submitted successfully. Your profile is under review.', {
+      token,
       user: {
         id:           user.id,
         full_name:    user.full_name,

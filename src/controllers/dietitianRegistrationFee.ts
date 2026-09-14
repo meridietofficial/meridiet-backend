@@ -28,10 +28,6 @@ export const createRegistrationFeeOrder = async (req: Request, res: Response) =>
       return errorResponse(res, 400, 'Registration fee already paid');
     }
 
-    if (dietitian.subscription_status === 'pending_approval') {
-      return errorResponse(res, 400, 'Your profile is still under review. You cannot pay yet.');
-    }
-
     // Check if already paid (idempotency guard)
     const alreadyPaid = await findPaidRegistrationByDietitianId(dietitian.id);
     if (alreadyPaid) return errorResponse(res, 400, 'Registration fee already paid');

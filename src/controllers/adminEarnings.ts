@@ -106,11 +106,11 @@ async function getAppointmentEarnings(search: string | undefined, status: string
     status === 'refunded'  ? `AND a.payment_status = 'refunded'` : '';
 
   const searchCond = search
-    ? `AND (COALESCE(u.full_name, a.name) LIKE ? OR u.email LIKE ? OR d.full_name LIKE ?)`
+    ? `AND (COALESCE(u.full_name, a.name) LIKE ? OR u.email LIKE ? OR du.full_name LIKE ?)`
     : '';
   const searchParams = search ? [`%${search}%`, `%${search}%`, `%${search}%`] : [];
 
-  const baseWhere = `WHERE a.payment_status != 'unpaid' OR a.status IN ('confirmed','completed') ${statusCond} ${searchCond}`;
+  const baseWhere = `WHERE (a.payment_status != 'unpaid' OR a.status IN ('confirmed','completed')) ${statusCond} ${searchCond}`;
 
   const [rows, countRows, summaryRows] = await Promise.all([
     query<{
@@ -132,14 +132,15 @@ async function getAppointmentEarnings(search: string | undefined, status: string
               COALESCE(u.full_name, a.name) AS client_name,
               COALESCE(u.email, '')          AS client_email,
               u.avatar_url                   AS client_avatar,
-              d.full_name                    AS dietitian_name,
+              du.full_name                   AS dietitian_name,
               DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS appointment_date,
               a.fee, a.final_amount, a.currency,
               a.status, a.payment_status, a.payment_id,
               DATE_FORMAT(a.created_at, '%Y-%m-%d %H:%i:%s') AS created_at
        FROM appointments a
-       LEFT JOIN users u      ON u.id = a.user_id AND u.is_delete = 0
-       LEFT JOIN dietitians d ON d.id = a.dietitian_id
+       LEFT JOIN users u       ON u.id = a.user_id AND u.is_delete = 0
+       LEFT JOIN dietitians d  ON d.id = a.dietitian_id
+       LEFT JOIN users du      ON du.id = d.user_id AND du.is_delete = 0
        ${baseWhere}
        ORDER BY a.created_at DESC
        LIMIT ${limit} OFFSET ${offset}`,
@@ -148,8 +149,9 @@ async function getAppointmentEarnings(search: string | undefined, status: string
     query<{ total: number }>(
       `SELECT COUNT(*) AS total
        FROM appointments a
-       LEFT JOIN users u      ON u.id = a.user_id AND u.is_delete = 0
-       LEFT JOIN dietitians d ON d.id = a.dietitian_id
+       LEFT JOIN users u       ON u.id = a.user_id AND u.is_delete = 0
+       LEFT JOIN dietitians d  ON d.id = a.dietitian_id
+       LEFT JOIN users du      ON du.id = d.user_id AND du.is_delete = 0
        ${baseWhere}`,
       searchParams,
     ),
@@ -160,8 +162,9 @@ async function getAppointmentEarnings(search: string | undefined, status: string
          SUM(a.payment_status = 'unpaid')   AS pending_count,
          SUM(a.payment_status = 'refunded') AS refunded_count
        FROM appointments a
-       LEFT JOIN users u      ON u.id = a.user_id AND u.is_delete = 0
-       LEFT JOIN dietitians d ON d.id = a.dietitian_id
+       LEFT JOIN users u       ON u.id = a.user_id AND u.is_delete = 0
+       LEFT JOIN dietitians d  ON d.id = a.dietitian_id
+       LEFT JOIN users du      ON du.id = d.user_id AND du.is_delete = 0
        ${baseWhere}`,
       searchParams,
     ),
@@ -207,11 +210,11 @@ async function getRegistrationEarnings(search: string | undefined, status: strin
   const offset = (page - 1) * limit;
 
   const statusCond =
-    status === 'paid'    ? `AND status = 'paid'` :
-    status === 'pending' ? `AND status = 'pending'` :
-    status === 'failed'  ? `AND status = 'failed'` : '';
+    status === 'paid'    ? `AND p.status = 'paid'` :
+    status === 'pending' ? `AND p.status = 'pending'` :
+    status === 'failed'  ? `AND p.status = 'failed'` : '';
 
-  const searchCond = search ? `AND (email LIKE ? OR razorpay_order_id LIKE ? OR razorpay_payment_id LIKE ? OR JSON_UNQUOTE(JSON_EXTRACT(registration_data, '$.fullName')) LIKE ? OR JSON_UNQUOTE(JSON_EXTRACT(registration_data, '$.phone')) LIKE ?)` : '';
+  const searchCond = search ? `AND (p.email LIKE ? OR p.razorpay_order_id LIKE ? OR p.razorpay_payment_id LIKE ? OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(p.registration_data, '$.fullName')), u.full_name) LIKE ? OR COALESCE(JSON_UNQUOTE(JSON_EXTRACT(p.registration_data, '$.phone')), u.phone_number) LIKE ?)` : '';
   const searchParams = search ? [`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`] : [];
 
   const baseWhere = `WHERE 1=1 ${statusCond} ${searchCond}`;
@@ -229,30 +232,38 @@ async function getRegistrationEarnings(search: string | undefined, status: strin
       payment_verified_at: string | null;
       created_at: string;
     }>(
-      `SELECT id,
-              JSON_UNQUOTE(JSON_EXTRACT(registration_data, '$.fullName')) AS name,
-              JSON_UNQUOTE(JSON_EXTRACT(registration_data, '$.phone'))    AS phone,
-              email, amount, status,
-              razorpay_order_id, razorpay_payment_id,
-              DATE_FORMAT(payment_verified_at, '%Y-%m-%d %H:%i:%s') AS payment_verified_at,
-              DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at
-       FROM dietitian_registration_payments
+      `SELECT p.id,
+              COALESCE(JSON_UNQUOTE(JSON_EXTRACT(p.registration_data, '$.fullName')), u.full_name)    AS name,
+              COALESCE(JSON_UNQUOTE(JSON_EXTRACT(p.registration_data, '$.phone')),    u.phone_number) AS phone,
+              p.email, p.amount, p.status,
+              p.razorpay_order_id, p.razorpay_payment_id,
+              DATE_FORMAT(p.payment_verified_at, '%Y-%m-%d %H:%i:%s') AS payment_verified_at,
+              DATE_FORMAT(p.created_at, '%Y-%m-%d %H:%i:%s') AS created_at
+       FROM dietitian_registration_payments p
+       LEFT JOIN dietitians d ON d.id = p.dietitian_id
+       LEFT JOIN users u      ON u.id = d.user_id AND u.is_delete = 0
        ${baseWhere}
-       ORDER BY created_at DESC
+       ORDER BY p.created_at DESC
        LIMIT ${limit} OFFSET ${offset}`,
       searchParams,
     ),
     query<{ total: number }>(
-      `SELECT COUNT(*) AS total FROM dietitian_registration_payments ${baseWhere}`,
+      `SELECT COUNT(*) AS total
+       FROM dietitian_registration_payments p
+       LEFT JOIN dietitians d ON d.id = p.dietitian_id
+       LEFT JOIN users u      ON u.id = d.user_id AND u.is_delete = 0
+       ${baseWhere}`,
       searchParams,
     ),
     query<{ total_revenue: number; paid_count: number; pending_count: number; failed_count: number }>(
       `SELECT
-         COALESCE(SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END), 0) AS total_revenue,
-         SUM(status = 'paid')    AS paid_count,
-         SUM(status = 'pending') AS pending_count,
-         SUM(status = 'failed')  AS failed_count
-       FROM dietitian_registration_payments
+         COALESCE(SUM(CASE WHEN p.status = 'paid' THEN p.amount ELSE 0 END), 0) AS total_revenue,
+         SUM(p.status = 'paid')    AS paid_count,
+         SUM(p.status = 'pending') AS pending_count,
+         SUM(p.status = 'failed')  AS failed_count
+       FROM dietitian_registration_payments p
+       LEFT JOIN dietitians d ON d.id = p.dietitian_id
+       LEFT JOIN users u      ON u.id = d.user_id AND u.is_delete = 0
        ${baseWhere}`,
       searchParams,
     ),

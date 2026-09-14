@@ -157,7 +157,7 @@ export const getDietitianRequests = async (req: Request, res: Response) => {
     const sortBy    = req.query.sortBy    as string | undefined;
     const sortOrder = req.query.sortOrder as string | undefined;
 
-    const { rows, total } = await getDietitiansPaginated({ page, limit, is_verified: 0, search, status, startDate, endDate, sortBy, sortOrder });
+    const { rows, total } = await getDietitiansPaginated({ page, limit, is_verified: 0, subscriptionStatus: 'active', search, status, startDate, endDate, sortBy, sortOrder });
     const totalPages = Math.ceil(total / limit);
 
     return successResponse(

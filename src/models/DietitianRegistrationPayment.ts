@@ -69,10 +69,11 @@ export const createPostTrialRegistrationOrder = async (
   fee: number,
   orderId: string,
 ): Promise<number> => {
-  // Clean up any previous pending/failed attempts for this dietitian
+  // Clean up any previous pending/failed attempts — match by dietitian_id OR email
+  // so orphaned records from a soft-deleted account with the same email don't block the INSERT
   await execute(
-    "DELETE FROM dietitian_registration_payments WHERE dietitian_id = ? AND status IN ('pending', 'failed')",
-    [dietitianId],
+    "DELETE FROM dietitian_registration_payments WHERE (dietitian_id = ? OR email = ?) AND status IN ('pending', 'failed')",
+    [dietitianId, email],
   );
   const result = await execute(
     `INSERT INTO dietitian_registration_payments (email, dietitian_id, registration_data, amount, razorpay_order_id)
