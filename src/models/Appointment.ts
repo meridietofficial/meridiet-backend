@@ -522,6 +522,13 @@ export const markAppointmentMissedWithType = async (
   );
 };
 
+export const markAppointmentCompleted = async (id: number) => {
+  await execute(
+    `UPDATE appointments SET status = 'completed' WHERE id = ?`,
+    [id],
+  );
+};
+
 export const markAppointmentPaymentRefunded = async (id: number) => {
   await execute(
     `UPDATE appointments SET payment_status = 'refunded' WHERE id = ?`,
@@ -1497,6 +1504,11 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
       dietitian_email: string | null;
       dietitian_phone: string | null;
       dietitian_photo: string | null;
+      // diet plan
+      diet_plan_id: number | null;
+      diet_plan_status: string | null;
+      diet_plan_pdf_url: string | null;
+      diet_plan_sent_at: Date | null;
     }>(
       `SELECT
          a.id,
@@ -1521,10 +1533,17 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
          du.full_name  AS dietitian_name,
          du.email      AS dietitian_email,
          du.phone_number AS dietitian_phone,
-         d.profile_photo AS dietitian_photo
+         d.profile_photo AS dietitian_photo,
+         dp.id         AS diet_plan_id,
+         dp.status     AS diet_plan_status,
+         dp.pdf_url    AS diet_plan_pdf_url,
+         dp.sent_at    AS diet_plan_sent_at
        FROM appointments a
        JOIN dietitians d  ON a.dietitian_id = d.id
        JOIN users du      ON d.user_id = du.id
+       LEFT JOIN diet_plans dp ON dp.id = (
+         SELECT id FROM diet_plans WHERE appointment_id = a.id ORDER BY created_at DESC LIMIT 1
+       )
        ${where}
        ORDER BY a.appointment_date DESC, a.slot DESC
        LIMIT ${limit} OFFSET ${offset}`,
@@ -1571,6 +1590,12 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
         phone: r.dietitian_phone,
         photo: r.dietitian_photo,
       },
+      diet_plan: r.diet_plan_id ? {
+        id: r.diet_plan_id,
+        status: r.diet_plan_status,
+        pdf_url: r.diet_plan_pdf_url,
+        sent_at: r.diet_plan_sent_at,
+      } : null,
     })),
     total: countRows[0]?.total ?? 0,
     page,

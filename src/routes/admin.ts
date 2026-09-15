@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/authenticate';
-import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, toggleDietitianOffer, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDashboardStats, getDashboardRevenue, getDashboardUserGrowth, getDashboardConsultations, getSystemOverview, adminRegisterDietitian } from '../controllers/admin';
+import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, toggleDietitianOffer, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDashboardStats, getDashboardRevenue, getDashboardUserGrowth, getDashboardConsultations, getDashboardAppointmentStats, getDashboardRecentAppointments, getDashboardRecentRegistrations, getSystemOverview, adminRegisterDietitian } from '../controllers/admin';
 import { listDietPlansForAdmin, getDietPlanForAdmin, editDietPlan, sendDietPlanToUser, retryDietPlanGeneration, listManualDietPlansForAdmin, getManualDietPlanForAdmin, getDietFormRequests, getPaidDietCharts, getDietChartDetails, previewDietPlan } from '../controllers/adminDietPlan';
 import { adminCreateCoupon, adminListCoupons, adminGetCoupon, adminUpdateCoupon, adminDeactivateCoupon, adminGetCouponUsages, adminGetAllCouponUsages } from '../controllers/coupon';
 import { adminListEnquiries, adminGetEnquiry, adminUpdateEnquiryStatus, adminListEnrollments, adminGetEnrollment, adminCourseStats } from '../controllers/adminCourse';
@@ -16,6 +16,7 @@ import {
   adminGetPendingNoShowApprovalsHandler,
   adminMarkNoShow,
   adminApproveNoShow,
+  adminMarkComplete,
 } from '../controllers/adminAppointment';
 import {
   getBmiCategories, createBmiCategory, updateBmiCategory, deleteBmiCategory,
@@ -81,11 +82,14 @@ adminRouter.post('/dietitians/:id/plan-credits', authenticate, authorize('admin'
 adminRouter.post('/dietitians/:id/earnings-credit', authenticate, authorize('admin'), adminCreditEarningsHandler);
 
 // Dashboard analytics
-adminRouter.get('/dashboard-stats',        authenticate, authorize('admin'), getDashboardStats);
-adminRouter.get('/dashboard-revenue',      authenticate, authorize('admin'), getDashboardRevenue);
-adminRouter.get('/dashboard-user-growth',  authenticate, authorize('admin'), getDashboardUserGrowth);
-adminRouter.get('/dashboard-consultations',authenticate, authorize('admin'), getDashboardConsultations);
-adminRouter.get('/system-overview',        authenticate, authorize('admin'), getSystemOverview);
+adminRouter.get('/dashboard-stats',                  authenticate, authorize('admin'), getDashboardStats);
+adminRouter.get('/dashboard-revenue',                authenticate, authorize('admin'), getDashboardRevenue);
+adminRouter.get('/dashboard-user-growth',            authenticate, authorize('admin'), getDashboardUserGrowth);
+adminRouter.get('/dashboard-consultations',          authenticate, authorize('admin'), getDashboardConsultations);
+adminRouter.get('/dashboard-appointment-stats',      authenticate, authorize('admin'), getDashboardAppointmentStats);
+adminRouter.get('/dashboard-recent-appointments',    authenticate, authorize('admin'), getDashboardRecentAppointments);
+adminRouter.get('/dashboard-recent-registrations',   authenticate, authorize('admin'), getDashboardRecentRegistrations);
+adminRouter.get('/system-overview',                  authenticate, authorize('admin'), getSystemOverview);
 
 // ── Nutrition Config (admin editable calculation settings) ────────────────────
 // BMI categories
@@ -137,6 +141,7 @@ adminRouter.get ('/appointments/pending-no-show-approval', authenticate, authori
 adminRouter.get ('/appointments',                          authenticate, authorize('admin'), adminGetAppointments);
 adminRouter.get ('/appointments/:id',                      authenticate, authorize('admin'), adminGetAppointmentById);
 adminRouter.post('/appointments/:id/approve-payment',      authenticate, authorize('admin'), adminApprovePayment);
+adminRouter.post('/appointments/:id/mark-complete',        authenticate, authorize('admin'), adminMarkComplete);
 adminRouter.post('/appointments/:id/mark-no-show',         authenticate, authorize('admin'), adminMarkNoShow);
 adminRouter.post('/appointments/:id/approve-no-show',      authenticate, authorize('admin'), adminApproveNoShow);
 

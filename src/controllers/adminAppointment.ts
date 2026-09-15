@@ -6,6 +6,7 @@ import {
   markPaymentApproved,
   markAppointmentMissedWithType,
   markAppointmentPaymentRefunded,
+  markAppointmentCompleted,
   adminGetPendingApprovals,
   adminGetPendingNoShowApprovals,
   adminGetPaymentHistory,
@@ -251,6 +252,28 @@ export const adminGetAppointments = async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('Admin get appointments error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// POST /api/v1/admin/appointments/:id/mark-complete
+export const adminMarkComplete = async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+
+    if (['cancelled', 'completed'].includes(appointment.status)) {
+      return errorResponse(res, 400, `Cannot mark a ${appointment.status} appointment as completed`);
+    }
+
+    await markAppointmentCompleted(id);
+
+    return successResponse(res, 200, 'Appointment marked as completed', { appointment_id: id });
+  } catch (err) {
+    console.error('Admin mark complete error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

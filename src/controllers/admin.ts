@@ -536,9 +536,10 @@ export const getDashboardStats = async (req: Request, res: Response) => {
       query<{ total: number }>(
         `SELECT (
            COALESCE((SELECT SUM(COALESCE(final_amount, amount)) FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${curFilter}), 0) +
-           COALESCE((SELECT SUM(amount) FROM dietitian_registration_payments WHERE status = 'paid' ${curFilter}), 0)
+           COALESCE((SELECT SUM(amount) FROM dietitian_registration_payments WHERE status = 'paid' ${curFilter}), 0) +
+           COALESCE((SELECT SUM(COALESCE(final_amount, fee)) FROM appointments WHERE payment_status = 'paid' AND appointment_source = 'platform' AND (payment_method = 'razorpay' OR payment_method IS NULL) ${curFilter}), 0)
          ) AS total`,
-        [...curP, ...curP],
+        [...curP, ...curP, ...curP],
       ),
       query<{ plan_type: number; cnt: number }>(
         `SELECT df.plan_type, COUNT(*) AS cnt
@@ -570,9 +571,10 @@ export const getDashboardStats = async (req: Request, res: Response) => {
         query<{ total: number }>(
           `SELECT (
              COALESCE((SELECT SUM(COALESCE(final_amount, amount)) FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${prevFilter}), 0) +
-             COALESCE((SELECT SUM(amount) FROM dietitian_registration_payments WHERE status = 'paid' ${prevFilter}), 0)
+             COALESCE((SELECT SUM(amount) FROM dietitian_registration_payments WHERE status = 'paid' ${prevFilter}), 0) +
+             COALESCE((SELECT SUM(COALESCE(final_amount, fee)) FROM appointments WHERE payment_status = 'paid' AND appointment_source = 'platform' AND (payment_method = 'razorpay' OR payment_method IS NULL) ${prevFilter}), 0)
            ) AS total`,
-          [...prevP, ...prevP],
+          [...prevP, ...prevP, ...prevP],
         ),
         query<{ total: number }>(
           `SELECT COUNT(*) AS total
@@ -637,6 +639,12 @@ export const getDashboardRevenue = async (req: Request, res: Response) => {
                  COALESCE(SUM(amount), 0) AS revenue
             FROM dietitian_registration_payments WHERE status = 'paid' ${dateFilter}
            GROUP BY YEARWEEK(CONVERT_TZ(created_at, '+00:00', '+05:30'), 1)
+          UNION ALL
+          SELECT CAST(YEARWEEK(CONVERT_TZ(created_at, '+00:00', '+05:30'), 1) AS CHAR) AS grp_key,
+                 DATE_FORMAT(MIN(CONVERT_TZ(created_at, '+00:00', '+05:30')), '%Y-%m-%d') AS week_start,
+                 COALESCE(SUM(COALESCE(final_amount, fee)), 0) AS revenue
+            FROM appointments WHERE payment_status = 'paid' AND appointment_source = 'platform' AND (payment_method = 'razorpay' OR payment_method IS NULL) ${dateFilter}
+           GROUP BY YEARWEEK(CONVERT_TZ(created_at, '+00:00', '+05:30'), 1)
         ) combined
         GROUP BY grp_key ORDER BY grp_key ASC`;
     } else if (period === 'monthly') {
@@ -650,6 +658,11 @@ export const getDashboardRevenue = async (req: Request, res: Response) => {
           SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m') AS grp_key,
                  COALESCE(SUM(amount), 0) AS revenue
             FROM dietitian_registration_payments WHERE status = 'paid' ${dateFilter}
+           GROUP BY DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m')
+          UNION ALL
+          SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m') AS grp_key,
+                 COALESCE(SUM(COALESCE(final_amount, fee)), 0) AS revenue
+            FROM appointments WHERE payment_status = 'paid' AND appointment_source = 'platform' AND (payment_method = 'razorpay' OR payment_method IS NULL) ${dateFilter}
            GROUP BY DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m')
         ) combined
         GROUP BY grp_key ORDER BY grp_key ASC`;
@@ -665,6 +678,11 @@ export const getDashboardRevenue = async (req: Request, res: Response) => {
                  COALESCE(SUM(amount), 0) AS revenue
             FROM dietitian_registration_payments WHERE status = 'paid' ${dateFilter}
            GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '+05:30'))
+          UNION ALL
+          SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m-%d') AS grp_key,
+                 COALESCE(SUM(COALESCE(final_amount, fee)), 0) AS revenue
+            FROM appointments WHERE payment_status = 'paid' AND appointment_source = 'platform' AND (payment_method = 'razorpay' OR payment_method IS NULL) ${dateFilter}
+           GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '+05:30'))
         ) combined
         GROUP BY grp_key ORDER BY grp_key ASC`;
     }
@@ -672,21 +690,23 @@ export const getDashboardRevenue = async (req: Request, res: Response) => {
     const dietRegFilter = range ? 'AND created_at BETWEEN ? AND ?' : '';
 
     const [chartRows, totalData, prevData, dietRegData] = await Promise.all([
-      query<RevRow>(chartSQL, [...curP, ...curP]),
+      query<RevRow>(chartSQL, [...curP, ...curP, ...curP]),
       query<{ total: number }>(
         `SELECT (
            COALESCE((SELECT SUM(COALESCE(final_amount, amount)) FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL ${dateFilter}), 0) +
-           COALESCE((SELECT SUM(amount) FROM dietitian_registration_payments WHERE status = 'paid' ${dateFilter}), 0)
+           COALESCE((SELECT SUM(amount) FROM dietitian_registration_payments WHERE status = 'paid' ${dateFilter}), 0) +
+           COALESCE((SELECT SUM(COALESCE(final_amount, fee)) FROM appointments WHERE payment_status = 'paid' AND appointment_source = 'platform' AND (payment_method = 'razorpay' OR payment_method IS NULL) ${dateFilter}), 0)
          ) AS total`,
-        [...curP, ...curP],
+        [...curP, ...curP, ...curP],
       ),
       range
         ? query<{ total: number }>(
             `SELECT (
                COALESCE((SELECT SUM(COALESCE(final_amount, amount)) FROM payments WHERE status = 'paid' AND diet_form_id IS NOT NULL AND created_at BETWEEN ? AND ?), 0) +
-               COALESCE((SELECT SUM(amount) FROM dietitian_registration_payments WHERE status = 'paid' AND created_at BETWEEN ? AND ?), 0)
+               COALESCE((SELECT SUM(amount) FROM dietitian_registration_payments WHERE status = 'paid' AND created_at BETWEEN ? AND ?), 0) +
+               COALESCE((SELECT SUM(COALESCE(final_amount, fee)) FROM appointments WHERE payment_status = 'paid' AND appointment_source = 'platform' AND (payment_method = 'razorpay' OR payment_method IS NULL) AND created_at BETWEEN ? AND ?), 0)
              ) AS total`,
-            [...prevP, ...prevP],
+            [...prevP, ...prevP, ...prevP],
           )
         : Promise.resolve([{ total: 0 }]),
       query<{ count: number }>(
@@ -887,7 +907,158 @@ export const getDashboardConsultations = async (req: Request, res: Response) => 
   }
 };
 
-// ── 6. System Overview ────────────────────────────────────────────────────────
+// ── 6. Appointment Stats (dashboard pie widget) ───────────────────────────────
+
+// GET /api/v1/admin/dashboard-appointment-stats?from=YYYY-MM-DD&to=YYYY-MM-DD
+export const getDashboardAppointmentStats = async (req: Request, res: Response) => {
+  try {
+    const from = req.query.from as string | undefined;
+    const to   = req.query.to   as string | undefined;
+
+    const dateFilter = from && to ? 'AND a.created_at BETWEEN ? AND ?' : '';
+    const params     = from && to ? [from + ' 00:00:00', to + ' 23:59:59'] : [];
+
+    const [rows] = await Promise.all([
+      query<{
+        online_count: number; online_revenue: number;
+        offline_count: number; offline_revenue: number;
+        completed_count: number; completed_revenue: number;
+      }>(
+        `SELECT
+           SUM(a.appointment_source = 'platform' AND a.payment_status = 'paid' AND (a.payment_method = 'razorpay' OR a.payment_method IS NULL))             AS online_count,
+           COALESCE(SUM(CASE WHEN a.appointment_source = 'platform' AND a.payment_status = 'paid' AND (a.payment_method = 'razorpay' OR a.payment_method IS NULL) THEN COALESCE(a.final_amount, a.fee) ELSE 0 END), 0) AS online_revenue,
+           SUM(a.appointment_source = 'dietitian')                                                                                                           AS offline_count,
+           COALESCE(SUM(CASE WHEN a.appointment_source = 'dietitian' AND a.payment_status = 'paid' THEN COALESCE(a.final_amount, a.fee) ELSE 0 END), 0)     AS offline_revenue,
+           SUM(a.status = 'completed')                                                                                                                        AS completed_count,
+           COALESCE(SUM(CASE WHEN a.status = 'completed' AND a.payment_status = 'paid' THEN COALESCE(a.final_amount, a.fee) ELSE 0 END), 0)                 AS completed_revenue
+         FROM appointments a
+         WHERE 1=1 ${dateFilter}`,
+        params,
+      ),
+    ]);
+
+    const r = rows[0];
+    return successResponse(res, 200, 'Appointment stats fetched successfully', {
+      online:    { count: Number(r?.online_count     ?? 0), revenue: Number(r?.online_revenue     ?? 0) },
+      offline:   { count: Number(r?.offline_count    ?? 0), revenue: Number(r?.offline_revenue    ?? 0) },
+      completed: { count: Number(r?.completed_count  ?? 0), revenue: Number(r?.completed_revenue  ?? 0) },
+      total:     Number(r?.online_count ?? 0) + Number(r?.offline_count ?? 0) + Number(r?.completed_count ?? 0),
+    });
+  } catch (err) {
+    console.error('Dashboard appointment stats error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// ── 8. Recent Appointments (dashboard widget) ─────────────────────────────────
+
+// GET /api/v1/admin/dashboard-recent-appointments?limit=5&from=YYYY-MM-DD&to=YYYY-MM-DD
+export const getDashboardRecentAppointments = async (req: Request, res: Response) => {
+  try {
+    const limit  = Math.min(50, Math.max(1, parseInt(req.query.limit as string) || 5));
+    const from   = req.query.from as string | undefined;
+    const to     = req.query.to   as string | undefined;
+
+    const conditions: string[] = [
+      "a.payment_status = 'paid'",
+      "a.appointment_source = 'platform'",
+      "(a.payment_method = 'razorpay' OR a.payment_method IS NULL)",
+    ];
+    const params: unknown[] = [];
+
+    if (from) { conditions.push('a.created_at >= ?'); params.push(from + ' 00:00:00'); }
+    if (to)   { conditions.push('a.created_at <= ?'); params.push(to   + ' 23:59:59'); }
+
+    const rows = await query<{
+      id: number;
+      client_name: string;
+      client_email: string;
+      client_avatar: string | null;
+      dietitian_name: string;
+      appointment_date: string;
+      slot: string;
+      amount: number;
+      currency: string;
+      status: string;
+      created_at: string;
+    }>(
+      `SELECT a.id,
+              COALESCE(u.full_name, a.name)  AS client_name,
+              COALESCE(u.email, '')           AS client_email,
+              u.avatar_url                    AS client_avatar,
+              du.full_name                    AS dietitian_name,
+              DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS appointment_date,
+              a.slot,
+              COALESCE(a.final_amount, a.fee) AS amount,
+              a.currency,
+              a.status,
+              DATE_FORMAT(a.created_at, '%Y-%m-%d %H:%i:%s') AS created_at
+       FROM appointments a
+       LEFT JOIN users u      ON u.id = a.user_id AND u.is_delete = 0
+       LEFT JOIN dietitians d ON d.id = a.dietitian_id
+       LEFT JOIN users du     ON du.id = d.user_id AND du.is_delete = 0
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY a.created_at DESC
+       LIMIT ${limit}`,
+      params,
+    );
+
+    return successResponse(res, 200, 'Recent appointments fetched successfully', { appointments: rows });
+  } catch (err) {
+    console.error('Dashboard recent appointments error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// ── 7. Recent Dietitian Registrations (dashboard widget) ──────────────────────
+
+// GET /api/v1/admin/dashboard-recent-registrations?limit=5&from=YYYY-MM-DD&to=YYYY-MM-DD
+export const getDashboardRecentRegistrations = async (req: Request, res: Response) => {
+  try {
+    const limit  = Math.min(50, Math.max(1, parseInt(req.query.limit as string) || 5));
+    const from   = req.query.from as string | undefined;
+    const to     = req.query.to   as string | undefined;
+
+    const conditions: string[] = ["p.status = 'paid'"];
+    const params: unknown[] = [];
+
+    if (from) { conditions.push('p.created_at >= ?'); params.push(from + ' 00:00:00'); }
+    if (to)   { conditions.push('p.created_at <= ?'); params.push(to   + ' 23:59:59'); }
+
+    const rows = await query<{
+      id: number;
+      name: string | null;
+      phone: string | null;
+      email: string;
+      amount: number;
+      razorpay_payment_id: string | null;
+      payment_verified_at: string | null;
+      created_at: string;
+    }>(
+      `SELECT p.id,
+              COALESCE(JSON_UNQUOTE(JSON_EXTRACT(p.registration_data, '$.fullName')), u.full_name)    AS name,
+              COALESCE(JSON_UNQUOTE(JSON_EXTRACT(p.registration_data, '$.phone')),    u.phone_number) AS phone,
+              p.email, p.amount,
+              p.razorpay_payment_id,
+              DATE_FORMAT(p.payment_verified_at, '%Y-%m-%d %H:%i:%s') AS payment_verified_at,
+              DATE_FORMAT(p.created_at, '%Y-%m-%d %H:%i:%s') AS created_at
+       FROM dietitian_registration_payments p
+       LEFT JOIN dietitians d ON d.id = p.dietitian_id
+       LEFT JOIN users u      ON u.id = d.user_id AND u.is_delete = 0
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY p.created_at DESC
+       LIMIT ${limit}`,
+      params,
+    );
+
+    return successResponse(res, 200, 'Recent registrations fetched successfully', { registrations: rows });
+  } catch (err) {
+    console.error('Dashboard recent registrations error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// ── 8. System Overview ────────────────────────────────────────────────────────
 
 // GET /api/v1/admin/system-overview  (no date filter)
 export const getSystemOverview = async (_req: Request, res: Response) => {

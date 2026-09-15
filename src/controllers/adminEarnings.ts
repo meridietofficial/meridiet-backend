@@ -110,7 +110,7 @@ async function getAppointmentEarnings(search: string | undefined, status: string
     : '';
   const searchParams = search ? [`%${search}%`, `%${search}%`, `%${search}%`] : [];
 
-  const baseWhere = `WHERE (a.payment_status != 'unpaid' OR a.status IN ('confirmed','completed')) ${statusCond} ${searchCond}`;
+  const baseWhere = `WHERE a.appointment_source = 'platform' AND (a.payment_method = 'razorpay' OR a.payment_method IS NULL) AND (a.payment_status != 'unpaid' OR a.status IN ('confirmed','completed')) ${statusCond} ${searchCond}`;
 
   const [rows, countRows, summaryRows] = await Promise.all([
     query<{
@@ -127,6 +127,10 @@ async function getAppointmentEarnings(search: string | undefined, status: string
       payment_status: string;
       payment_id: string | null;
       created_at: string;
+      plan_id: number | null;
+      plan_status: string | null;
+      plan_pdf_url: string | null;
+      plan_sent_at: string | null;
     }>(
       `SELECT a.id,
               COALESCE(u.full_name, a.name) AS client_name,
@@ -136,11 +140,18 @@ async function getAppointmentEarnings(search: string | undefined, status: string
               DATE_FORMAT(a.appointment_date, '%Y-%m-%d') AS appointment_date,
               a.fee, a.final_amount, a.currency,
               a.status, a.payment_status, a.payment_id,
-              DATE_FORMAT(a.created_at, '%Y-%m-%d %H:%i:%s') AS created_at
+              DATE_FORMAT(a.created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
+              dp.id                                           AS plan_id,
+              dp.status                                       AS plan_status,
+              dp.pdf_url                                      AS plan_pdf_url,
+              DATE_FORMAT(dp.sent_at, '%Y-%m-%d %H:%i:%s')   AS plan_sent_at
        FROM appointments a
        LEFT JOIN users u       ON u.id = a.user_id AND u.is_delete = 0
        LEFT JOIN dietitians d  ON d.id = a.dietitian_id
        LEFT JOIN users du      ON du.id = d.user_id AND du.is_delete = 0
+       LEFT JOIN diet_plans dp ON dp.id = (
+         SELECT id FROM diet_plans WHERE appointment_id = a.id ORDER BY created_at DESC LIMIT 1
+       )
        ${baseWhere}
        ORDER BY a.created_at DESC
        LIMIT ${limit} OFFSET ${offset}`,
