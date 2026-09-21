@@ -452,14 +452,14 @@ export const listPublicDietitians = async (filters: DietitianListFilters) => {
   const orderBy = (() => {
     switch (filters.sort) {
       case 'available_now':
-        return 'd.is_under_offer DESC, d.is_online DESC, d.created_at DESC';
+        return 'd.sort_order ASC, d.is_under_offer DESC, d.is_online DESC, d.created_at DESC';
       case 'experience':
-        return 'd.is_under_offer DESC, CAST(d.experience AS UNSIGNED) DESC, d.created_at DESC';
+        return 'd.sort_order ASC, d.is_under_offer DESC, CAST(d.experience AS UNSIGNED) DESC, d.created_at DESC';
       case 'top_rated':
       case 'most_reviewed':
-        return 'd.is_under_offer DESC, d.is_online DESC, CAST(d.experience AS UNSIGNED) DESC, d.created_at DESC';
+        return 'd.sort_order ASC, d.is_under_offer DESC, d.is_online DESC, CAST(d.experience AS UNSIGNED) DESC, d.created_at DESC';
       default:
-        return 'd.is_under_offer DESC, d.created_at DESC';
+        return 'd.sort_order ASC, d.is_under_offer DESC, d.created_at DESC';
     }
   })();
 
@@ -493,12 +493,14 @@ export const getDistinctSpecializations = async () => {
 };
 
 export const verifyDietitian = async (id: number) => {
+  // Only start trial if the dietitian hasn't already paid (status = 'active').
+  // Without this guard, admin verifying after payment overwrites 'active' → 'trial'.
   await execute(
     `UPDATE dietitians
         SET is_verified = 1,
-            subscription_status = 'trial',
-            trial_starts_at = NOW(),
-            trial_ends_at = DATE_ADD(NOW(), INTERVAL 7 DAY)
+            subscription_status     = IF(subscription_status = 'active', 'active', 'trial'),
+            trial_starts_at         = IF(subscription_status = 'active', trial_starts_at, NOW()),
+            trial_ends_at           = IF(subscription_status = 'active', trial_ends_at,   DATE_ADD(NOW(), INTERVAL 7 DAY))
       WHERE id = ?`,
     [id],
   );

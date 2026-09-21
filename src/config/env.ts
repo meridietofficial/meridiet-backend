@@ -37,11 +37,11 @@ const envSchema = z.object({
   RAZORPAY_KEY_ID: z.string().min(1, 'RAZORPAY_KEY_ID is required'),
   RAZORPAY_KEY_SECRET: z.string().min(1, 'RAZORPAY_KEY_SECRET is required'),
 
-  // Razorpay X — payouts (separate product, separate keys)
-  RAZORPAY_X_KEY_ID: z.string().default(''),
-  RAZORPAY_X_KEY_SECRET: z.string().default(''),
-  RAZORPAY_X_WEBHOOK_SECRET: z.string().default(''),
-  RAZORPAY_X_ACCOUNT_NUMBER: z.string().default(''),
+  // Cashfree Payouts
+  CASHFREE_CLIENT_ID: z.string().default(''),
+  CASHFREE_CLIENT_SECRET: z.string().default(''),
+  CASHFREE_WEBHOOK_SECRET: z.string().default(''),
+  CASHFREE_PUBLIC_KEY: z.string().default(''),  // RSA public key for 2FA (optional, leave blank to use IP Whitelist)
 
   // Plans
   PLAN_1_WEEK_LABEL: z.string().default('1 Week'),

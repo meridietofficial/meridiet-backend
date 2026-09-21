@@ -31,8 +31,7 @@ export interface DietitianPaymentAccount {
   ifsc_code: string | null;
   bank_name: string | null;
   bank_logo_url: string | null;
-  razorpay_contact_id: string | null;
-  razorpay_fund_account_id: string | null;
+  cashfree_bene_id: string | null;
   created_at: Date;
   updated_at: Date;
 }

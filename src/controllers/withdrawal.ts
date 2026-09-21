@@ -6,15 +6,14 @@ import {
   markWithdrawalProcessing,
   failWithdrawal,
   getWithdrawalsByDietitian,
-  cacheRazorpayIds,
 } from '../models/DietitianWithdrawal';
 import {
-  createContact,
-  createBankFundAccount,
-  createUpiFundAccount,
-  createPayout,
-  isRazorpayXConfigured,
-} from '../services/razorpayX';
+  isCashfreeConfigured,
+  beneficiaryExists,
+  addBeneficiary,
+  requestTransfer,
+  extractCashfreeError,
+} from '../services/cashfree';
 import { decrypt } from '../utils/encrypt';
 import { successResponse, errorResponse } from '../utils/response';
 import { query } from '../config/database';
@@ -28,10 +27,9 @@ async function resolveDietitian(req: Request, res: Response) {
 
 // POST /api/v1/dietitian/withdraw
 // Body: { amount: number, account_id?: number }
-// If account_id omitted, uses the primary account.
 export const requestWithdrawalHandler = async (req: Request, res: Response) => {
   try {
-    if (!isRazorpayXConfigured()) {
+    if (!isCashfreeConfigured()) {
       return errorResponse(res, 503, 'Payout service is not configured. Please contact support.');
     }
 
@@ -40,28 +38,22 @@ export const requestWithdrawalHandler = async (req: Request, res: Response) => {
 
     const { amount, account_id } = req.body as { amount?: number; account_id?: number };
 
-    // ── Validate amount ──────────────────────────────────────────────────────
     if (!amount || isNaN(Number(amount))) {
       return errorResponse(res, 400, 'amount is required');
     }
     const amountNum = Number(Number(amount).toFixed(2));
-    if (amountNum < 1) {
-      return errorResponse(res, 400, 'Minimum withdrawal amount is ₹1');
+    if (amountNum <= 1) {
+      return errorResponse(res, 400, 'Minimum withdrawal amount is ₹2');
     }
     if (amountNum > Number(dietitian.earnings_balance)) {
-      return errorResponse(
-        res,
-        400,
-        `Insufficient balance. Available: ₹${dietitian.earnings_balance}`,
-      );
+      return errorResponse(res, 400, `Insufficient balance. Available: ₹${dietitian.earnings_balance}`);
     }
 
     // ── Resolve payment account ──────────────────────────────────────────────
     let account;
     if (account_id) {
       const rows = await query<typeof account>(
-        `SELECT * FROM dietitian_payment_accounts
-         WHERE id = ? AND dietitian_id = ? LIMIT 1`,
+        `SELECT * FROM dietitian_payment_accounts WHERE id = ? AND dietitian_id = ? LIMIT 1`,
         [account_id, dietitian.id],
       );
       account = rows[0];
@@ -69,117 +61,89 @@ export const requestWithdrawalHandler = async (req: Request, res: Response) => {
     } else {
       account = await getPrimaryAccount(dietitian.id);
       if (!account) {
-        return errorResponse(
-          res,
-          400,
-          'No payment account linked. Please add a bank account or UPI ID first.',
-        );
+        return errorResponse(res, 400, 'No payment account linked. Please add a bank account or UPI ID first.');
       }
     }
 
-    // ── Get or create Razorpay contact ───────────────────────────────────────
-    let contactId: string = account.razorpay_contact_id ?? '';
-    let fundAccountId: string = account.razorpay_fund_account_id ?? '';
+    // ── Resolve user info for beneficiary details ────────────────────────────
+    const userRows = await query<{ full_name: string; email: string; phone_number: string | null; phone_code: string | null }>(
+      'SELECT full_name, email, phone_number, phone_code FROM users WHERE id = ? LIMIT 1',
+      [dietitian.user_id],
+    );
+    const user = userRows[0];
+    const phone = user?.phone_number
+      ? `${user.phone_code ?? ''}${user.phone_number}`.replace(/\D/g, '').slice(-10)
+      : undefined;
 
-    if (!contactId) {
-      // Fetch dietitian's user details for name/email/phone
-      const userRows = await query<{ full_name: string; email: string; phone_number: string | null; phone_code: string | null }>(
-        'SELECT full_name, email, phone_number, phone_code FROM users WHERE id = ? LIMIT 1',
-        [dietitian.user_id],
-      );
-      const user = userRows[0];
-      const phone = user?.phone_number
-        ? `${user.phone_code ?? ''}${user.phone_number}`.trim()
-        : undefined;
-
-      const contact = await createContact({
-        name:         user?.full_name ?? `Dietitian ${dietitian.id}`,
-        email:        user?.email,
-        contact:      phone,
-        reference_id: `dietitian_${dietitian.id}`,
-      });
-      contactId = contact.id;
-    }
-
-    // ── Get or create Razorpay fund account ──────────────────────────────────
-    if (!fundAccountId) {
-      if (account.type === 'bank') {
-        if (!account.account_number || !account.ifsc_code || !account.account_holder) {
-          return errorResponse(res, 400, 'Bank account details incomplete');
-        }
-        const plainAccNo = decrypt(account.account_number as unknown as string);
-        const fa = await createBankFundAccount({
-          contact_id:     contactId,
-          account_holder: account.account_holder,
-          account_number: plainAccNo,
-          ifsc:           account.ifsc_code,
-        });
-        fundAccountId = fa.id;
-      } else {
-        if (!account.upi_id) {
-          return errorResponse(res, 400, 'UPI ID missing on this account');
-        }
-        const fa = await createUpiFundAccount({
-          contact_id: contactId,
-          vpa:        account.upi_id,
-        });
-        fundAccountId = fa.id;
-      }
-
-      // Cache for next time so we don't re-create
-      await cacheRazorpayIds(account.id, contactId, fundAccountId);
-    }
-
-    // ── Deduct balance + create withdrawal record (atomic) ───────────────────
+    // ── Deduct balance + create withdrawal record ────────────────────────────
     const withdrawal = await createWithdrawal({
-      dietitian_id:             dietitian.id,
-      account_id:               account.id,
-      amount:                   amountNum,
-      razorpay_contact_id:      contactId,
-      razorpay_fund_account_id: fundAccountId,
+      dietitian_id: dietitian.id,
+      account_id:   account.id,
+      amount:       amountNum,
     });
 
-    // ── Submit payout to Razorpay X ──────────────────────────────────────────
-    const mode = account.type === 'upi' ? 'UPI' : 'IMPS';
+    // ── Submit transfer to Cashfree ──────────────────────────────────────────
+    const isUpi  = account.type === 'upi';
+    const mode   = isUpi ? 'upi' : 'imps';
 
     try {
-      const payout = await createPayout({
-        fund_account_id: fundAccountId,
-        amount_inr:      amountNum,
+      let bankAccount: string | undefined;
+      if (!isUpi && account.account_number) {
+        bankAccount = decrypt(account.account_number as unknown as string);
+      }
+
+      if (!isUpi && (!bankAccount || !account.ifsc_code || !account.account_holder)) {
+        await failWithdrawal(withdrawal.id, dietitian.id, amountNum, 'Bank account details incomplete');
+        return errorResponse(res, 400, 'Bank account details incomplete');
+      }
+      if (isUpi && !account.upi_id) {
+        await failWithdrawal(withdrawal.id, dietitian.id, amountNum, 'UPI ID missing');
+        return errorResponse(res, 400, 'UPI ID missing on this account');
+      }
+
+      const beneId = `D${dietitian.id}A${account.id}`;
+
+      // Ensure beneficiary is registered on Cashfree before initiating transfer
+      if (!(await beneficiaryExists(beneId))) {
+        await addBeneficiary({
+          beneId,
+          name:        isUpi ? (user?.full_name ?? `Dietitian ${dietitian.id}`) : account.account_holder!,
+          email:       user?.email ?? '',
+          phone:       phone ?? '',
+          vpa:         isUpi ? account.upi_id! : undefined,
+          bankAccount: !isUpi ? bankAccount : undefined,
+          ifsc:        !isUpi ? account.ifsc_code! : undefined,
+        });
+      }
+
+      const transfer = await requestTransfer({
+        transferId: `WD${withdrawal.id}`,
+        amount:     amountNum,
         mode,
-        narration:       'MeriDiet earnings payout',
-        reference_id:    `withdrawal_${withdrawal.id}`,
+        remarks:    'MeriDiet earnings payout',
+        beneId,
       });
 
-      await markWithdrawalProcessing(withdrawal.id, payout.id);
+      await markWithdrawalProcessing(withdrawal.id, transfer.referenceId || transfer.transferId);
 
       return successResponse(res, 200, 'Withdrawal initiated successfully', {
-        withdrawal_id:     withdrawal.id,
-        amount:            amountNum,
-        status:            'processing',
-        razorpay_payout_id: payout.id,
+        withdrawal_id:        withdrawal.id,
+        amount:               amountNum,
+        status:               'processing',
+        cashfree_transfer_id: transfer.referenceId,
         mode,
-        account_type:      account.type,
+        account_type:         account.type,
       });
-    } catch (payoutErr: unknown) {
-      // Payout submission failed — refund the deducted balance
-      const reason =
-        (payoutErr as { response?: { data?: { error?: { description?: string } } } })
-          ?.response?.data?.error?.description ?? 'Payout creation failed';
-
+    } catch (transferErr: unknown) {
+      const reason = extractCashfreeError(transferErr);
       await failWithdrawal(withdrawal.id, dietitian.id, amountNum, reason);
-
-      console.error(`CRITICAL: Payout failed for withdrawal ${withdrawal.id}:`, payoutErr);
+      console.error(`CRITICAL: Cashfree transfer failed for withdrawal ${withdrawal.id}:`, transferErr);
       return errorResponse(res, 502, `Payout failed: ${reason}`);
     }
   } catch (err: unknown) {
     if (err instanceof Error) {
-      if (err.message === 'INSUFFICIENT_BALANCE') {
-        return errorResponse(res, 400, 'Insufficient balance');
-      }
-      if (err.message === 'DIETITIAN_NOT_FOUND') {
-        return errorResponse(res, 404, 'Dietitian not found');
-      }
+      if (err.message === 'INSUFFICIENT_BALANCE') return errorResponse(res, 400, 'Insufficient balance');
+      if (err.message === 'DIETITIAN_NOT_FOUND')  return errorResponse(res, 404, 'Dietitian not found');
     }
     console.error('requestWithdrawal error:', err);
     return errorResponse(res, 500, 'Something went wrong');
@@ -199,12 +163,7 @@ export const listWithdrawalsHandler = async (req: Request, res: Response) => {
 
     return successResponse(res, 200, 'Withdrawals fetched', {
       withdrawals,
-      pagination: {
-        page,
-        limit,
-        total,
-        total_pages: Math.ceil(total / limit),
-      },
+      pagination: { page, limit, total, total_pages: Math.ceil(total / limit) },
     });
   } catch (err) {
     console.error('listWithdrawals error:', err);

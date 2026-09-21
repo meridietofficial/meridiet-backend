@@ -14,9 +14,7 @@ export interface DietitianWithdrawal {
   account_id: number;
   amount: number;
   status: WithdrawalStatus;
-  razorpay_payout_id: string | null;
-  razorpay_contact_id: string | null;
-  razorpay_fund_account_id: string | null;
+  cashfree_transfer_id: string | null;
   utr: string | null;
   failure_reason: string | null;
   requested_at: Date;
@@ -24,16 +22,12 @@ export interface DietitianWithdrawal {
 }
 
 // Creates a withdrawal record and deducts from earnings_balance atomically.
-// Returns the new withdrawal row.
 export async function createWithdrawal(params: {
   dietitian_id: number;
   account_id: number;
   amount: number;
-  razorpay_contact_id: string;
-  razorpay_fund_account_id: string;
 }): Promise<DietitianWithdrawal> {
   return withTransaction(async (conn) => {
-    // Lock the dietitian row and check live balance
     const [dietRows] = await conn.execute<import('mysql2/promise').RowDataPacket[]>(
       'SELECT earnings_balance FROM dietitians WHERE id = ? FOR UPDATE',
       [params.dietitian_id],
@@ -43,24 +37,15 @@ export async function createWithdrawal(params: {
     const balance = Number(dietRows[0].earnings_balance);
     if (balance < params.amount) throw new Error('INSUFFICIENT_BALANCE');
 
-    // Deduct balance
     await conn.execute(
       'UPDATE dietitians SET earnings_balance = earnings_balance - ? WHERE id = ?',
       [params.amount, params.dietitian_id],
     );
 
-    // Create withdrawal record (status = pending — payout not yet submitted)
     const [result] = await conn.execute<import('mysql2/promise').ResultSetHeader>(
-      `INSERT INTO dietitian_withdrawals
-         (dietitian_id, account_id, amount, status, razorpay_contact_id, razorpay_fund_account_id)
-       VALUES (?, ?, ?, 'pending', ?, ?)`,
-      [
-        params.dietitian_id,
-        params.account_id,
-        params.amount,
-        params.razorpay_contact_id,
-        params.razorpay_fund_account_id,
-      ],
+      `INSERT INTO dietitian_withdrawals (dietitian_id, account_id, amount, status)
+       VALUES (?, ?, ?, 'pending')`,
+      [params.dietitian_id, params.account_id, params.amount],
     );
 
     const [rows] = await conn.execute<import('mysql2/promise').RowDataPacket[]>(
@@ -71,20 +56,20 @@ export async function createWithdrawal(params: {
   });
 }
 
-// Called after Razorpay payout is successfully created — stores payout ID
+// Called after Cashfree transfer is successfully created — stores transfer ID
 export async function markWithdrawalProcessing(
   withdrawalId: number,
-  razorpayPayoutId: string,
+  cashfreeTransferId: string,
 ): Promise<void> {
   await execute(
     `UPDATE dietitian_withdrawals
-     SET status = 'processing', razorpay_payout_id = ?
+     SET status = 'processing', cashfree_transfer_id = ?
      WHERE id = ?`,
-    [razorpayPayoutId, withdrawalId],
+    [cashfreeTransferId, withdrawalId],
   );
 }
 
-// Called when payout creation fails — refunds balance and marks failed
+// Called when transfer creation fails — refunds balance and marks failed
 export async function failWithdrawal(
   withdrawalId: number,
   dietitianId: number,
@@ -103,9 +88,9 @@ export async function failWithdrawal(
   });
 }
 
-// Called by Razorpay X webhook to update final payout status
+// Called by Cashfree webhook to update final transfer status
 export async function updateWithdrawalFromWebhook(
-  razorpayPayoutId: string,
+  cashfreeTransferId: string,
   status: WithdrawalStatus,
   params: { utr?: string; failure_reason?: string },
 ): Promise<void> {
@@ -116,21 +101,21 @@ export async function updateWithdrawalFromWebhook(
          failure_reason = COALESCE(?, failure_reason),
          processed_at = CASE WHEN ? IN ('processed', 'failed', 'reversed', 'cancelled')
                              THEN NOW() ELSE processed_at END
-     WHERE razorpay_payout_id = ?`,
+     WHERE cashfree_transfer_id = ?`,
     [
       status,
       params.utr ?? null,
       params.failure_reason ?? null,
       status,
-      razorpayPayoutId,
+      cashfreeTransferId,
     ],
   );
 
-  // If payout reversed/failed after being processed — refund the balance
+  // If transfer reversed/failed — refund the balance
   if (status === 'reversed' || status === 'failed') {
     const rows = await query<{ dietitian_id: number; amount: number }>(
-      'SELECT dietitian_id, amount FROM dietitian_withdrawals WHERE razorpay_payout_id = ? LIMIT 1',
-      [razorpayPayoutId],
+      'SELECT dietitian_id, amount FROM dietitian_withdrawals WHERE cashfree_transfer_id = ? LIMIT 1',
+      [cashfreeTransferId],
     );
     if (rows[0]) {
       await execute(
@@ -167,17 +152,13 @@ export async function getWithdrawalsByDietitian(
   return { withdrawals, total: totals.total };
 }
 
-// Saves Razorpay contact/fund account IDs on the payment account row
-// so we don't create duplicates on future withdrawals
-export async function cacheRazorpayIds(
+// Saves Cashfree beneficiary ID on the payment account row to avoid re-creating on future withdrawals
+export async function cacheCashfreeBeneId(
   accountId: number,
-  contactId: string,
-  fundAccountId: string,
+  beneId: string,
 ): Promise<void> {
   await execute(
-    `UPDATE dietitian_payment_accounts
-     SET razorpay_contact_id = ?, razorpay_fund_account_id = ?
-     WHERE id = ?`,
-    [contactId, fundAccountId, accountId],
+    `UPDATE dietitian_payment_accounts SET cashfree_bene_id = ? WHERE id = ?`,
+    [beneId, accountId],
   );
 }

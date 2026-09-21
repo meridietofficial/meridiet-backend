@@ -34,7 +34,7 @@ export const getCourseFee = async (): Promise<number> => {
   return raw != null ? Number(raw) : 24999;
 };
 
-// Dietitian one-time registration fee (seeded as 2499 in migration 083)
+// Dietitian one-time registration fee (seeded as 999 in migration 083)
 export const getDietitianRegistrationFee = async (): Promise<number> => {
   const raw = await getSetting('dietitian_registration_fee');
   if (raw == null) throw new Error('dietitian_registration_fee is not configured in app_settings');

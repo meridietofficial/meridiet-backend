@@ -93,7 +93,7 @@ const calcNutritionTargets = (form: DietForm, vitals: ReturnType<typeof calcVita
 
   // Detect which medical conditions the client has by matching against DB detection_keywords
   const clientConditionText = [
-    ...((form.medical_conditions ?? []) as string[]),
+    ...((form.medical_conditions ?? []) as string[]).map((c) => c.replace(/_/g, ' ')),
     form.other_condition ?? '',
   ].join(' ').toLowerCase();
 
@@ -282,7 +282,7 @@ const SUPPLEMENT_RULES: { keywords: string[]; note: string }[] = [
 // Reads medical_conditions + other_condition and returns supplement guidance for the AI prompt
 const supplementGuidanceBlock = (form: DietForm): string => {
   const conditionText = [
-    ...((form.medical_conditions ?? []) as string[]),
+    ...((form.medical_conditions ?? []) as string[]).map((c) => c.replace(/_/g, ' ')),
     form.other_condition ?? '',
   ].join(' ').toLowerCase();
 
@@ -301,7 +301,7 @@ const supplementGuidanceBlock = (form: DietForm): string => {
 // Prevents the AI from suggesting swaps that are harmful or irrelevant for the client.
 const smartSwapConstraintsBlock = (form: DietForm, usedSwaps: string[] = []): string => {
   const conditionText = [
-    ...((form.medical_conditions ?? []) as string[]),
+    ...((form.medical_conditions ?? []) as string[]).map((c) => c.replace(/_/g, ' ')),
     form.other_condition ?? '',
     form.medications ?? '',
   ].join(' ').toLowerCase();
@@ -351,7 +351,7 @@ const vegetarianProteinBoostBlock = (form: DietForm, nt: ReturnType<typeof calcN
   if (form.diet_type !== 'vegetarian' || !isMuscle) return '';
 
   const conditionText = [
-    ...((form.medical_conditions ?? []) as string[]),
+    ...((form.medical_conditions ?? []) as string[]).map((c) => c.replace(/_/g, ' ')),
     form.other_condition ?? '',
   ].join(' ').toLowerCase();
 
@@ -443,7 +443,7 @@ const wheyProteinBlock = (form: DietForm, nt: ReturnType<typeof calcNutritionTar
   if (form.whey_protein === 'no_food_only') return '';
 
   const conditionText = [
-    ...((form.medical_conditions ?? []) as string[]),
+    ...((form.medical_conditions ?? []) as string[]).map((c) => c.replace(/_/g, ' ')),
     form.other_condition ?? '',
   ].join(' ').toLowerCase();
 
@@ -598,7 +598,7 @@ const medicationTimingBlock = (form: DietForm): string => {
   if (!form.medications || form.on_medication === 'no') return '';
 
   const medText = form.medications.toLowerCase();
-  const conditionTextMed = [...((form.medical_conditions ?? []) as string[]), form.other_condition ?? ''].join(' ').toLowerCase();
+  const conditionTextMed = [...((form.medical_conditions ?? []) as string[]).map((c) => c.replace(/_/g, ' ')), form.other_condition ?? ''].join(' ').toLowerCase();
   const hasKidneyMed   = ['kidney', 'ckd', 'renal', 'creatinine'].some((kw) => conditionTextMed.includes(kw));
   const hasUricAcidMed = ['uric acid', 'gout', 'hyperuricemia'].some((kw) => conditionTextMed.includes(kw));
 
@@ -684,7 +684,7 @@ const DEFICIENCY_RULES: { keywords: string[]; rules: string[] }[] = [
     ],
   },
   {
-    keywords: ['hypertension', 'high blood pressure', 'bp high', 'elevated bp'],
+    keywords: ['hypertension', 'high blood pressure', 'bp high', 'elevated bp', 'high bp'],
     rules: [
       'Hypertension: Strictly limit sodium — no extra salt at the table, limit pickle, papad, processed/packaged foods, and namkeen. Daily sodium target: under 2000mg.',
       'Hypertension: Increase potassium-rich foods (banana, coconut water, dal, spinach, sweet potato) to help lower blood pressure naturally.',
@@ -716,7 +716,7 @@ const DEFICIENCY_RULES: { keywords: string[]; rules: string[] }[] = [
 // Returns a formatted block for the AI prompt, or empty string if nothing matched
 const deficiencyGuidanceBlock = (form: DietForm): string => {
   const conditionText = [
-    ...((form.medical_conditions ?? []) as string[]),
+    ...((form.medical_conditions ?? []) as string[]).map((c) => c.replace(/_/g, ' ')),
     form.other_condition ?? '',
   ].join(' ').toLowerCase();
 
@@ -736,7 +736,7 @@ const deficiencyGuidanceBlock = (form: DietForm): string => {
   const hasIron         = ['iron deficiency', 'iron deficient', 'anaemia', 'anemia', 'low iron', 'low haemoglobin', 'low hemoglobin'].some((kw) => conditionText.includes(kw));
   const hasUricAcid     = ['uric acid', 'gout', 'hyperuricemia'].some((kw) => conditionText.includes(kw));
   const hasCholesterol  = ['high cholesterol', 'elevated cholesterol', 'dyslipidemia', 'dyslipidaemia', 'high ldl', 'elevated ldl', 'triglycerides', 'lipid'].some((kw) => conditionText.includes(kw));
-  const hasHypertension = ['hypertension', 'high blood pressure', 'bp high', 'elevated bp'].some((kw) => conditionText.includes(kw));
+  const hasHypertension = ['hypertension', 'high blood pressure', 'bp high', 'elevated bp', 'high bp'].some((kw) => conditionText.includes(kw));
   const hasDiabetesDef  = ['diabetes', 'diabetic', 'type 2', 'type2', 'blood sugar', 'hyperglycemia', 'prediabetes', 'insulin resistance'].some((kw) => conditionText.includes(kw));
   const hasPCOSDef      = ['pcod', 'pcos', 'polycystic', 'hormonal imbalance'].some((kw) => conditionText.includes(kw));
   const hasKidneyDef    = ['ckd', 'kidney', 'renal', 'creatinine'].some((kw) => conditionText.includes(kw));
@@ -803,7 +803,7 @@ const digestiveHealthBlock = (form: DietForm): string => {
     const allergyText = ((form.food_allergies ?? []) as string[]).join(' ').toLowerCase();
     const hasDairyAllergy = ['milk', 'dairy', 'whey'].some((kw) => allergyText.includes(kw));
 
-    const conditionTextDig = [...((form.medical_conditions ?? []) as string[]), form.other_condition ?? ''].join(' ').toLowerCase();
+    const conditionTextDig = [...((form.medical_conditions ?? []) as string[]).map((c) => c.replace(/_/g, ' ')), form.other_condition ?? ''].join(' ').toLowerCase();
     const hasThyroidDig = ['thyroid', 'hypothyroid', 'hyperthyroid', 'hashimoto', 'graves'].some((kw) => conditionTextDig.includes(kw));
 
     const probioticLine = hasDairyAllergy
@@ -903,7 +903,7 @@ const genderNutritionBlock = (form: DietForm, nt: ReturnType<typeof calcNutritio
   const goals = ((form.goals ?? []) as string[]).map((g) => g.toLowerCase());
   const isMuscle = goals.some((g) => g.includes('muscle') || g.includes('strength') || g.includes('bulk'));
 
-  const conditionText = [...((form.medical_conditions ?? []) as string[]), form.other_condition ?? ''].join(' ').toLowerCase();
+  const conditionText = [...((form.medical_conditions ?? []) as string[]).map((c) => c.replace(/_/g, ' ')), form.other_condition ?? ''].join(' ').toLowerCase();
   const allergyText   = ((form.food_allergies ?? []) as string[]).join(' ').toLowerCase();
 
   const hasDairyAllergy  = ['milk', 'dairy', 'whey'].some((kw) => allergyText.includes(kw));
@@ -1489,7 +1489,7 @@ const sanitizeForbiddenFoods = (
   // dairy allergy → can't use paneer; thyroid + dairy allergy → can't use tofu/soy either
   const allergyTextSan = ((form?.food_allergies ?? []) as string[]).join(' ').toLowerCase();
   const hasDairyAllergySan = ['milk', 'dairy', 'whey'].some((kw) => allergyTextSan.includes(kw));
-  const conditionTextSan = [...((form?.medical_conditions ?? []) as string[]), form?.other_condition ?? ''].join(' ').toLowerCase();
+  const conditionTextSan = [...((form?.medical_conditions ?? []) as string[]).map((c) => c.replace(/_/g, ' ')), form?.other_condition ?? ''].join(' ').toLowerCase();
   const hasThyroidSan = ['thyroid', 'hypothyroid', 'hyperthyroid', 'hashimoto', 'graves'].some((kw) => conditionTextSan.includes(kw));
   const replacementFood = hasDairyAllergySan
     ? (hasThyroidSan ? 'Moong Dal (cooked, soft)' : 'Tofu (firm)')

@@ -3,7 +3,7 @@ export const up = `
     id                    INT UNSIGNED    NOT NULL AUTO_INCREMENT,
     email                 VARCHAR(254)    NOT NULL UNIQUE,
     registration_data     JSON            NOT NULL,
-    amount                DECIMAL(10,2)   NOT NULL DEFAULT 2499.00,
+    amount                DECIMAL(10,2)   NOT NULL DEFAULT 999.00,
     razorpay_order_id     VARCHAR(100)    NULL,
     razorpay_payment_id   VARCHAR(100)    NULL,
     razorpay_signature    VARCHAR(512)    NULL,
