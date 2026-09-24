@@ -7,7 +7,7 @@ import {
   formatDietitianPublic,
   type DietitianListFilters,
 } from '../models/Dietitian';
-import { getBookedSlots } from '../models/Appointment';
+import { getBookedSlots, getPublicReviewsForDietitian } from '../models/Appointment';
 import { getActiveSpecializations } from '../models/Specialization';
 import { successResponse, errorResponse } from '../utils/response';
 
@@ -158,6 +158,20 @@ export const listSpecializations = async (req: Request, res: Response) => {
     return successResponse(res, 200, 'Specializations fetched successfully', data);
   } catch (err) {
     console.error('List specializations error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// GET /api/v1/dietitians/:id/reviews
+// Public reviews for a single dietitian (reviewer names are anonymised).
+export const getPublicDietitianReviews = async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id || isNaN(id)) return errorResponse(res, 400, 'Invalid dietitian id');
+    const reviews = await getPublicReviewsForDietitian(id);
+    return successResponse(res, 200, 'Reviews fetched successfully', reviews);
+  } catch (err) {
+    console.error('Get public dietitian reviews error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

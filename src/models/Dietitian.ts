@@ -103,6 +103,8 @@ export interface DietitianWithUser extends Dietitian {
   phone_number: string | null;
   is_active: boolean;
   avatar_url: string | null;
+  avg_rating?: number;
+  review_count?: number;
 }
 
 const toJson = (val: unknown) => (val != null ? JSON.stringify(val) : null);
@@ -166,8 +168,6 @@ export const formatDietitianRow = (d: DietitianWithUser) => ({
 });
 
 // Card-shaped row for the public /dietitians grid.
-// rating / reviews / next_available have no backing data yet (no reviews or
-// scheduling tables), so they are returned as safe placeholders.
 export const formatDietitianCard = (d: DietitianWithUser, days = 14) => {
   const specialization = parseJson<string[]>(d.specialization) ?? [];
   const languages = parseJson<string[]>(d.languages) ?? [];
@@ -178,8 +178,8 @@ export const formatDietitianCard = (d: DietitianWithUser, days = 14) => {
     full_name: d.full_name,
     title: specialization[0] ?? 'Dietitian / Nutritionist',
     avatar_url: d.profile_photo ?? null,
-    rating: 0,
-    reviews: 0,
+    rating: Number(d.avg_rating ?? 0),
+    reviews: Number(d.review_count ?? 0),
     experience: d.experience,
     location: [d.city, d.state].filter(Boolean).join(', '),
     specialization,
@@ -238,8 +238,8 @@ export const formatDietitianPublic = (
     availability: d.is_online ? 'online' : 'offline',
     is_verified: d.is_verified,
     is_online: d.is_online,
-    rating: 0,
-    reviews: 0,
+    rating: Number(d.avg_rating ?? 0),
+    reviews: Number(d.review_count ?? 0),
     reviewsList: [] as unknown[],
     appointment_fee: Number(d.appointment_fee ?? 0),
     appointment_currency: d.appointment_currency ?? 'INR',
@@ -259,9 +259,19 @@ const DIETITIAN_USER_SELECT = `
     d.subscription_status, d.trial_starts_at, d.trial_ends_at, d.activated_at,
     d.is_online, d.sync_offline_slots,
     d.appointment_fee, d.appointment_currency, d.is_under_offer, d.created_at, d.updated_at,
-    u.full_name, u.email, u.phone_code, u.phone_number, u.is_active, u.avatar_url
+    u.full_name, u.email, u.phone_code, u.phone_number, u.is_active, u.avatar_url,
+    COALESCE(r.avg_rating, 0) AS avg_rating,
+    COALESCE(r.review_count, 0) AS review_count
   FROM dietitians d
   JOIN users u ON d.user_id = u.id
+  LEFT JOIN (
+    SELECT dietitian_id,
+           ROUND(AVG(user_rating), 1) AS avg_rating,
+           COUNT(user_rating) AS review_count
+    FROM appointments
+    WHERE user_rating IS NOT NULL
+    GROUP BY dietitian_id
+  ) r ON r.dietitian_id = d.id
   WHERE u.is_delete = 0
 `;
 
@@ -447,8 +457,6 @@ export const listPublicDietitians = async (filters: DietitianListFilters) => {
 
   const where = conditions.join(' AND ');
 
-  // No ratings/reviews system yet, so top_rated / most_reviewed fall back to
-  // "online first, then most experienced".
   const orderBy = (() => {
     switch (filters.sort) {
       case 'available_now':
@@ -456,8 +464,9 @@ export const listPublicDietitians = async (filters: DietitianListFilters) => {
       case 'experience':
         return 'd.sort_order ASC, d.is_under_offer DESC, CAST(d.experience AS UNSIGNED) DESC, d.created_at DESC';
       case 'top_rated':
+        return 'd.sort_order ASC, d.is_under_offer DESC, avg_rating DESC, review_count DESC, d.is_online DESC, d.created_at DESC';
       case 'most_reviewed':
-        return 'd.sort_order ASC, d.is_under_offer DESC, d.is_online DESC, CAST(d.experience AS UNSIGNED) DESC, d.created_at DESC';
+        return 'd.sort_order ASC, d.is_under_offer DESC, review_count DESC, avg_rating DESC, d.is_online DESC, d.created_at DESC';
       default:
         return 'd.sort_order ASC, d.is_under_offer DESC, d.created_at DESC';
     }

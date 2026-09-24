@@ -2081,3 +2081,35 @@ export const adminGetPaymentHistory = async (
     limit: safeLimit,
   };
 };
+
+export interface PublicReview {
+  rating: number;
+  review: string | null;
+  reviewed_at: Date;
+  reviewer_name: string;
+}
+
+export async function getPublicReviewsForDietitian(dietitianId: number, limit = 20): Promise<PublicReview[]> {
+  const safeLimit = Math.max(1, Math.min(100, limit));
+  const rows = await query<{
+    user_rating: number;
+    user_review: string | null;
+    user_reviewed_at: Date;
+    reviewer_name: string;
+  }>(
+    `SELECT a.user_rating, a.user_review, a.user_reviewed_at,
+            u.full_name AS reviewer_name
+     FROM appointments a
+     JOIN users u ON u.id = a.user_id
+     WHERE a.dietitian_id = ? AND a.user_rating IS NOT NULL
+     ORDER BY a.user_reviewed_at DESC
+     LIMIT ${safeLimit}`,
+    [dietitianId],
+  );
+  return rows.map((r) => ({
+    rating:        Number(r.user_rating),
+    review:        r.user_review ?? null,
+    reviewed_at:   r.user_reviewed_at,
+    reviewer_name: r.reviewer_name,
+  }));
+}
