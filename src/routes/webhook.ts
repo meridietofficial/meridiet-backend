@@ -4,6 +4,9 @@ import type { Request, Response } from 'express';
 import { agoraWebhook } from '../controllers/appointment';
 import { updateWithdrawalFromWebhook } from '../models/DietitianWithdrawal';
 import type { WithdrawalStatus } from '../models/DietitianWithdrawal';
+import { findByOrderId, markRegistrationPaid } from '../models/DietitianRegistrationPayment';
+import { activateDietitianSubscription } from '../models/Dietitian';
+import { creditRegistrationBonus } from '../models/DietitianWallet';
 import { env } from '../config/env';
 
 export const webhookRouter = Router();
@@ -52,6 +55,70 @@ webhookRouter.post('/cashfree', async (req: Request, res: Response) => {
     return res.json({ status: 'ok' });
   } catch (err) {
     console.error('cashfree webhook error:', err);
+    return res.status(500).json({ message: 'Webhook processing failed' });
+  }
+});
+
+// POST /webhooks/razorpay — Razorpay payment events (payment.captured)
+// Handles the case where the frontend drops off after payment but before
+// calling /verify-payment — ensures dietitian is always activated.
+webhookRouter.post('/razorpay', async (req: Request, res: Response) => {
+  try {
+    // Signature verification
+    const secret = env.RAZORPAY_WEBHOOK_SECRET;
+    if (secret) {
+      const rawBody = (req as unknown as Record<string, unknown>).rawBody as Buffer | undefined;
+      const bodyStr = rawBody ? rawBody.toString('utf8') : JSON.stringify(req.body);
+      const signature = req.headers['x-razorpay-signature'] as string;
+      const expected  = crypto.createHmac('sha256', secret).update(bodyStr).digest('hex');
+      if (!signature || signature !== expected) {
+        console.warn('Razorpay webhook: invalid signature');
+        return res.status(400).json({ message: 'Invalid signature' });
+      }
+    }
+
+    const event     = req.body?.event as string;
+    const payment   = req.body?.payload?.payment?.entity;
+
+    // Only handle captured payments
+    if (event !== 'payment.captured' || !payment) {
+      return res.json({ status: 'ignored' });
+    }
+
+    const orderId   = payment.order_id as string;
+    const paymentId = payment.id as string;
+
+    if (!orderId || !paymentId) return res.json({ status: 'ignored' });
+
+    // Find the registration payment record
+    const record = await findByOrderId(orderId);
+    if (!record) {
+      console.log(`Razorpay webhook: no registration record for order ${orderId} — ignoring`);
+      return res.json({ status: 'ignored' });
+    }
+
+    // Already paid — idempotent
+    if (record.status === 'paid') {
+      console.log(`Razorpay webhook: order ${orderId} already paid — skipping`);
+      return res.json({ status: 'already_paid' });
+    }
+
+    // Mark payment as paid (use empty string for signature — webhook has no frontend sig)
+    await markRegistrationPaid(record.id, paymentId, '');
+
+    // Activate subscription (safe even if already active)
+    if (record.dietitian_id) {
+      await activateDietitianSubscription(record.dietitian_id);
+
+      // Credit 500 AI plan credits — idempotent via fixed reference_id
+      void creditRegistrationBonus(record.dietitian_id)
+        .catch((err) => console.error('Razorpay webhook: plan credit failed:', err));
+    }
+
+    console.log(`Razorpay webhook: payment.captured → order ${orderId} → dietitian ${record.dietitian_id} activated`);
+    return res.json({ status: 'ok' });
+  } catch (err) {
+    console.error('Razorpay webhook error:', err);
     return res.status(500).json({ message: 'Webhook processing failed' });
   }
 });

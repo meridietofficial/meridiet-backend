@@ -8,7 +8,7 @@ export interface Coupon {
   discount_value: number;
   max_discount_amount: number | null;
   min_order_amount: number | null;
-  applicable_on: 'diet_plan' | 'appointment' | 'both';
+  applicable_on: 'diet_plan' | 'appointment' | 'both' | 'course';
   applicable_plans: string | null;
   max_uses: number | null;
   max_uses_per_user: number;
@@ -27,7 +27,7 @@ export interface CouponUsage {
   id: number;
   coupon_id: number;
   user_id: number | null;
-  applicable_type: 'diet_plan' | 'appointment';
+  applicable_type: 'diet_plan' | 'appointment' | 'course';
   payment_id: number | null;
   appointment_id: number | null;
   original_amount: number;
@@ -288,7 +288,7 @@ export interface CouponResolution {
 // Returns the resolved amounts or an error string — callers decide the HTTP status.
 export const resolveCoupon = async (
   code: string,
-  applicableType: 'diet_plan' | 'appointment',
+  applicableType: 'diet_plan' | 'appointment' | 'course',
   amount: number,
   plan: string | null,
   userId: number | null,
@@ -296,8 +296,12 @@ export const resolveCoupon = async (
   const coupon = await findCouponByCode(code);
   if (!coupon) return { error: 'Invalid or expired coupon code' };
 
+  // 'both' covers diet_plan + appointment only; 'course' must be explicit
   if (coupon.applicable_on !== 'both' && coupon.applicable_on !== applicableType) {
     return { error: `This coupon is not applicable on ${applicableType}` };
+  }
+  if (applicableType === 'course' && coupon.applicable_on === 'both') {
+    return { error: 'This coupon is not applicable on course' };
   }
 
   if (applicableType === 'diet_plan' && coupon.applicable_plans) {

@@ -633,6 +633,53 @@ const sendPaymentReminderWhatsApp = async (
   }
 };
 
+export const sendCoursePaymentWhatsApp = async (
+  phone: string,
+  name: string,
+  amountPaid: number,
+  enrollmentId: number,
+): Promise<void> => {
+  if (!env.MSG91_WHATSAPP_INTEGRATED_NUMBER || !env.MSG91_WHATSAPP_COURSE_PAYMENT_TEMPLATE) {
+    console.warn('[whatsapp] Course payment template not configured — skipping');
+    return;
+  }
+
+  const mobile = normaliseMobile(phone);
+  if (!mobile) return;
+
+  const payload = {
+    integrated_number: env.MSG91_WHATSAPP_INTEGRATED_NUMBER,
+    content_type: 'template',
+    payload: {
+      messaging_product: 'whatsapp',
+      to: mobile,
+      type: 'template',
+      template: {
+        name: env.MSG91_WHATSAPP_COURSE_PAYMENT_TEMPLATE,
+        language: { code: 'en' },
+        components: [
+          {
+            type: 'body',
+            parameters: [
+              { type: 'text', text: name },
+              { type: 'text', text: amountPaid.toLocaleString('en-IN') },
+              { type: 'text', text: String(enrollmentId) },
+            ],
+          },
+        ],
+      },
+    },
+  };
+
+  const res = await fetch(MSG91_WA_URL, { method: 'POST', headers: MSG91_HEADERS, body: JSON.stringify(payload) });
+  const body = (await res.json()) as { status?: string; hasError?: boolean; data?: { message_uuid?: string }; errors?: unknown };
+  if (body.hasError) {
+    console.error(`[whatsapp] Course payment send failed for ${mobile}:`, JSON.stringify(body));
+  } else {
+    console.log(`[whatsapp] Course payment queued for ${mobile} — uuid: ${body.data?.message_uuid}`);
+  }
+};
+
 export const sendPaymentReminder1WhatsApp = (phone: string, name: string) =>
   sendPaymentReminderWhatsApp(phone, name, env.MSG91_WHATSAPP_PAYMENT_REMINDER_1_TEMPLATE, 'payment-reminder-1');
 

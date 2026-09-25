@@ -311,6 +311,49 @@ export const adminCreditPlanCredits = async (
   }
 };
 
+// Credits the one-time 500-credit registration bonus.
+// Uses a fixed reference_id so it is safe to call from both the frontend
+// verify-payment endpoint and the Razorpay webhook — only one will succeed.
+export const creditRegistrationBonus = async (
+  dietitianId: number,
+): Promise<{ credited: boolean }> => {
+  const refId = `reg_bonus_${dietitianId}`;
+
+  const existing = await query<{ id: number }>(
+    `SELECT id FROM dietitian_wallet_transactions WHERE dietitian_id = ? AND reference_id = ? LIMIT 1`,
+    [dietitianId, refId],
+  );
+  if (existing.length > 0) return { credited: false };
+
+  try {
+    await withTransaction(async (conn) => {
+      const [rows] = await conn.execute<mysql.RowDataPacket[]>(
+        'SELECT id, plan_credits FROM dietitians WHERE id = ? FOR UPDATE',
+        [dietitianId],
+      );
+      if (!rows[0]) throw new Error('DIETITIAN_NOT_FOUND');
+
+      const newBal = Number(rows[0].plan_credits) + 500;
+
+      await conn.execute(
+        'UPDATE dietitians SET plan_credits = plan_credits + 500 WHERE id = ?',
+        [dietitianId],
+      );
+      await conn.execute(
+        `INSERT INTO dietitian_wallet_transactions
+           (dietitian_id, type, wallet, source, gross_amount, commission, net_amount,
+            balance_after, description, reference_id, appointment_id, approved_by)
+         VALUES (?, 'credit', 'plan', 'admin_plan_credit', 500, 0, 500, ?, ?, ?, NULL, NULL)`,
+        [dietitianId, newBal, '500 AI diet plan credits — registration fee payment bonus', refId],
+      );
+    });
+    return { credited: true };
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message === 'DIETITIAN_NOT_FOUND') return { credited: false };
+    throw err;
+  }
+};
+
 export const PLAN_COST_1_WEEK  = 50;
 export const PLAN_COST_1_MONTH = 100;
 export const NO_SHOW_PENALTY   = 100; // ₹100 deducted from dietitian wallet on no-show

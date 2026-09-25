@@ -10,10 +10,16 @@ import { razorpay } from '../config/razorpay';
 import { courseEnquiryUserEmail, courseEnquiryAdminEmail } from '../services/emails/courseEnquiryEmail';
 import { coursePaymentSuccessUserEmail, coursePaymentSuccessAdminEmail } from '../services/emails/coursePaymentSuccessEmail';
 import { coursePaymentFailedUserEmail } from '../services/emails/coursePaymentFailedEmail';
+import { resolveCoupon, createCouponUsage } from '../models/Coupon';
+import { sendCoursePaymentWhatsApp } from '../services/whatsapp';
 import { successResponse, errorResponse } from '../utils/response';
 import { env } from '../config/env';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const EMI_FIRST_INSTALLMENT      = 4999;
+const EMI_SUBSEQUENT_INSTALLMENT = 5000;
+const EMI_TOTAL_INSTALLMENTS     = 3;
 
 // Accepts +91XXXXXXXXXX, 91XXXXXXXXXX, or XXXXXXXXXX (10 digits)
 // Returns { phoneCode: '91', phoneNumber: '9876543210' }
@@ -124,14 +130,15 @@ export const submitCourseEnquiry = async (req: Request, res: Response) => {
 };
 
 // POST /api/v1/course/enroll
-// Body: { name, email, phone, otp }
+// Body: { name, email, phone, otp, payment_plan? }
 export const submitCourseEnrollment = async (req: Request, res: Response) => {
   try {
-    const { name, email, phone, otp } = req.body as {
+    const { name, email, phone, otp, payment_plan } = req.body as {
       name?: string;
       email?: string;
       phone?: string;
       otp?: string;
+      payment_plan?: string;
     };
 
     if (!name?.trim())                return errorResponse(res, 400, 'name is required');
@@ -139,6 +146,9 @@ export const submitCourseEnrollment = async (req: Request, res: Response) => {
     if (!EMAIL_RE.test(email.trim())) return errorResponse(res, 400, 'A valid email is required');
     if (!phone?.trim())               return errorResponse(res, 400, 'phone is required');
     if (!otp?.trim())                 return errorResponse(res, 400, 'otp is required');
+    if (payment_plan && !['full', 'emi'].includes(payment_plan)) {
+      return errorResponse(res, 400, 'payment_plan must be "full" or "emi"');
+    }
 
     const normalized = normalizeIndianPhone(phone.trim());
     if (!normalized) return errorResponse(res, 400, 'Enter a valid 10-digit Indian mobile number');
@@ -163,18 +173,20 @@ export const submitCourseEnrollment = async (req: Request, res: Response) => {
 
     // Save to DB
     const saved = await createCourseEnrollment({
-      name:  name.trim(),
-      email: email.trim().toLowerCase(),
-      phone: `+${normalized.phoneCode}${normalized.phoneNumber}`,
+      name:         name.trim(),
+      email:        email.trim().toLowerCase(),
+      phone:        `+${normalized.phoneCode}${normalized.phoneNumber}`,
+      payment_plan: (payment_plan as 'full' | 'emi') ?? 'full',
     });
     if (!saved) return errorResponse(res, 500, 'Failed to save enrollment');
 
     return successResponse(res, 201, 'Enrollment registered successfully', {
-      id:         saved.id,
-      name:       saved.name,
-      email:      saved.email,
-      course_fee: courseFee,
-      created_at: saved.created_at,
+      id:           saved.id,
+      name:         saved.name,
+      email:        saved.email,
+      payment_plan: saved.payment_plan,
+      course_fee:   courseFee,
+      created_at:   saved.created_at,
     });
   } catch (err) {
     console.error('Course enrollment error:', err);
@@ -183,39 +195,85 @@ export const submitCourseEnrollment = async (req: Request, res: Response) => {
 };
 
 // POST /api/v1/course/payment/create-order
-// Body: { enrollment_id }
+// Body: { enrollment_id, coupon_code? }
 export const createCourseOrder = async (req: Request, res: Response) => {
   try {
-    const { enrollment_id } = req.body as { enrollment_id?: number };
+    const { enrollment_id, coupon_code } = req.body as { enrollment_id?: number; coupon_code?: string };
     if (!enrollment_id) return errorResponse(res, 400, 'enrollment_id is required');
 
     const enrollment = await getCourseEnrollmentById(Number(enrollment_id));
-    if (!enrollment)                              return errorResponse(res, 404, 'Enrollment not found');
-    if (enrollment.payment_status === 'paid')     return errorResponse(res, 409, 'Enrollment is already paid');
+    if (!enrollment)                          return errorResponse(res, 404, 'Enrollment not found');
+    if (enrollment.payment_status === 'paid') return errorResponse(res, 409, 'Enrollment is already paid');
 
     const courseFee = await getCourseFee();
+    const isEmi = enrollment.payment_plan === 'emi';
+
+    // EMI: block coupon and check installment ceiling
+    if (isEmi) {
+      if (enrollment.emi_installments_paid >= EMI_TOTAL_INSTALLMENTS) {
+        return errorResponse(res, 409, 'All EMI installments have already been paid');
+      }
+      if (coupon_code?.trim()) {
+        return errorResponse(res, 400, 'Coupons cannot be applied to EMI payments');
+      }
+    }
+
+    let finalAmount     = isEmi ? EMI_FIRST_INSTALLMENT : courseFee;
+    let discountApplied = 0;
+    let couponId: number | null = null;
+    let appliedCode: string | null = null;
+
+    if (!isEmi && coupon_code?.trim()) {
+      const couponResult = await resolveCoupon(coupon_code.trim(), 'course', courseFee, null, null);
+      if ('error' in couponResult) return errorResponse(res, 400, couponResult.error);
+      couponId        = couponResult.coupon.id;
+      appliedCode     = couponResult.coupon.code;
+      discountApplied = couponResult.discountApplied;
+      finalAmount     = couponResult.finalAmount;
+    }
+
+    const installmentNumber = isEmi ? enrollment.emi_installments_paid + 1 : null;
+    if (isEmi) {
+      finalAmount = installmentNumber === 1 ? EMI_FIRST_INSTALLMENT : EMI_SUBSEQUENT_INSTALLMENT;
+    }
 
     const order = await razorpay.orders.create({
-      amount:   Math.round(courseFee * 100), // paise
+      amount:   Math.round(finalAmount * 100), // paise
       currency: 'INR',
       receipt:  `course_${enrollment.id}_${Date.now()}`,
       notes:    { enrollment_id: String(enrollment.id), name: enrollment.name, phone: enrollment.phone },
     });
 
-    // Store the Razorpay order id on the enrollment row
+    // Store order id and coupon / amount details on the enrollment row
     await import('../config/database').then(({ execute }) =>
-      execute('UPDATE course_enrollments SET razorpay_order_id = ? WHERE id = ?', [order.id, enrollment.id]),
+      execute(
+        `UPDATE course_enrollments
+            SET razorpay_order_id = ?,
+                coupon_id         = ?,
+                coupon_code       = ?,
+                original_fee      = ?,
+                discount_applied  = ?,
+                amount_paid       = ?
+          WHERE id = ?`,
+        [order.id, couponId, appliedCode, isEmi ? finalAmount : courseFee, discountApplied, finalAmount, enrollment.id],
+      ),
     );
 
     return successResponse(res, 201, 'Order created', {
-      order_id:      order.id,
-      amount:        courseFee,
-      currency:      'INR',
-      key_id:        env.RAZORPAY_KEY_ID,
-      enrollment_id: enrollment.id,
-      name:          enrollment.name,
-      email:         enrollment.email,
-      phone:         enrollment.phone,
+      order_id:             order.id,
+      amount:               finalAmount,
+      original_amount:      isEmi ? finalAmount : courseFee,
+      discount_applied:     discountApplied,
+      coupon_code:          appliedCode,
+      payment_plan:         enrollment.payment_plan,
+      installment_number:   installmentNumber,
+      total_installments:   isEmi ? EMI_TOTAL_INSTALLMENTS : null,
+      currency:             'INR',
+      key_id:               env.RAZORPAY_KEY_ID,
+      enrollment_id:        enrollment.id,
+      name:                 enrollment.name,
+      email:                enrollment.email,
+      phone:                enrollment.phone,
     });
   } catch (err) {
     console.error('Course create-order error:', err);
@@ -258,20 +316,40 @@ export const verifyCoursePayment = async (req: Request, res: Response) => {
     if (enrollment.payment_status === 'paid') return errorResponse(res, 409, 'Payment already verified');
 
     const courseFee = await getCourseFee();
+    const isEmi     = enrollment.payment_plan === 'emi';
+    const amountPaid = isEmi ? (enrollment.amount_paid ?? EMI_FIRST_INSTALLMENT) : (enrollment.amount_paid ?? courseFee);
+
+    const newInstallmentCount = isEmi ? (enrollment.emi_installments_paid ?? 0) + 1 : null;
+    const emiFullyPaid        = isEmi && newInstallmentCount! >= EMI_TOTAL_INSTALLMENTS;
 
     await updateCourseEnrollmentPayment(enrollment.id, {
-      payment_status:      'paid',
+      payment_status:       isEmi && !emiFullyPaid ? 'emi_partial' : 'paid',
       razorpay_payment_id,
       razorpay_signature,
-      payment_verified_at: new Date(),
+      payment_verified_at:  new Date(),
+      ...(isEmi ? { emi_installments_paid: newInstallmentCount! } : {}),
     });
+
+    // Record coupon usage if a coupon was applied at order creation (full plan only)
+    if (enrollment.coupon_id) {
+      void createCouponUsage({
+        coupon_id:        enrollment.coupon_id,
+        user_id:          null,
+        applicable_type:  'course',
+        payment_id:       null,
+        appointment_id:   null,
+        original_amount:  enrollment.original_fee ?? courseFee,
+        discount_applied: enrollment.discount_applied ?? 0,
+        final_amount:     amountPaid,
+      }).catch((err) => console.error('Course coupon usage record failed:', err));
+    }
 
     // Send success emails
     const userMail  = coursePaymentSuccessUserEmail(enrollment.name, {
       enrollmentId:      enrollment.id,
       email:             enrollment.email,
       phone:             enrollment.phone,
-      amountPaid:        courseFee,
+      amountPaid,
       razorpayPaymentId: razorpay_payment_id,
     });
     const adminMail = coursePaymentSuccessAdminEmail({
@@ -279,7 +357,7 @@ export const verifyCoursePayment = async (req: Request, res: Response) => {
       name:              enrollment.name,
       email:             enrollment.email,
       phone:             enrollment.phone,
-      amountPaid:        courseFee,
+      amountPaid,
       razorpayPaymentId: razorpay_payment_id,
       razorpayOrderId:   razorpay_order_id,
     });
@@ -289,11 +367,17 @@ export const verifyCoursePayment = async (req: Request, res: Response) => {
       sendEmail({ to: env.ADMIN_EMAIL,  subject: adminMail.subject, html: adminMail.html, text: adminMail.text }),
     ]).catch((err) => console.error('Course payment success email error:', err));
 
+    sendCoursePaymentWhatsApp(enrollment.phone, enrollment.name, amountPaid, enrollment.id)
+      .catch((err) => console.error('Course payment WhatsApp error:', err));
+
     return successResponse(res, 200, 'Payment verified successfully', {
-      enrollment_id: enrollment.id,
-      name:          enrollment.name,
-      amount_paid:   courseFee,
-      payment_id:    razorpay_payment_id,
+      enrollment_id:          enrollment.id,
+      name:                   enrollment.name,
+      amount_paid:            amountPaid,
+      payment_id:             razorpay_payment_id,
+      payment_plan:           enrollment.payment_plan,
+      emi_installments_paid:  newInstallmentCount ?? undefined,
+      emi_total_installments: isEmi ? EMI_TOTAL_INSTALLMENTS : undefined,
     });
   } catch (err) {
     console.error('Course verify payment error:', err);

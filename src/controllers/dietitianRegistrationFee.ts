@@ -12,7 +12,7 @@ import {
   findPaidRegistrationByDietitianId,
 } from '../models/DietitianRegistrationPayment';
 import { getDietitianRegistrationFee } from '../models/Setting';
-import { adminCreditPlanCredits } from '../models/DietitianWallet';
+import { creditRegistrationBonus } from '../models/DietitianWallet';
 import { successResponse, errorResponse } from '../utils/response';
 
 // POST /api/v1/dietitian/registration-fee/create-order
@@ -87,13 +87,9 @@ export const verifyRegistrationFeePayment = async (req: Request, res: Response) 
     await markRegistrationPaid(record.id, razorpay_payment_id, razorpay_signature);
     await activateDietitianSubscription(record.dietitian_id!);
 
-    // 500 AI diet plan credits on registration fee payment
-    void adminCreditPlanCredits(
-      record.dietitian_id!,
-      500,
-      0,
-      '500 AI diet plan credits — registration fee payment bonus',
-    ).catch((err) => console.error('Registration fee plan credit failed:', err));
+    // 500 AI diet plan credits — idempotent, safe to call alongside webhook
+    void creditRegistrationBonus(record.dietitian_id!)
+      .catch((err) => console.error('Registration fee plan credit failed:', err));
 
     return successResponse(res, 200, 'Payment verified. Full access activated.', {
       dietitian_id:        record.dietitian_id,

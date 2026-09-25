@@ -64,8 +64,8 @@ function validateCouponBody(body: Record<string, unknown>, isCreate: boolean): s
     if (Number(min_order_amount) <= 0) return 'min_order_amount must be a positive number';
   }
 
-  if (applicable_on !== undefined && !['diet_plan', 'appointment', 'both'].includes(applicable_on as string)) {
-    return 'applicable_on must be "diet_plan", "appointment", or "both"';
+  if (applicable_on !== undefined && !['diet_plan', 'appointment', 'both', 'course'].includes(applicable_on as string)) {
+    return 'applicable_on must be "diet_plan", "appointment", "both", or "course"';
   }
 
   if (applicable_plans !== undefined && applicable_plans !== null) {
@@ -127,7 +127,7 @@ export const adminCreateCoupon = async (req: Request, res: Response) => {
       discount_value:      Number(discount_value),
       max_discount_amount: max_discount_amount != null ? Number(max_discount_amount) : null,
       min_order_amount:    min_order_amount != null ? Number(min_order_amount) : null,
-      applicable_on:       (applicable_on as 'diet_plan' | 'appointment' | 'both') ?? 'both',
+      applicable_on:       (applicable_on as 'diet_plan' | 'appointment' | 'both' | 'course') ?? 'both',
       applicable_plans:    applicable_plans != null ? (applicable_plans as string) : null,
       max_uses:            max_uses != null ? Number(max_uses) : null,
       max_uses_per_user:   max_uses_per_user != null ? Number(max_uses_per_user) : 1,
@@ -223,7 +223,7 @@ export const adminUpdateCoupon = async (req: Request, res: Response) => {
     if (discount_value !== undefined)      data.discount_value      = Number(discount_value);
     if ('max_discount_amount' in body)     data.max_discount_amount = max_discount_amount != null ? Number(max_discount_amount) : null;
     if ('min_order_amount' in body)        data.min_order_amount    = min_order_amount != null ? Number(min_order_amount) : null;
-    if (applicable_on !== undefined)       data.applicable_on       = applicable_on as 'diet_plan' | 'appointment' | 'both';
+    if (applicable_on !== undefined)       data.applicable_on       = applicable_on as 'diet_plan' | 'appointment' | 'both' | 'course';
     if ('applicable_plans' in body)        data.applicable_plans    = applicable_plans != null ? (applicable_plans as string) : null;
     if ('max_uses' in body)                data.max_uses            = max_uses != null ? Number(max_uses) : null;
     if (max_uses_per_user !== undefined)   data.max_uses_per_user   = Number(max_uses_per_user);
@@ -266,8 +266,8 @@ export const validateCoupon = async (req: Request, res: Response) => {
     const { code, applicable_type, amount, plan } = req.body as Record<string, unknown>;
 
     if (!code || typeof code !== 'string') return errorResponse(res, 400, 'code is required');
-    if (!applicable_type || !['diet_plan', 'appointment'].includes(applicable_type as string)) {
-      return errorResponse(res, 400, 'applicable_type must be "diet_plan" or "appointment"');
+    if (!applicable_type || !['diet_plan', 'appointment', 'course'].includes(applicable_type as string)) {
+      return errorResponse(res, 400, 'applicable_type must be "diet_plan", "appointment", or "course"');
     }
     const parsedAmount = Number(amount);
     if (!amount || isNaN(parsedAmount) || parsedAmount <= 0) {
@@ -277,7 +277,7 @@ export const validateCoupon = async (req: Request, res: Response) => {
     const userId = req.user ? Number(req.user.sub) : null;
     const result = await resolveCoupon(
       code,
-      applicable_type as 'diet_plan' | 'appointment',
+      applicable_type as 'diet_plan' | 'appointment' | 'course',
       parsedAmount,
       plan != null ? String(plan) : null,
       userId,

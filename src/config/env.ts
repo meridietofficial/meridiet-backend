@@ -36,6 +36,7 @@ const envSchema = z.object({
   // Razorpay — payment gateway
   RAZORPAY_KEY_ID: z.string().min(1, 'RAZORPAY_KEY_ID is required'),
   RAZORPAY_KEY_SECRET: z.string().min(1, 'RAZORPAY_KEY_SECRET is required'),
+  RAZORPAY_WEBHOOK_SECRET: z.string().default(''),
 
   // Cashfree Payouts
   CASHFREE_CLIENT_ID: z.string().default(''),
@@ -94,6 +95,7 @@ const envSchema = z.object({
   MSG91_WHATSAPP_PAYMENT_REMINDER_1_TEMPLATE: z.string().default('md_payment_reminder_1'),
   MSG91_WHATSAPP_PAYMENT_REMINDER_2_TEMPLATE: z.string().default('md_payment_reminder_2'),
   MSG91_WHATSAPP_PAYMENT_REMINDER_3_TEMPLATE: z.string().default('md_payment_reminder_3'),
+  MSG91_WHATSAPP_COURSE_PAYMENT_TEMPLATE: z.string().default('course_payment_confirmation'),
 
   // Encryption — AES-256-GCM key for sensitive fields (account numbers)
   // Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
