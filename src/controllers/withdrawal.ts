@@ -43,8 +43,8 @@ export const requestWithdrawalHandler = async (req: Request, res: Response) => {
       return errorResponse(res, 400, 'amount is required');
     }
     const amountNum = Number(Number(amount).toFixed(2));
-    if (amountNum <= 1) {
-      return errorResponse(res, 400, 'Minimum withdrawal amount is ₹2');
+    if (amountNum < 500) {
+      return errorResponse(res, 400, 'Minimum withdrawal amount is ₹500');
     }
     if (amountNum > Number(dietitian.earnings_balance)) {
       return errorResponse(res, 400, `Insufficient balance. Available: ₹${dietitian.earnings_balance}`);
