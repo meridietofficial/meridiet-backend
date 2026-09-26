@@ -25,12 +25,14 @@ export const createRegistrationFeeOrder = async (req: Request, res: Response) =>
     if (!dietitian) return errorResponse(res, 404, 'Dietitian profile not found');
 
     if (dietitian.subscription_status === 'active') {
-      return errorResponse(res, 400, 'Registration fee already paid');
+      return successResponse(res, 200, 'Already active', { already_active: true });
     }
 
     // Check if already paid (idempotency guard)
     const alreadyPaid = await findPaidRegistrationByDietitianId(dietitian.id);
-    if (alreadyPaid) return errorResponse(res, 400, 'Registration fee already paid');
+    if (alreadyPaid) {
+      return successResponse(res, 200, 'Already active', { already_active: true });
+    }
 
     const user = await findUserById(userId);
     if (!user) return errorResponse(res, 404, 'User not found');
