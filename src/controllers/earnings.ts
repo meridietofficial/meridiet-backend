@@ -143,11 +143,15 @@ export const getEarningsTransactionsHandler = async (req: Request, res: Response
     const search = req.query.search ? String(req.query.search).trim() : undefined;
     const page   = Math.max(Number(req.query.page)  || 1, 1);
     const limit  = Math.min(Number(req.query.limit) || 10, 50);
+    const sessionTypeParam = req.query.session_type as string | undefined;
+    const sessionType = sessionTypeParam === 'video_call' || sessionTypeParam === 'in_person'
+      ? sessionTypeParam
+      : undefined;
 
     const dietitianId = await resolveDietitianId(req, res);
     if (!dietitianId) return;
 
-    const result = await getEarningsTransactions(dietitianId, status, search || undefined, page, limit);
+    const result = await getEarningsTransactions(dietitianId, status, search || undefined, page, limit, sessionType);
 
     return successResponse(res, 200, 'Transactions fetched', result, {
       page,

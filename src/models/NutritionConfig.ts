@@ -18,6 +18,8 @@ interface GoalSettingRow {
   calorie_min_offset: number;
   calorie_max_offset: number;
   protein_per_kg: number;
+  protein_per_kg_male: number | null;
+  protein_per_kg_female: number | null;
 }
 
 interface CalorieFloorRow {
@@ -50,8 +52,14 @@ export interface NutritionConfig {
   // Activity key → PAL multiplier (e.g. 'sedentary' → 1.2)
   activityMultipliers: Record<string, number>;
 
-  // Goal key → offsets and protein target (e.g. 'weight_loss' → { -500, -300, 1.6 })
-  goalSettings: Record<string, { calorie_min_offset: number; calorie_max_offset: number; protein_per_kg: number }>;
+  // Goal key → offsets and protein targets
+  goalSettings: Record<string, {
+    calorie_min_offset: number;
+    calorie_max_offset: number;
+    protein_per_kg: number;           // fallback when gender is 'other' / unknown
+    protein_per_kg_male: number | null;
+    protein_per_kg_female: number | null;
+  }>;
 
   // Gender → minimum safe calories (e.g. 'male' → 1500)
   calorieFloors: Record<string, number>;
@@ -74,7 +82,7 @@ export const loadNutritionConfig = async (): Promise<NutritionConfig> => {
       'SELECT activity_key, multiplier FROM nutrition_activity_multipliers WHERE is_active = 1',
     ),
     query<GoalSettingRow>(
-      'SELECT goal_key, calorie_min_offset, calorie_max_offset, protein_per_kg FROM nutrition_goal_settings WHERE is_active = 1',
+      'SELECT goal_key, calorie_min_offset, calorie_max_offset, protein_per_kg, protein_per_kg_male, protein_per_kg_female FROM nutrition_goal_settings WHERE is_active = 1',
     ),
     query<CalorieFloorRow>(
       'SELECT gender, min_calories FROM nutrition_calorie_floors',
@@ -90,12 +98,14 @@ export const loadNutritionConfig = async (): Promise<NutritionConfig> => {
   const activityMultipliers: Record<string, number> = {};
   for (const r of actRows) activityMultipliers[r.activity_key] = Number(r.multiplier);
 
-  const goalSettings: Record<string, { calorie_min_offset: number; calorie_max_offset: number; protein_per_kg: number }> = {};
+  const goalSettings: Record<string, { calorie_min_offset: number; calorie_max_offset: number; protein_per_kg: number; protein_per_kg_male: number | null; protein_per_kg_female: number | null }> = {};
   for (const r of goalRows) {
     goalSettings[r.goal_key] = {
-      calorie_min_offset: Number(r.calorie_min_offset),
-      calorie_max_offset: Number(r.calorie_max_offset),
-      protein_per_kg:     Number(r.protein_per_kg),
+      calorie_min_offset:   Number(r.calorie_min_offset),
+      calorie_max_offset:   Number(r.calorie_max_offset),
+      protein_per_kg:       Number(r.protein_per_kg),
+      protein_per_kg_male:  r.protein_per_kg_male   != null ? Number(r.protein_per_kg_male)   : null,
+      protein_per_kg_female:r.protein_per_kg_female != null ? Number(r.protein_per_kg_female) : null,
     };
   }
 

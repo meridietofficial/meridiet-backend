@@ -409,8 +409,8 @@ export const getPaidDietCharts = async (req: Request, res: Response) => {
     const search     = (req.query.search as string | undefined)?.trim();
     const planType   = req.query.planType   as string | undefined;
     const planStatus = req.query.planStatus as string | undefined;
-    const from       = req.query.from       as string | undefined;
-    const to         = req.query.to         as string | undefined;
+    const from       = (req.query.startDate ?? req.query.from) as string | undefined;
+    const to         = (req.query.endDate   ?? req.query.to)   as string | undefined;
     const offset     = (page - 1) * limit;
 
     // Sort by payment date by default so listing order matches the revenue graph

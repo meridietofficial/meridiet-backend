@@ -84,12 +84,20 @@ const calcNutritionTargets = (form: DietForm, vitals: ReturnType<typeof calcVita
   const goals = ((form.goals ?? []) as string[])
     .map((g) => g.toLowerCase().replace(/[\s-]+/g, '_'));
 
-  const isWeightLoss = goals.some((g) =>
-    g.includes('weight_loss') || g.includes('fat_loss') || g.includes('lose'));
+  const isFatLoss  = goals.some((g) => g.includes('fat_loss'));
+  const isWeightLoss = !isFatLoss && goals.some((g) =>
+    g.includes('weight_loss') || g.includes('lose'));
   const isMuscle = goals.some((g) =>
     g.includes('muscle') || g.includes('strength') || g.includes('bulk'));
   const isWeightGain = !isMuscle && goals.some((g) =>
     g.includes('weight_gain') || g.includes('gain_weight'));
+  const isPCOS            = goals.some((g) => g.includes('pcos') || g.includes('pcod'));
+  const isHormonalBalance = goals.some((g) => g.includes('hormonal_balance') || g.includes('hormonal'));
+  const isImproveEnergy   = goals.some((g) => g.includes('improve_energy') || g.includes('energy'));
+  const isImproveDigestion= goals.some((g) => g.includes('improve_digestion') || g.includes('digestion'));
+  const isGeneralFitness  = goals.some((g) => g.includes('general_fitness'));
+  const isManageCondition = goals.some((g) => g.includes('manage_condition'));
+  const isHealthyLifestyle= goals.some((g) => g.includes('healthy_lifestyle'));
 
   // Detect which medical conditions the client has by matching against DB detection_keywords
   const clientConditionText = [
@@ -136,9 +144,20 @@ const calcNutritionTargets = (form: DietForm, vitals: ReturnType<typeof calcVita
     weightForProtein = Math.max(weightForProtein, 40);
   }
 
-  // Goal-based calorie offsets from DB
-  const goalKey = isWeightLoss ? 'weight_loss' : isMuscle ? 'muscle_gain' : isWeightGain ? 'weight_gain' : 'maintenance';
-  const goalRow = config.goalSettings[goalKey] ?? { calorie_min_offset: -150, calorie_max_offset: 150, protein_per_kg: 1.2 };
+  // Goal-based calorie offsets + gender-specific protein from DB
+  const goalKey = isFatLoss         ? 'fat_loss'
+    : isWeightLoss                  ? 'weight_loss'
+    : isMuscle                      ? 'muscle_gain'
+    : isWeightGain                  ? 'weight_gain'
+    : isPCOS                        ? 'pcos_support'
+    : isHormonalBalance             ? 'hormonal_balance'
+    : isImproveEnergy               ? 'improve_energy'
+    : isImproveDigestion            ? 'improve_digestion'
+    : isGeneralFitness              ? 'general_fitness'
+    : isManageCondition             ? 'manage_condition'
+    : isHealthyLifestyle            ? 'healthy_lifestyle'
+    : 'maintenance';
+  const goalRow = config.goalSettings[goalKey] ?? { calorie_min_offset: -150, calorie_max_offset: 150, protein_per_kg: 1.2, protein_per_kg_male: null, protein_per_kg_female: null };
 
   let calorieMin = Math.round(vitals.tdee + goalRow.calorie_min_offset);
   let calorieMax = Math.round(vitals.tdee + goalRow.calorie_max_offset);
@@ -156,9 +175,12 @@ const calcNutritionTargets = (form: DietForm, vitals: ReturnType<typeof calcVita
     calorieMax = Math.max(calorieMax, calorieMin + 100);
   }
 
-  // Protein per kg: start with goal-based value, then apply medical overrides
-  // Conditions are already sorted by priority (lowest = highest priority)
-  let proteinPerKg = goalRow.protein_per_kg;
+  // Protein per kg: use gender-specific value from DB, fall back to generic if not set
+  let proteinPerKg = gender === 'female' && goalRow.protein_per_kg_female != null
+    ? goalRow.protein_per_kg_female
+    : gender === 'male' && goalRow.protein_per_kg_male != null
+      ? goalRow.protein_per_kg_male
+      : goalRow.protein_per_kg;
 
   // Find the highest-priority matched condition that has a protein override
   const proteinOverrideCondition = matchedConditions.find((c) => c.protein_per_kg_override !== null);
@@ -205,9 +227,8 @@ const calcNutritionTargets = (form: DietForm, vitals: ReturnType<typeof calcVita
   }
   carbsTarget = Math.max(carbsTarget, minCarbsPerDay);
 
-  // Fiber target: 30g for muscle gain (high protein needs more fiber for gut health),
-  // 25g for all other goals (WHO baseline). Not configurable in DB yet — hardcoded here.
-  const fiberTarget = isMuscle ? 30 : 25;
+  // Fiber target: 30g for muscle gain and digestion improvement, 25g for all other goals (WHO baseline).
+  const fiberTarget = (isMuscle || isImproveDigestion) ? 30 : 25;
 
   // Collect prompt notes from all matched conditions (in priority order)
   const medicalNotes = matchedConditions.map((c) => c.prompt_note);
@@ -1007,6 +1028,7 @@ const buildClientProfile = (form: DietForm, vitals: ReturnType<typeof calcVitals
     diet_type: form.diet_type ? formatLabel(form.diet_type) : null,
     cuisine_preference: form.cuisine_preference ?? [],
     foods_dislike: form.foods_dislike ?? null, favorite_foods: form.favorite_foods ?? null,
+    whey_protein: form.whey_protein ?? null,
   },
   contact_details: {
     contact_name: form.contact_name ?? null, whatsapp: form.whatsapp ?? null,
@@ -1203,8 +1225,9 @@ INSTRUCTIONS:
 5. QUANTITY FORMAT (MANDATORY for all recipe ingredients): All ingredient quantities must be in grams (g) or millilitres (ml). Examples: "150g paneer", "200ml curd", "2 medium tomatoes (100g)", "1 tsp cumin seeds (3g)". NEVER use vague amounts like "some", "a handful", or "as needed".
 6. Recipe calorie counts must be consistent with the daily calorie range above.
 7. general_tips MUST include any supplement guidance notes provided above — frame them as "Discuss with your doctor".
-8. Return VALID JSON only — no markdown, no comments, no code blocks.
-9. All numeric fields must be numbers, not strings.
+8. Keep each general_tips item to 1 short sentence (max 15 words). No long paragraphs.
+9. Return VALID JSON only — no markdown, no comments, no code blocks.
+10. All numeric fields must be numbers, not strings.
 ${finalCheckBlock(form, nt)}
 Return ONLY this JSON structure:
 {
@@ -1250,22 +1273,45 @@ CRITICAL RULES:
 - Use meals from the client's preferred cuisine(s) as specified above.
 - Each day must have breakfast, lunch, snack, and dinner as arrays of meal items.
 - Each meal item MUST include "protein_g": the estimated protein in grams for that item using standard Indian food nutrition values.
-- QUANTITY FORMAT (MANDATORY for every item across ALL 7 days): Always specify quantities in grams (g) or millilitres (ml). If using common units, always add the gram/ml equivalent in brackets. Examples: "2 medium chapati (60g)", "1 bowl dal (200ml)", "1 cup cooked rice (180g)", "150g paneer", "200ml curd". NEVER use vague quantities like "1 bowl", "1 cup", "1 piece", or "some" without the gram/ml value.
+
+FOOD NAME RULES (MANDATORY):
+- The "food" field must be a short, clean real dish name — like "Methi Thepla", "Moong Dal", "Palak Paneer", "Tofu Bhurji". Max 4 words.
+- Do NOT use vague names like "Tofu Chutney" (not a dish), "Lemon Juice" as a standalone snack item, or names that don't describe a real prepared dish.
+- Do NOT add cooking methods or adjectives in the name.
+
+VARIETY RULES (MANDATORY — enforce strictly across all 7 days):
+- NO dish name may appear more than once across the entire week in ANY meal slot. If "Tofu Methi Shaak" is lunch on Day 1, it cannot be dinner on Day 4.
+- Dal rotation: use a DIFFERENT dal each day — moong, tuvar, masoor, chana, rajma, mixed dal, urad — max 2 repeats across 7 days.
+- Grain rotation: rotate rotli/rotla base — whole wheat, bajra, jowar, multigrain — no grain repeats on consecutive days.
+- Breakfast structure rotation: do NOT use the same breakfast base item (thepla/dhokla/handvo/khichu/pudla/muthia/chilla) more than once. Vary the fruit too — amla, guava, banana, orange, papaya, apple, pomegranate — not the same fruit every day.
+- Nut variety: rotate nuts at breakfast — walnuts, almonds, cashews, peanuts, mixed seeds — not the same nut every single day.
+- Protein dish rotation: tofu preparation must change each meal — bhurji, shaak, tikki, cutlet, stir fry, stuffed, marinated — never the same preparation twice.
+
+SNACK RULES (MANDATORY):
+- Every day MUST have a completely different snack. Base item rotation across 7 days: roasted chana, fruit + peanut butter, makhana, moong sprouts chaat, sweet potato chaat, rajgira chikki or til chikki, khaman dhokla.
+- Protein powder may appear on AT MOST 2 days. Seeds on AT MOST 2 days.
+- Each snack must include at least 2 items and have enough calories to hit the snack target — do NOT give a single item like only "Rajgira Chikki" with nothing else.
+- No juice or liquid-only items as a snack item (no "Lemon Juice 15ml" — that is not a food).
+
+- QUANTITY FORMAT (MANDATORY): Always specify in grams (g) or ml. If using common units, always add gram/ml in brackets. NEVER use vague amounts.
 - Use the client's preferred meal times for meal_timing in every day — DO NOT use generic times.
-- For EVERY meal item, set "kcal" to the estimated calorie count for that specific food using standard Indian food nutrition values (e.g. 1 bowl cooked dal 200ml ≈ 150 kcal, 1 medium chapati 30g ≈ 100 kcal, 100g paneer ≈ 265 kcal, 1 cup cooked rice 180g ≈ 240 kcal).
-- Set "total_kcal" as the EXACT SUM of all "kcal" values across breakfast + lunch + snack + dinner. Do NOT copy example numbers — the total must reflect the actual meals you wrote. The example JSON shows 0 as a placeholder; replace it with the real sum.
-- Aim for total_kcal to fall within ${nt.calorieMin}–${nt.calorieMax} kcal/day. If your meals fall short, add portion sizes or an extra item rather than inflating the number.
-- CALORIE DISTRIBUTION PER MEAL — each slot must hit these kcal targets so the day total reaches ${nt.calorieMin}–${nt.calorieMax} kcal:
-  • Breakfast: ${Math.round(nt.calorieTarget * 0.25)}–${Math.round(nt.calorieTarget * 0.27)} kcal — include a base item (oats/paratha/chilla/idli: 300–450 kcal) + protein source (paneer/tofu/curd: 120–260 kcal) + healthy fat (nuts/ghee: 100–175 kcal)
-  • Lunch: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — include protein dish 150–200g (300–400 kcal) + legume/dal 1.5–2 cups (200–300 kcal) + 2–3 roti OR 1 cup rice (180–280 kcal)
-  • Snack: ${Math.round(nt.calorieTarget * 0.11)}–${Math.round(nt.calorieTarget * 0.13)} kcal — e.g. 50g nuts/chana (200 kcal) + chaas/raita/a piece of fruit (80–120 kcal), or fruit + peanut butter (220 kcal); rotate snack items across days — do NOT default to curd/yogurt every single day
-  • Dinner: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — include protein dish 150g (280–400 kcal) + dal 1.5 cups (150–200 kcal) + 2 roti/1 cup rice (180–240 kcal) + one varied side (rotate across nights: raita 100g, sabzi, salad, soup, or curd — do NOT use curd every night)
-  If any meal falls below its target, ADD more food (extra roti, extra dal, 1 tsp ghee, 30g nuts, or a small sabzi) — do NOT reduce another meal to compensate.
-- Set "total_protein_g" as the actual SUM of all protein_g values across breakfast + lunch + snack + dinner. Do NOT just echo the target.
-- Keep total_protein_g between ${nt.proteinMin}–${nt.proteinMax} g/day.
+- For EVERY meal item, set "kcal" to the estimated calorie count using standard Indian food nutrition values.
+- Set "total_kcal" as the EXACT SUM of all "kcal" values. The example JSON shows 0 as placeholder — replace with the real sum.
+- Aim for total_kcal within ${nt.calorieMin}–${nt.calorieMax} kcal/day.
+- CALORIE DISTRIBUTION PER MEAL:
+  • Breakfast: ${Math.round(nt.calorieTarget * 0.25)}–${Math.round(nt.calorieTarget * 0.27)} kcal — base item + protein source + healthy fat
+  • Lunch: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — protein dish + dal + roti/rice
+  • Snack: ${Math.round(nt.calorieTarget * 0.11)}–${Math.round(nt.calorieTarget * 0.13)} kcal — see snack rules above
+  • Dinner: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — protein dish + dal + roti/rice + varied side (raita/sabzi/salad/soup — rotate each night)
+  If any meal falls below its target, ADD more food — do NOT reduce another meal to compensate.
+- Set "total_protein_g" as the actual SUM of all protein_g values. Keep between ${nt.proteinMin}–${nt.proteinMax} g/day.
 - Include water_liters (2.5–3.5) for each day.
-- Never repeat the same meal across days within this week.
 - Include 3 smart_swaps and 3 weekly_notes.
+- TITLE FORMAT: Must be "Personalized Diet Plan for [Primary Goal]" — e.g. "Personalized Diet Plan for Fat Loss". Do NOT mention cuisine or diet type in the title.
+- DESCRIPTION FORMAT: Must follow this exact pattern — "A ${totalWeeks}-week ${form.diet_type ?? 'diet'} diet plan focusing on [goal], [health aspect], and [nutrient aspect]." Keep it to 1 sentence.
+- FOCUS FORMAT: Each focus item must be a short 2–3 word keyword only, all lowercase — e.g. "fat loss", "muscle gain", "gut health", "protein intake". No full sentences.
+- WHAT TO EXPECT FORMAT: Must start with "Expect" and be 1 short sentence — e.g. "Expect gradual fat loss, improved energy, and better digestion."
+- Keep each "weekly_notes" item to 1 short sentence (max 15 words).
 ${smartSwapConstraintsBlock(form, usedSwaps)}- Return VALID JSON only — no markdown, no comments, no code blocks.
 - All numeric fields must be numbers, not strings.
 ${finalCheckBlock(form, nt)}
@@ -1326,25 +1372,42 @@ INSTRUCTIONS:
 2. Use meals from the client's preferred cuisine(s) as specified above.
 3. Each day must have Breakfast, Lunch, Snack, and Dinner as arrays of meal items.
 4. Each meal item MUST include "protein_g": the estimated protein in grams for that item using standard Indian food nutrition values.
-5. QUANTITY FORMAT (MANDATORY for every item across ALL 7 days): Always specify quantities in grams (g) or millilitres (ml). If using common units, always add the gram/ml equivalent in brackets. Examples: "2 medium chapati (60g)", "1 bowl dal (200ml)", "1 cup cooked rice (180g)", "150g paneer", "200ml curd". NEVER use vague quantities like "1 bowl", "1 cup", "1 piece", or "some" without the gram/ml value.
-6. Use the client's preferred meal times for meal_timing in every day — DO NOT use generic times.
-7. For EVERY meal item, set "kcal" to the estimated calorie count for that specific food using standard Indian food nutrition values (e.g. 1 bowl cooked dal 200ml ≈ 150 kcal, 1 medium chapati 30g ≈ 100 kcal, 100g paneer ≈ 265 kcal, 1 cup cooked rice 180g ≈ 240 kcal).
-8. Set "total_kcal" as the EXACT SUM of all "kcal" values across breakfast + lunch + snack + dinner. Do NOT copy example numbers — the total must reflect the actual meals you wrote. The example JSON shows 0 as a placeholder; replace it with the real sum.
-9. Aim for total_kcal to fall within ${nt.calorieMin}–${nt.calorieMax} kcal/day. If your meals fall short, add portion sizes or an extra item rather than inflating the number.
-9a. CALORIE DISTRIBUTION PER MEAL — each slot must hit these kcal targets so the day total reaches ${nt.calorieMin}–${nt.calorieMax} kcal:
-  • Breakfast: ${Math.round(nt.calorieTarget * 0.25)}–${Math.round(nt.calorieTarget * 0.27)} kcal — include a base item (oats/paratha/chilla/idli: 300–450 kcal) + protein source (paneer/tofu/curd: 120–260 kcal) + healthy fat (nuts/ghee: 100–175 kcal)
-  • Lunch: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — include protein dish 150–200g (300–400 kcal) + legume/dal 1.5–2 cups (200–300 kcal) + 2–3 roti OR 1 cup rice (180–280 kcal)
-  • Snack: ${Math.round(nt.calorieTarget * 0.11)}–${Math.round(nt.calorieTarget * 0.13)} kcal — e.g. 50g nuts/chana (200 kcal) + chaas/raita/a piece of fruit (80–120 kcal), or fruit + peanut butter (220 kcal); rotate snack items across days — do NOT default to curd/yogurt every single day
-  • Dinner: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — include protein dish 150g (280–400 kcal) + dal 1.5 cups (150–200 kcal) + 2 roti/1 cup rice (180–240 kcal) + one varied side (rotate across nights: raita 100g, sabzi, salad, soup, or curd — do NOT use curd every night)
-  If any meal falls below its target, ADD more food (extra roti, extra dal, 1 tsp ghee, 30g nuts, or a small sabzi) — do NOT reduce another meal to compensate.
-10. Set "total_protein_g" as the actual SUM of all protein_g values across all meals. Do NOT just echo the target.
-11. Keep total_protein_g between ${nt.proteinMin}–${nt.proteinMax} g/day.
-12. Include water_liters (2.5–3.5) for each day.
-13. Generate exactly 7 days for Week ${weekNumber}.
-14. Never repeat the same meals within this week or from the already used meals list above.
-15. Include smart swaps and weekly tips for Week ${weekNumber}.
-16. Return VALID JSON only — no markdown, no comments, no code blocks.
-17. All numeric fields must be numbers, not strings.
+5. FOOD NAME RULES (MANDATORY): Short real dish name, max 4 words. No vague names like "Tofu Chutney". No cooking methods or adjectives. No liquid-only items (like "Lemon Juice") as standalone snack items.
+
+6. VARIETY RULES (MANDATORY — enforce across all 7 days):
+   - NO dish name may appear more than once across the entire week in ANY meal slot.
+   - Dal rotation: use a DIFFERENT dal each day — moong, tuvar, masoor, chana, rajma, mixed dal, urad — max 2 repeats.
+   - Grain rotation: rotate whole wheat / bajra / jowar / multigrain — no grain repeats on consecutive days.
+   - Breakfast base rotation: each day a different base (thepla/dhokla/handvo/khichu/pudla/muthia/chilla) — not the same twice.
+   - Fruit variety: rotate amla/guava/banana/orange/papaya/apple/pomegranate — not the same fruit every day.
+   - Nut variety: rotate walnuts/almonds/cashews/peanuts — not the same nut every day.
+   - Protein dish rotation: vary tofu preparation — bhurji, shaak, tikki, cutlet, stir fry, stuffed — never the same preparation twice.
+
+7. SNACK RULES (MANDATORY): Every day a completely different snack. Rotate: roasted chana, fruit + peanut butter, makhana, moong sprouts chaat, sweet potato chaat, rajgira/til chikki, khaman dhokla. Protein powder max 2 days. Seeds max 2 days. Every snack must have at least 2 food items and hit the calorie target.
+
+8. QUANTITY FORMAT (MANDATORY): Always specify in grams (g) or ml with gram/ml equivalent in brackets for common units. Never vague.
+9. Use the client's preferred meal times — DO NOT use generic times.
+10. For EVERY meal item, set "kcal" to the estimated calorie count using standard Indian food values.
+11. Set "total_kcal" as the EXACT SUM of all "kcal" values. Replace the 0 placeholder with the real sum.
+12. Aim for total_kcal within ${nt.calorieMin}–${nt.calorieMax} kcal/day.
+12a. CALORIE DISTRIBUTION:
+  • Breakfast: ${Math.round(nt.calorieTarget * 0.25)}–${Math.round(nt.calorieTarget * 0.27)} kcal — base + protein source + healthy fat
+  • Lunch: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — protein dish + dal + roti/rice
+  • Snack: ${Math.round(nt.calorieTarget * 0.11)}–${Math.round(nt.calorieTarget * 0.13)} kcal — see snack rules
+  • Dinner: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — protein dish + dal + roti/rice + varied side
+  If short, ADD more food — do NOT reduce another meal.
+13. Set "total_protein_g" as the actual SUM of protein_g values. Keep between ${nt.proteinMin}–${nt.proteinMax} g/day.
+14. Include water_liters (2.5–3.5) for each day.
+15. Generate exactly 7 days for Week ${weekNumber}.
+16. Never repeat the same meals within this week or from the already used meals list above.
+17. Include smart swaps and weekly tips for Week ${weekNumber}.
+16. TITLE FORMAT: Must be "Personalized Diet Plan for [Primary Goal]" — e.g. "Personalized Diet Plan for Fat Loss". Do NOT mention cuisine or diet type in the title.
+17. DESCRIPTION FORMAT: Must follow this exact pattern — "A ${totalWeeks}-week ${form.diet_type ?? 'diet'} diet plan focusing on [goal], [health aspect], and [nutrient aspect]." Keep it to 1 sentence.
+18. FOCUS FORMAT: Each focus item must be a short 2–3 word keyword only, all lowercase — e.g. "fat loss", "muscle gain", "gut health", "protein intake". No full sentences.
+19. WHAT TO EXPECT FORMAT: Must start with "Expect" and be 1 short sentence — e.g. "Expect gradual fat loss, improved energy, and better digestion."
+20. Keep each "weekly_notes" item to 1 short sentence (max 15 words).
+20. Return VALID JSON only — no markdown, no comments, no code blocks.
+21. All numeric fields must be numbers, not strings.
 ${smartSwapConstraintsBlock(form, usedSwaps)}
 ${finalCheckBlock(form, nt)}
 Return ONLY this JSON structure (days array MUST have exactly 7 items):
@@ -1573,8 +1636,7 @@ const callOpenAIWithRetry = async (prompt: string, label: string): Promise<Recor
           model: modelName,
           messages: [{ role: 'user', content: prompt }],
           response_format: { type: 'json_object' },
-          temperature: 0.4,
-          max_tokens: 16384,
+          max_completion_tokens: 16384,
         });
         const choice = completion.choices[0];
         if (choice?.finish_reason === 'length') {
@@ -1644,7 +1706,7 @@ export const generateAndDeliverDietPlan = async (
   }
   if (!plan) { console.error(`[delivery] failed to create plan record for form ${formId}`); return; }
 
-  // ── Step 1: Generate via Gemini week by week ─────────────────────────────────
+  // ── Step 1: Generate via OpenAI week by week ─────────────────────────────────
   let generatedData: Record<string, unknown> = {};
   const planType = form.plan_type ?? 1;
   const totalWeeks = weeksOverride ?? PLAN_WEEKS[planType] ?? 1;

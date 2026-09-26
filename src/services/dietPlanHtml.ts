@@ -668,11 +668,20 @@ const profilePage = (plan: DietPlan, page: number): string => {
     infoRow('Allergies / Intol.',  none(md.food_allergies), iWarn),
   ].join(''));
 
+  const wheyLabel = (val: unknown) => {
+    if (val === 'yes_using')      return 'Currently Using';
+    if (val === 'open_to_trying') return 'Open to Trying';
+    if (val === 'no_food_only')   return 'No — Food Only';
+    return null;
+  };
+  const iFlask = r('<path d="M9 3h6M9 3v6l-4.35 8.7A1 1 0 0 0 5.54 19h12.92a1 1 0 0 0 .89-1.3L15 9V3"/>');
+
   const c6 = sectionCardNew(icoFork, 'DIETARY INFORMATION', [
-    infoRow('Diet Type',          humanize(di.diet_type as string), iCheck),
-    infoRow('Cuisine Preference', joinArr(di.cuisine_preference), iPepper),
-    infoRow('Favorite Foods',     (di.favorite_foods as string) || '—', iHeart),
-    infoRow('Foods Disliked',     (di.foods_dislike as string) || 'None', iBan),
+    infoRow('Diet Type',           humanize(di.diet_type as string), iCheck),
+    infoRow('Cuisine Preference',  joinArr(di.cuisine_preference), iPepper),
+    infoRow('Favorite Foods',      (di.favorite_foods as string) || '—', iHeart),
+    infoRow('Foods Disliked',      (di.foods_dislike as string) || 'None', iBan),
+    infoRow('Protein Supplement',  wheyLabel(di.whey_protein), iFlask),
   ].join(''));
 
   const notes = String(g.final_notes ?? g.health_notes ?? 'Prefers simple, sustainable meals with Indian food options. Motivated to stay consistent and follow the plan.');

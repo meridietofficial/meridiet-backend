@@ -10,8 +10,8 @@ const VALID_MODES: EarningMode[] = ['diet_plans', 'appointments', 'registrations
 
 async function fetchCommissionPct(): Promise<number> {
   const raw = await getSetting('platform_commission_pct');
-  const pct = raw !== null ? Number(raw) : 20;
-  return isNaN(pct) ? 20 : pct;
+  const pct = raw !== null ? Number(raw) : 25;
+  return isNaN(pct) ? 25 : pct;
 }
 
 // ── Diet Plan Payments ────────────────────────────────────────────────────────
@@ -319,13 +319,16 @@ async function getCourseEarnings(search: string | undefined, status: string, pag
       email: string;
       phone: string;
       course_fee: number;
+      amount_paid: number | null;
+      payment_plan: string;
+      emi_installments_paid: number;
       payment_status: string;
       razorpay_order_id: string | null;
       razorpay_payment_id: string | null;
       payment_verified_at: string | null;
       created_at: string;
     }>(
-      `SELECT id, name, email, phone, course_fee, payment_status,
+      `SELECT id, name, email, phone, course_fee, amount_paid, payment_plan, emi_installments_paid, payment_status,
               razorpay_order_id, razorpay_payment_id,
               DATE_FORMAT(payment_verified_at, '%Y-%m-%d %H:%i:%s') AS payment_verified_at,
               DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at
@@ -341,10 +344,10 @@ async function getCourseEarnings(search: string | undefined, status: string, pag
     ),
     query<{ total_revenue: number; paid_count: number; pending_count: number; failed_count: number }>(
       `SELECT
-         COALESCE(SUM(CASE WHEN payment_status = 'paid' THEN course_fee ELSE 0 END), 0) AS total_revenue,
-         SUM(payment_status = 'paid')    AS paid_count,
-         SUM(payment_status = 'pending') AS pending_count,
-         SUM(payment_status = 'failed')  AS failed_count
+         COALESCE(SUM(CASE WHEN payment_status IN ('paid', 'emi_partial') THEN COALESCE(amount_paid, course_fee) ELSE 0 END), 0) AS total_revenue,
+         SUM(payment_status = 'paid')        AS paid_count,
+         SUM(payment_status = 'emi_partial') AS pending_count,
+         SUM(payment_status = 'failed')      AS failed_count
        FROM course_enrollments
        ${baseWhere}`,
       searchParams,

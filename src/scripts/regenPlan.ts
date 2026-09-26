@@ -4,7 +4,7 @@ import { findDietPlanByFormId } from '../models/DietPlan';
 import { generateAndDeliverDietPlan } from '../services/dietPlanDelivery';
 import { disconnectDatabase } from '../config/database';
 
-const FORM_ID = 306;
+const FORM_ID = 2046;
 
 const run = async () => {
   console.log(`\nForce-regenerating diet plan for form_id = ${FORM_ID}...\n`);

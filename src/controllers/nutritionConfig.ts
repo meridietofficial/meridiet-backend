@@ -148,7 +148,7 @@ export const updateGoalSetting = async (req: Request, res: Response) => {
     const id = Number(req.params.id);
     if (isNaN(id)) return errorResponse(res, 400, 'Invalid id');
 
-    const { calorie_min_offset, calorie_max_offset, protein_per_kg, label, description, is_active } = req.body as Record<string, unknown>;
+    const { calorie_min_offset, calorie_max_offset, protein_per_kg, protein_per_kg_male, protein_per_kg_female, label, description, is_active } = req.body as Record<string, unknown>;
 
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -159,6 +159,24 @@ export const updateGoalSetting = async (req: Request, res: Response) => {
       const val = Number(protein_per_kg);
       if (val <= 0 || val > 4) return errorResponse(res, 400, 'protein_per_kg must be between 0 and 4');
       fields.push('protein_per_kg = ?'); values.push(val);
+    }
+    if (protein_per_kg_male !== undefined) {
+      if (protein_per_kg_male === null || protein_per_kg_male === '') {
+        fields.push('protein_per_kg_male = ?'); values.push(null);
+      } else {
+        const val = Number(protein_per_kg_male);
+        if (val <= 0 || val > 4) return errorResponse(res, 400, 'protein_per_kg_male must be between 0 and 4');
+        fields.push('protein_per_kg_male = ?'); values.push(val);
+      }
+    }
+    if (protein_per_kg_female !== undefined) {
+      if (protein_per_kg_female === null || protein_per_kg_female === '') {
+        fields.push('protein_per_kg_female = ?'); values.push(null);
+      } else {
+        const val = Number(protein_per_kg_female);
+        if (val <= 0 || val > 4) return errorResponse(res, 400, 'protein_per_kg_female must be between 0 and 4');
+        fields.push('protein_per_kg_female = ?'); values.push(val);
+      }
     }
     if (isStr(label))       { fields.push('label = ?');       values.push(String(label).trim()); }
     if (isStr(description)) { fields.push('description = ?'); values.push(String(description).trim()); }

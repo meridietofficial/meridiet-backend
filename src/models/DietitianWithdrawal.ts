@@ -1,4 +1,5 @@
 import { query, execute, withTransaction } from '../config/database';
+import { getTransferStatus } from '../services/cashfree';
 
 export type WithdrawalStatus =
   | 'pending'
@@ -42,15 +43,34 @@ export async function createWithdrawal(params: {
       [params.amount, params.dietitian_id],
     );
 
+    const newBalance = balance - params.amount;
+
     const [result] = await conn.execute<import('mysql2/promise').ResultSetHeader>(
       `INSERT INTO dietitian_withdrawals (dietitian_id, account_id, amount, status)
        VALUES (?, ?, ?, 'pending')`,
       [params.dietitian_id, params.account_id, params.amount],
     );
 
+    const withdrawalId = result.insertId;
+
+    // Record the debit in the wallet transactions log so it appears in the UI
+    await conn.execute(
+      `INSERT INTO dietitian_wallet_transactions
+         (dietitian_id, type, wallet, source, gross_amount, commission, net_amount, balance_after, description, reference_id)
+       VALUES (?, 'debit', 'earnings', 'withdrawal', ?, 0, ?, ?, ?, ?)`,
+      [
+        params.dietitian_id,
+        params.amount,
+        params.amount,
+        newBalance,
+        `Withdrawal request — ₹${params.amount}`,
+        `wd_${withdrawalId}`,
+      ],
+    );
+
     const [rows] = await conn.execute<import('mysql2/promise').RowDataPacket[]>(
       'SELECT * FROM dietitian_withdrawals WHERE id = ? LIMIT 1',
-      [result.insertId],
+      [withdrawalId],
     );
     return rows[0] as DietitianWithdrawal;
   });
@@ -85,6 +105,24 @@ export async function failWithdrawal(
       'UPDATE dietitians SET earnings_balance = earnings_balance + ? WHERE id = ?',
       [amount, dietitianId],
     );
+    const [balRows] = await conn.execute<import('mysql2/promise').RowDataPacket[]>(
+      'SELECT earnings_balance FROM dietitians WHERE id = ? LIMIT 1',
+      [dietitianId],
+    );
+    const newBalance = Number(balRows[0]?.earnings_balance ?? 0);
+    await conn.execute(
+      `INSERT INTO dietitian_wallet_transactions
+         (dietitian_id, type, wallet, source, gross_amount, commission, net_amount, balance_after, description, reference_id)
+       VALUES (?, 'credit', 'earnings', 'withdrawal', ?, 0, ?, ?, ?, ?)`,
+      [
+        dietitianId,
+        amount,
+        amount,
+        newBalance,
+        `Withdrawal failed — ₹${amount} refunded`,
+        `wd_${withdrawalId}_refund`,
+      ],
+    );
   });
 }
 
@@ -111,17 +149,49 @@ export async function updateWithdrawalFromWebhook(
     ],
   );
 
-  // If transfer reversed/failed — refund the balance
-  if (status === 'reversed' || status === 'failed') {
-    const rows = await query<{ dietitian_id: number; amount: number }>(
-      'SELECT dietitian_id, amount FROM dietitian_withdrawals WHERE cashfree_transfer_id = ? LIMIT 1',
+  // For success/failed/reversed — update wallet transaction description using real data
+  if (status === 'processed' || status === 'reversed' || status === 'failed') {
+    const rows = await query<{ id: number; dietitian_id: number; amount: number }>(
+      'SELECT id, dietitian_id, amount FROM dietitian_withdrawals WHERE cashfree_transfer_id = ? LIMIT 1',
       [cashfreeTransferId],
     );
     if (rows[0]) {
-      await execute(
-        'UPDATE dietitians SET earnings_balance = earnings_balance + ? WHERE id = ?',
-        [rows[0].amount, rows[0].dietitian_id],
-      );
+      const { id: withdrawalId, dietitian_id, amount } = rows[0];
+
+      if (status === 'processed') {
+        const desc = params.utr
+          ? `Withdrawal successful — ₹${amount} sent (UTR: ${params.utr})`
+          : `Withdrawal successful — ₹${amount} sent`;
+        await execute(
+          `UPDATE dietitian_wallet_transactions SET description = ? WHERE reference_id = ?`,
+          [desc, `wd_${withdrawalId}`],
+        );
+      } else {
+        // reversed or failed — refund balance and insert credit entry
+        await execute(
+          'UPDATE dietitians SET earnings_balance = earnings_balance + ? WHERE id = ?',
+          [amount, dietitian_id],
+        );
+        const balRows = await query<{ earnings_balance: number }>(
+          'SELECT earnings_balance FROM dietitians WHERE id = ? LIMIT 1',
+          [dietitian_id],
+        );
+        const newBalance = Number(balRows[0]?.earnings_balance ?? 0);
+        const label = status === 'reversed' ? 'reversed' : 'failed';
+        await execute(
+          `INSERT INTO dietitian_wallet_transactions
+             (dietitian_id, type, wallet, source, gross_amount, commission, net_amount, balance_after, description, reference_id)
+           VALUES (?, 'credit', 'earnings', 'withdrawal', ?, 0, ?, ?, ?, ?)`,
+          [
+            dietitian_id,
+            amount,
+            amount,
+            newBalance,
+            `Withdrawal ${label} — ₹${amount} refunded`,
+            `wd_${withdrawalId}_${label}`,
+          ],
+        );
+      }
     }
   }
 }
@@ -150,6 +220,75 @@ export async function getWithdrawalsByDietitian(
   );
 
   return { withdrawals, total: totals.total };
+}
+
+// Checks all processing withdrawals for a dietitian against Cashfree and updates their status.
+// Returns a summary of what changed.
+export async function syncProcessingWithdrawals(dietitianId: number): Promise<{
+  checked: number; updated: { id: number; status: string }[]
+}> {
+  const processing = await query<{ id: number; cashfree_transfer_id: string; amount: number }>(
+    `SELECT id, cashfree_transfer_id, amount FROM dietitian_withdrawals
+     WHERE dietitian_id = ? AND status = 'processing' AND cashfree_transfer_id IS NOT NULL`,
+    [dietitianId],
+  );
+
+  const updated: { id: number; status: string }[] = [];
+
+  for (const w of processing) {
+    const { status, utr, reason } = await getTransferStatus(`WD${w.id}`);
+
+    if (status === 'SUCCESS') {
+      await execute(
+        `UPDATE dietitian_withdrawals SET status = 'processed', utr = ?, processed_at = NOW() WHERE id = ?`,
+        [utr ?? null, w.id],
+      );
+      // Update wallet transaction description to reflect success
+      const desc = utr
+        ? `Withdrawal successful — ₹${w.amount} sent (UTR: ${utr})`
+        : `Withdrawal successful — ₹${w.amount} sent`;
+      await execute(
+        `UPDATE dietitian_wallet_transactions SET description = ? WHERE reference_id = ?`,
+        [desc, `wd_${w.id}`],
+      );
+      updated.push({ id: w.id, status: 'processed' });
+
+    } else if (status === 'FAILED' || status === 'REVERSED' || status === 'CANCELLED') {
+      const finalStatus = status === 'REVERSED' ? 'reversed' : status === 'CANCELLED' ? 'cancelled' : 'failed';
+      // Refund balance
+      await withTransaction(async (conn) => {
+        await conn.execute(
+          `UPDATE dietitian_withdrawals SET status = ?, failure_reason = ?, processed_at = NOW() WHERE id = ?`,
+          [finalStatus, reason ?? status, w.id],
+        );
+        await conn.execute(
+          'UPDATE dietitians SET earnings_balance = earnings_balance + ? WHERE id = ?',
+          [w.amount, dietitianId],
+        );
+        const [balRows] = await conn.execute<import('mysql2/promise').RowDataPacket[]>(
+          'SELECT earnings_balance FROM dietitians WHERE id = ? LIMIT 1',
+          [dietitianId],
+        );
+        const newBalance = Number(balRows[0]?.earnings_balance ?? 0);
+        // Update existing debit transaction to show it was refunded
+        await conn.execute(
+          `UPDATE dietitian_wallet_transactions SET description = ? WHERE reference_id = ?`,
+          [`Withdrawal ${finalStatus} — ₹${w.amount} refunded`, `wd_${w.id}`],
+        );
+        // Insert a credit entry for the refund
+        await conn.execute(
+          `INSERT INTO dietitian_wallet_transactions
+             (dietitian_id, type, wallet, source, gross_amount, commission, net_amount, balance_after, description, reference_id)
+           VALUES (?, 'credit', 'earnings', 'withdrawal', ?, 0, ?, ?, ?, ?)`,
+          [dietitianId, w.amount, w.amount, newBalance, `Withdrawal ${finalStatus} — ₹${w.amount} refunded`, `wd_${w.id}_${finalStatus}`],
+        );
+      });
+      updated.push({ id: w.id, status: finalStatus });
+    }
+    // PENDING / RECEIVED / UNKNOWN — still in flight, skip
+  }
+
+  return { checked: processing.length, updated };
 }
 
 // Saves Cashfree beneficiary ID on the payment account row to avoid re-creating on future withdrawals

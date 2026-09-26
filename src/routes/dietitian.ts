@@ -35,6 +35,7 @@ import {
 import {
   requestWithdrawalHandler,
   listWithdrawalsHandler,
+  syncWithdrawalsHandler,
 } from '../controllers/withdrawal';
 import {
   createWalletRechargeOrder,
@@ -100,8 +101,9 @@ dietitianRouter.post('/wallet/recharge/verify-payment', authenticate, authorize(
 dietitianRouter.post('/wallet/recharge/failed',         authenticate, authorize('dietitian'), requireActiveAccess, markWalletRechargeFailed);
 
 // ── Withdrawals (accessible regardless) ───────────────────────────────────────
-dietitianRouter.post('/withdraw',   authenticate, authorize('dietitian'), requestWithdrawalHandler);
-dietitianRouter.get('/withdrawals', authenticate, authorize('dietitian'), listWithdrawalsHandler);
+dietitianRouter.post('/withdraw',          authenticate, authorize('dietitian'), requestWithdrawalHandler);
+dietitianRouter.get('/withdrawals/sync',   authenticate, authorize('dietitian'), syncWithdrawalsHandler);
+dietitianRouter.get('/withdrawals',        authenticate, authorize('dietitian'), listWithdrawalsHandler);
 
 // GET /api/v1/dietitian/:id — public dietitian profile (authenticated users)
 dietitianRouter.get('/:id', authenticate, getDietitianById);

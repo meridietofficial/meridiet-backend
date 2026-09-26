@@ -6,6 +6,7 @@ import {
   markWithdrawalProcessing,
   failWithdrawal,
   getWithdrawalsByDietitian,
+  syncProcessingWithdrawals,
 } from '../models/DietitianWithdrawal';
 import {
   isCashfreeConfigured,
@@ -75,35 +76,24 @@ export const requestWithdrawalHandler = async (req: Request, res: Response) => {
       ? `${user.phone_code ?? ''}${user.phone_number}`.replace(/\D/g, '').slice(-10)
       : undefined;
 
-    // ── Deduct balance + create withdrawal record ────────────────────────────
-    const withdrawal = await createWithdrawal({
-      dietitian_id: dietitian.id,
-      account_id:   account.id,
-      amount:       amountNum,
-    });
+    // ── Validate account details BEFORE deducting balance ────────────────────
+    const isUpi = account.type === 'upi';
+    const mode  = isUpi ? 'upi' : 'imps';
 
-    // ── Submit transfer to Cashfree ──────────────────────────────────────────
-    const isUpi  = account.type === 'upi';
-    const mode   = isUpi ? 'upi' : 'imps';
+    let bankAccount: string | undefined;
+    if (!isUpi && account.account_number) {
+      bankAccount = decrypt(account.account_number as unknown as string);
+    }
+    if (!isUpi && (!bankAccount || !account.ifsc_code || !account.account_holder)) {
+      return errorResponse(res, 400, 'Bank account details incomplete');
+    }
+    if (isUpi && !account.upi_id) {
+      return errorResponse(res, 400, 'UPI ID missing on this account');
+    }
 
+    // ── Ensure beneficiary is registered on Cashfree BEFORE deducting balance ─
+    const beneId = `D${dietitian.id}A${account.id}`;
     try {
-      let bankAccount: string | undefined;
-      if (!isUpi && account.account_number) {
-        bankAccount = decrypt(account.account_number as unknown as string);
-      }
-
-      if (!isUpi && (!bankAccount || !account.ifsc_code || !account.account_holder)) {
-        await failWithdrawal(withdrawal.id, dietitian.id, amountNum, 'Bank account details incomplete');
-        return errorResponse(res, 400, 'Bank account details incomplete');
-      }
-      if (isUpi && !account.upi_id) {
-        await failWithdrawal(withdrawal.id, dietitian.id, amountNum, 'UPI ID missing');
-        return errorResponse(res, 400, 'UPI ID missing on this account');
-      }
-
-      const beneId = `D${dietitian.id}A${account.id}`;
-
-      // Ensure beneficiary is registered on Cashfree before initiating transfer
       if (!(await beneficiaryExists(beneId))) {
         await addBeneficiary({
           beneId,
@@ -115,7 +105,21 @@ export const requestWithdrawalHandler = async (req: Request, res: Response) => {
           ifsc:        !isUpi ? account.ifsc_code! : undefined,
         });
       }
+    } catch (beneErr: unknown) {
+      const reason = extractCashfreeError(beneErr);
+      console.error(`Beneficiary setup failed for ${beneId}:`, reason);
+      return errorResponse(res, 502, `Payout setup failed: ${reason}`);
+    }
 
+    // ── Deduct balance + create withdrawal record (only if all checks passed) ─
+    const withdrawal = await createWithdrawal({
+      dietitian_id: dietitian.id,
+      account_id:   account.id,
+      amount:       amountNum,
+    });
+
+    // ── Submit transfer to Cashfree ──────────────────────────────────────────
+    try {
       const transfer = await requestTransfer({
         transferId: `WD${withdrawal.id}`,
         amount:     amountNum,
@@ -146,6 +150,21 @@ export const requestWithdrawalHandler = async (req: Request, res: Response) => {
       if (err.message === 'DIETITIAN_NOT_FOUND')  return errorResponse(res, 404, 'Dietitian not found');
     }
     console.error('requestWithdrawal error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// GET /api/v1/dietitian/withdrawals/sync
+// Checks all processing withdrawals against Cashfree and updates their status in real time.
+export const syncWithdrawalsHandler = async (req: Request, res: Response) => {
+  try {
+    const dietitian = await resolveDietitian(req, res);
+    if (!dietitian) return;
+
+    const result = await syncProcessingWithdrawals(dietitian.id);
+    return successResponse(res, 200, 'Withdrawals synced', result);
+  } catch (err) {
+    console.error('syncWithdrawals error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

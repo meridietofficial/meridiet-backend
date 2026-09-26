@@ -113,7 +113,7 @@ export const creditDietitianForAppointment = async (
   if (grossAmount <= 0) return { credited: false, reason: 'zero_amount' };
 
   const commPctRaw = await getSetting('platform_commission_pct');
-  const commPct    = commPctRaw !== null ? Number(commPctRaw) : 20;
+  const commPct    = commPctRaw !== null ? Number(commPctRaw) : 25;
   const commission = Math.round(grossAmount * (commPct / 100));
   const netAmount  = grossAmount - commission;
 
@@ -143,7 +143,7 @@ export const creditDietitianForNoShow = async (
   if (grossAmount <= 0) return { credited: false, reason: 'zero_amount' };
 
   const commPctRaw = await getSetting('platform_commission_pct');
-  const commPct    = commPctRaw !== null ? Number(commPctRaw) : 20;
+  const commPct    = commPctRaw !== null ? Number(commPctRaw) : 25;
   const commission = Math.round(grossAmount * (commPct / 100));
   const netAfterCommission = grossAmount - commission;
   const netAmount  = Math.round(netAfterCommission * 0.5); // 50% for no-show

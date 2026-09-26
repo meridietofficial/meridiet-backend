@@ -639,7 +639,7 @@ export const adminGetNoShowQueue = async (
        JOIN dietitians d  ON a.dietitian_id = d.id
        JOIN users du      ON d.user_id = du.id
        ${where}
-       ORDER BY a.appointment_date DESC, a.slot DESC
+       ORDER BY a.created_at DESC
        LIMIT ${safeLimit} OFFSET ${offset}`,
       params,
     ),
@@ -1545,7 +1545,7 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
          SELECT id FROM diet_plans WHERE appointment_id = a.id ORDER BY created_at DESC LIMIT 1
        )
        ${where}
-       ORDER BY a.appointment_date DESC, a.slot DESC
+       ORDER BY a.created_at DESC
        LIMIT ${limit} OFFSET ${offset}`,
       params,
     ),
@@ -1863,7 +1863,7 @@ export const adminGetPendingNoShowApprovals = async (
          AND a.missed_type IS NOT NULL
          AND a.payment_approved_at IS NULL
          ${searchCond}
-       ORDER BY a.appointment_date DESC, a.slot DESC
+       ORDER BY a.created_at DESC
        LIMIT ${safeLimit} OFFSET ${offset}`,
       searchParam,
     ),
@@ -1911,7 +1911,7 @@ export const adminGetPendingApprovals = async (
          AND a.payment_approved_at IS NULL
          AND a.appointment_source = 'platform'
          ${searchCond}
-       ORDER BY a.appointment_date DESC, a.slot DESC
+       ORDER BY a.created_at DESC
        LIMIT ${safeLimit} OFFSET ${offset}`,
       searchParam,
     ),

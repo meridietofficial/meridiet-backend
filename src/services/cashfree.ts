@@ -119,6 +119,43 @@ export async function requestTransfer(params: {
   };
 }
 
+// ── Transfer Status ───────────────────────────────────────────────────────────
+
+export type CashfreeTransferStatus = 'PENDING' | 'SUCCESS' | 'FAILED' | 'REVERSED' | 'CANCELLED' | 'RECEIVED' | 'UNKNOWN';
+
+export interface CashfreeTransferStatusResult {
+  status:  CashfreeTransferStatus;
+  utr?:    string;
+  reason?: string;
+}
+
+export async function getTransferStatus(transferId: string): Promise<CashfreeTransferStatusResult> {
+  try {
+    const { data } = await axios.get(`${BASE_URL}/transfers`, {
+      params:  { transfer_id: transferId },
+      headers: headers(),
+      timeout: 10_000,
+    });
+    const t = Array.isArray(data.data) ? data.data[0] : data;
+    const raw: string = (t?.transfer_status ?? t?.status ?? 'UNKNOWN').toUpperCase();
+    const STATUS_MAP: Record<string, CashfreeTransferStatus> = {
+      SUCCESS:  'SUCCESS',
+      FAILED:   'FAILED',
+      REVERSED: 'REVERSED',
+      CANCELLED:'CANCELLED',
+      PENDING:  'PENDING',
+      RECEIVED: 'RECEIVED',
+    };
+    return {
+      status:  STATUS_MAP[raw] ?? 'UNKNOWN',
+      utr:     t?.utr                        ?? undefined,
+      reason:  t?.status_description ?? t?.reason ?? undefined,
+    };
+  } catch {
+    return { status: 'UNKNOWN' };
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 export function isCashfreeConfigured(): boolean {

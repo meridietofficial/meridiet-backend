@@ -35,8 +35,8 @@ function changePct(current: number, previous: number): number | null {
 
 async function fetchCommissionPct(): Promise<number> {
   const raw = await getSetting('platform_commission_pct');
-  const pct = raw !== null ? Number(raw) : 20;
-  return isNaN(pct) ? 20 : pct;
+  const pct = raw !== null ? Number(raw) : 25;
+  return isNaN(pct) ? 25 : pct;
 }
 
 function applyCommission(gross: number, pct: number) {
@@ -71,7 +71,7 @@ export const getEarningsSummary = async (
   const { current, previous } = periodConditions(period);
   const commPct = await fetchCommissionPct();
 
-  const completedFilter = `dietitian_id = ? AND status = 'completed' AND payment_status = 'paid'`;
+  const completedFilter = `dietitian_id = ? AND status = 'completed' AND payment_status = 'paid' AND session_type = 'video_call'`;
 
   const [currentRows, previousRows, pendingBookingRows, balanceRows] = await Promise.all([
     query<{ total: number; count: number }>(
@@ -91,7 +91,8 @@ export const getEarningsSummary = async (
        FROM appointments
        WHERE dietitian_id = ?
          AND status = 'confirmed'
-         AND payment_status = 'paid'`,
+         AND payment_status = 'paid'
+         AND session_type = 'video_call'`,
       [dietitianId],
     ),
     // Actual wallet balance from dietitians table — source of truth
@@ -153,6 +154,7 @@ export const getMonthlyRevenue = async (
      WHERE dietitian_id = ?
        AND status = 'completed'
        AND payment_status = 'paid'
+       AND session_type = 'video_call'
        AND appointment_date >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL ? MONTH), '%Y-%m-01')
      GROUP BY yr, mo
      ORDER BY yr ASC, mo ASC`,
@@ -220,6 +222,7 @@ export const getEarningsByPlan = async (
      WHERE dietitian_id = ?
        AND status = 'completed'
        AND payment_status = 'paid'
+       AND session_type = 'video_call'
      GROUP BY plan_name
      ORDER BY gross DESC`,
     [dietitianId],
@@ -269,6 +272,7 @@ export const getPayoutInfo = async (
        WHERE dietitian_id = ?
          AND status = 'completed'
          AND payment_status = 'paid'
+         AND session_type = 'video_call'
          AND YEAR(appointment_date)  = YEAR(CURDATE())
          AND MONTH(appointment_date) = MONTH(CURDATE())`,
       [dietitianId],
@@ -278,7 +282,8 @@ export const getPayoutInfo = async (
        FROM appointments
        WHERE dietitian_id = ?
          AND status = 'confirmed'
-         AND payment_status = 'paid'`,
+         AND payment_status = 'paid'
+         AND session_type = 'video_call'`,
       [dietitianId],
     ),
   ]);
@@ -335,22 +340,24 @@ export const getWalletOverview = async (dietitianId: number): Promise<WalletOver
       `SELECT earnings_balance, plan_credits FROM dietitians WHERE id = ? LIMIT 1`,
       [dietitianId],
     ),
-    // Pending payout = confirmed + paid appointments net (not yet completed)
+    // Pending payout = confirmed + paid online appointments net (not yet completed)
     query<{ gross: number }>(
       `SELECT COALESCE(SUM(fee), 0) AS gross
        FROM appointments
        WHERE dietitian_id = ?
          AND status = 'confirmed'
-         AND payment_status = 'paid'`,
+         AND payment_status = 'paid'
+         AND session_type = 'video_call'`,
       [dietitianId],
     ),
-    // Earned this month = completed + paid net
+    // Earned this month = completed + paid online sessions net
     query<{ gross: number }>(
       `SELECT COALESCE(SUM(fee), 0) AS gross
        FROM appointments
        WHERE dietitian_id = ?
          AND status = 'completed'
          AND payment_status = 'paid'
+         AND session_type = 'video_call'
          AND YEAR(appointment_date)  = YEAR(CURDATE())
          AND MONTH(appointment_date) = MONTH(CURDATE())`,
       [dietitianId],
@@ -362,17 +369,17 @@ export const getWalletOverview = async (dietitianId: number): Promise<WalletOver
        WHERE dietitian_id = ?
          AND status = 'completed'
          AND payment_status = 'paid'
+         AND session_type = 'video_call'
          AND YEAR(appointment_date)  = YEAR(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))
          AND MONTH(appointment_date) = MONTH(DATE_SUB(CURDATE(), INTERVAL 1 MONTH))`,
       [dietitianId],
     ),
-    // Total withdrawn = sum of all debit wallet transactions
+    // Total withdrawn = only successfully processed withdrawals
     query<{ total: number }>(
-      `SELECT COALESCE(SUM(net_amount), 0) AS total
-       FROM dietitian_wallet_transactions
+      `SELECT COALESCE(SUM(amount), 0) AS total
+       FROM dietitian_withdrawals
        WHERE dietitian_id = ?
-         AND type = 'debit'
-         AND source = 'withdrawal'`,
+         AND status = 'processed'`,
       [dietitianId],
     ),
   ]);
@@ -415,6 +422,7 @@ export interface TransactionRow {
   client_avatar: string | null;
   plan_name: string | null;
   date: string;
+  session_type: 'video_call' | 'in_person';
   payment_status: string;
   gross_amount: number;
   platform_commission: number;
@@ -435,11 +443,13 @@ export const getEarningsTransactions = async (
   search: string | undefined,
   page = 1,
   limit = 10,
+  sessionType?: 'video_call' | 'in_person',
 ): Promise<{ platform_commission_pct: number; summary: TransactionSummary; transactions: TransactionRow[]; total: number }> => {
   const offset  = (page - 1) * limit;
   const commPct = await fetchCommissionPct();
 
   const baseWhere = `a.dietitian_id = ? AND (a.payment_status <> 'unpaid' OR a.status IN ('confirmed', 'completed'))`;
+  const sessionCond = sessionType ? `AND a.session_type = '${sessionType}'` : '';
   const searchCond = search
     ? `AND (COALESCE(u.full_name, a.name) LIKE ? OR CONCAT('INV-', YEAR(a.appointment_date), '-', LPAD(a.id, 3, '0')) LIKE ?)`
     : '';
@@ -460,7 +470,7 @@ export const getEarningsTransactions = async (
          COUNT(*)                            AS \`all\`
        FROM appointments a
        LEFT JOIN users u ON a.user_id = u.id AND u.is_delete = 0
-       WHERE ${baseWhere} ${searchCond}`,
+       WHERE ${baseWhere} ${sessionCond} ${searchCond}`,
       [dietitianId, ...searchParams],
     ),
     query<{
@@ -469,7 +479,9 @@ export const getEarningsTransactions = async (
       client_name: string;
       client_avatar: string | null;
       plan_name: string | null;
+      appointment_status: string;
       payment_status: string;
+      session_type: string;
       fee: number;
       currency: string;
     }>(
@@ -479,12 +491,14 @@ export const getEarningsTransactions = async (
          COALESCE(u.full_name, a.name)               AS client_name,
          u.avatar_url                                AS client_avatar,
          NULLIF(TRIM(a.notes), '')                   AS plan_name,
+         a.status           AS appointment_status,
          a.payment_status,
+         a.session_type,
          a.fee,
          a.currency
        FROM appointments a
        LEFT JOIN users u ON a.user_id = u.id AND u.is_delete = 0
-       WHERE ${baseWhere} ${statusCond} ${searchCond}
+       WHERE ${baseWhere} ${sessionCond} ${statusCond} ${searchCond}
        ORDER BY a.appointment_date DESC, a.id DESC
        LIMIT ${limit} OFFSET ${offset}`,
       [dietitianId, ...searchParams],
@@ -493,7 +507,7 @@ export const getEarningsTransactions = async (
       `SELECT COUNT(*) AS total
        FROM appointments a
        LEFT JOIN users u ON a.user_id = u.id AND u.is_delete = 0
-       WHERE ${baseWhere} ${statusCond} ${searchCond}`,
+       WHERE ${baseWhere} ${sessionCond} ${statusCond} ${searchCond}`,
       [dietitianId, ...searchParams],
     ),
   ]);
@@ -516,7 +530,10 @@ export const getEarningsTransactions = async (
       client_avatar:       r.client_avatar,
       plan_name:           r.plan_name,
       date:                r.appointment_date,
-      payment_status:      r.payment_status === 'unpaid' ? 'pending' : r.payment_status,
+      session_type:        (r.session_type === 'in_person' ? 'in_person' : 'video_call') as 'video_call' | 'in_person',
+      payment_status:      r.appointment_status === 'missed' ? 'missed'
+                         : r.payment_status === 'unpaid'   ? 'pending'
+                         : r.payment_status,
       gross_amount:        g.gross,
       platform_commission: g.commission,
       net_amount:          g.net,
