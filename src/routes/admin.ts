@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/authenticate';
-import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, toggleDietitianOffer, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDashboardStats, getDashboardRevenue, getDashboardUserGrowth, getDashboardConsultations, getDashboardAppointmentStats, getDashboardRecentAppointments, getDashboardRecentRegistrations, getSystemOverview, adminRegisterDietitian } from '../controllers/admin';
+import { adminLogin, refreshAdminToken, getAdminProfile, changeAdminPassword, getDietitianList, getDietitianRequests, getDietitianDetails, toggleBlockDietitian, deleteDietitian, verifyDietitianHandler, toggleDietitianOffer, getUserList, getUserDetails, toggleBlockUser, deleteUser, getDashboardStats, getDashboardRevenue, getDashboardUserGrowth, getDashboardConsultations, getDashboardAppointmentStats, getDashboardRecentAppointments, getDashboardRecentRegistrations, getSystemOverview, adminRegisterDietitian, getDashboardExport } from '../controllers/admin';
 import { listDietPlansForAdmin, getDietPlanForAdmin, editDietPlan, sendDietPlanToUser, retryDietPlanGeneration, listManualDietPlansForAdmin, getManualDietPlanForAdmin, getDietFormRequests, getPaidDietCharts, getDietChartDetails, previewDietPlan } from '../controllers/adminDietPlan';
 import { adminCreateCoupon, adminListCoupons, adminGetCoupon, adminUpdateCoupon, adminDeactivateCoupon, adminGetCouponUsages, adminGetAllCouponUsages } from '../controllers/coupon';
 import { adminListEnquiries, adminGetEnquiry, adminUpdateEnquiryStatus, adminListEnrollments, adminGetEnrollment, adminCourseStats } from '../controllers/adminCourse';
@@ -89,6 +89,7 @@ adminRouter.get('/dashboard-consultations',          authenticate, authorize('ad
 adminRouter.get('/dashboard-appointment-stats',      authenticate, authorize('admin'), getDashboardAppointmentStats);
 adminRouter.get('/dashboard-recent-appointments',    authenticate, authorize('admin'), getDashboardRecentAppointments);
 adminRouter.get('/dashboard-recent-registrations',   authenticate, authorize('admin'), getDashboardRecentRegistrations);
+adminRouter.get('/dashboard-export',                 authenticate, authorize('admin'), getDashboardExport);
 adminRouter.get('/system-overview',                  authenticate, authorize('admin'), getSystemOverview);
 
 // ── Nutrition Config (admin editable calculation settings) ────────────────────

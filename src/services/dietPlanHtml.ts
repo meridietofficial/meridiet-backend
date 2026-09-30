@@ -43,6 +43,23 @@ const esc = (s: unknown): string =>
   String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 const cap       = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+// Strip prep notes/sub-ingredients that the AI sometimes stuffs into the quantity field.
+// Keeps only the primary serving size measurement.
+const cleanQuantity = (qty: string): string => {
+  if (!qty) return '';
+  // Drop everything after first semicolon (spice/seasoning notes like "; mild jeera and haldi")
+  let q = qty.split(';')[0];
+  // Drop everything after first comma (sub-ingredient lists like ", ghee 5g, tomato 30g")
+  // but only if there is a measurement before the comma
+  const beforeComma = q.split(',')[0].trim();
+  q = beforeComma;
+  // Strip leading prep adjectives ("cooked ", "soft-cooked ", "low-fat ", "unsweetened ", etc.)
+  q = q.replace(/^((?:soft[- ]|pressure[- ]|slowly |well |lightly |freshly )?(?:cooked|boiled|roasted|grilled|steamed|baked|unsweetened|low[- ]fat|skimmed|whole[- ]wheat|wholewheat))\s+/i, '').trim();
+  // Normalise "N g" → "Ng", "N ml" → "Nml" for clean display
+  q = q.replace(/(\d+(?:\.\d+)?)\s+(g|ml|kg|L)\b/gi, (_, n, u) => `${n}${u}`);
+  return q;
+};
 const humanize  = (v: unknown): string => { if (v === null || v === undefined || v === '') return ''; return cap(String(v)); };
 const toList    = (v: unknown): string[] => { if (Array.isArray(v)) return (v as unknown[]).filter(Boolean).map(String); if (typeof v === 'string' && v.trim()) return v.split(',').map((s) => s.trim()).filter(Boolean); return []; };
 const none      = (v: unknown): string => { const l = toList(v).filter((x) => x.toLowerCase() !== 'none'); return l.length ? l.map(humanize).join(', ') : 'None'; };
@@ -895,9 +912,10 @@ const weekPage = (week: WeekPlan, plan: DietPlan, page: number): string => {
       const time = d.meal_timing?.[m.key];
       const foodRows = items.map((it) => {
         const name = (it.food ?? '').replace(/\s*\([^)]*\)/g, '').trim();
+        const qty  = cleanQuantity(it.quantity ?? '');
         return `<div style="display:flex;gap:5px;font-size:8.5px;color:${C.ink};line-height:1.3;padding-left:2px;">
           <span style="color:${C.brand};flex-shrink:0;">•</span>
-          <span style="flex:1;">${esc(name)}${it.quantity ? `<span style="color:${C.sub};"> — ${esc(it.quantity)}</span>` : ''}</span>
+          <span style="flex:1;">${esc(name)}${qty ? `<span style="color:${C.sub};"> — ${esc(qty)}</span>` : ''}</span>
         </div>`;
       }).join('');
       return `<div style="margin-bottom:7px;">

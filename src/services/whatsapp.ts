@@ -680,11 +680,105 @@ export const sendCoursePaymentWhatsApp = async (
   }
 };
 
-export const sendPaymentReminder1WhatsApp = (phone: string, name: string) =>
-  sendPaymentReminderWhatsApp(phone, name, env.MSG91_WHATSAPP_PAYMENT_REMINDER_1_TEMPLATE, 'payment-reminder-1');
+export const sendPaymentReminder1WhatsApp = async (
+  phone: string,
+  name: string,
+  planName: string,
+  offer: string,
+  price: string,
+  coupon: string,
+): Promise<void> => {
+  const templateName = env.MSG91_WHATSAPP_PAYMENT_REMINDER_1_TEMPLATE;
+  if (!env.MSG91_WHATSAPP_INTEGRATED_NUMBER || !templateName) {
+    console.warn('[whatsapp] payment-reminder-1 template not configured — skipping');
+    return;
+  }
 
-export const sendPaymentReminder2WhatsApp = (phone: string, name: string) =>
-  sendPaymentReminderWhatsApp(phone, name, env.MSG91_WHATSAPP_PAYMENT_REMINDER_2_TEMPLATE, 'payment-reminder-2');
+  const mobile = normaliseMobile(phone);
+  if (!mobile) return;
+
+  const payload = {
+    integrated_number: env.MSG91_WHATSAPP_INTEGRATED_NUMBER,
+    content_type: 'template',
+    payload: {
+      messaging_product: 'whatsapp',
+      to: mobile,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: 'en' },
+        components: [
+          {
+            type: 'body',
+            parameters: [
+              { type: 'text', text: name },
+              { type: 'text', text: planName },
+              { type: 'text', text: offer },
+              { type: 'text', text: price },
+              { type: 'text', text: coupon },
+            ],
+          },
+        ],
+      },
+    },
+  };
+
+  const res = await fetch(MSG91_WA_URL, { method: 'POST', headers: MSG91_HEADERS, body: JSON.stringify(payload) });
+  const body = (await res.json()) as { status?: string; hasError?: boolean; data?: { message_uuid?: string }; errors?: unknown };
+  if (body.hasError) {
+    console.error(`[whatsapp] payment-reminder-1 failed for ${mobile}:`, JSON.stringify(body));
+  } else {
+    console.log(`[whatsapp] payment-reminder-1 queued for ${mobile} — uuid: ${body.data?.message_uuid}`);
+  }
+};
+
+export const sendPaymentReminder2WhatsApp = async (
+  phone: string,
+  name: string,
+  offer: string,
+  coupon: string,
+): Promise<void> => {
+  const templateName = env.MSG91_WHATSAPP_PAYMENT_REMINDER_2_TEMPLATE;
+  if (!env.MSG91_WHATSAPP_INTEGRATED_NUMBER || !templateName) {
+    console.warn('[whatsapp] payment-reminder-2 template not configured — skipping');
+    return;
+  }
+
+  const mobile = normaliseMobile(phone);
+  if (!mobile) return;
+
+  const payload = {
+    integrated_number: env.MSG91_WHATSAPP_INTEGRATED_NUMBER,
+    content_type: 'template',
+    payload: {
+      messaging_product: 'whatsapp',
+      to: mobile,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: 'en' },
+        components: [
+          {
+            type: 'body',
+            parameters: [
+              { type: 'text', text: name },
+              { type: 'text', text: offer },
+              { type: 'text', text: coupon },
+            ],
+          },
+        ],
+      },
+    },
+  };
+
+  const res = await fetch(MSG91_WA_URL, { method: 'POST', headers: MSG91_HEADERS, body: JSON.stringify(payload) });
+  const body = (await res.json()) as { status?: string; hasError?: boolean; data?: { message_uuid?: string }; errors?: unknown };
+  if (body.hasError) {
+    console.error(`[whatsapp] payment-reminder-2 failed for ${mobile}:`, JSON.stringify(body));
+  } else {
+    console.log(`[whatsapp] payment-reminder-2 queued for ${mobile} — uuid: ${body.data?.message_uuid}`);
+  }
+};
 
 export const sendPaymentReminder3WhatsApp = (phone: string, name: string) =>
   sendPaymentReminderWhatsApp(phone, name, env.MSG91_WHATSAPP_PAYMENT_REMINDER_3_TEMPLATE, 'payment-reminder-3');

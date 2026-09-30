@@ -1049,6 +1049,82 @@ export const getDashboardRecentRegistrations = async (req: Request, res: Respons
   }
 };
 
+// ── 9. Dashboard Export (per-day breakdown by revenue category) ───────────────
+
+// GET /api/v1/admin/dashboard-export?from=YYYY-MM-DD&to=YYYY-MM-DD
+export const getDashboardExport = async (req: Request, res: Response) => {
+  try {
+    const from = (req.query.from as string) || '';
+    const to   = (req.query.to   as string) || '';
+    if (!from || !to) return errorResponse(res, 400, 'from and to query params are required');
+
+    const range = buildDateRange(from, to);
+    if (!range) return errorResponse(res, 400, 'Invalid date range');
+
+    // Query each category's daily revenue in IST
+    const [apptRows, dietPlanRows, regRows] = await Promise.all([
+      query<{ day: string; revenue: number }>(
+        `SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m-%d') AS day,
+                COALESCE(SUM(COALESCE(final_amount, fee)), 0) AS revenue
+           FROM appointments
+          WHERE payment_status = 'paid'
+            AND appointment_source = 'platform'
+            AND (payment_method = 'razorpay' OR payment_method IS NULL)
+            AND created_at BETWEEN ? AND ?
+          GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '+05:30'))
+          ORDER BY day ASC`,
+        [range.current.from, range.current.to],
+      ),
+      query<{ day: string; revenue: number }>(
+        `SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m-%d') AS day,
+                COALESCE(SUM(COALESCE(final_amount, amount)), 0) AS revenue
+           FROM payments
+          WHERE status = 'paid'
+            AND diet_form_id IS NOT NULL
+            AND created_at BETWEEN ? AND ?
+          GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '+05:30'))
+          ORDER BY day ASC`,
+        [range.current.from, range.current.to],
+      ),
+      query<{ day: string; revenue: number }>(
+        `SELECT DATE_FORMAT(CONVERT_TZ(created_at, '+00:00', '+05:30'), '%Y-%m-%d') AS day,
+                COALESCE(SUM(amount), 0) AS revenue
+           FROM dietitian_registration_payments
+          WHERE status = 'paid'
+            AND created_at BETWEEN ? AND ?
+          GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '+05:30'))
+          ORDER BY day ASC`,
+        [range.current.from, range.current.to],
+      ),
+    ]);
+
+    // Build lookup maps
+    const apptMap  = new Map(apptRows.map(r => [r.day, Number(r.revenue)]));
+    const planMap  = new Map(dietPlanRows.map(r => [r.day, Number(r.revenue)]));
+    const regMap   = new Map(regRows.map(r => [r.day, Number(r.revenue)]));
+
+    // Enumerate every date in range (IST)
+    const rows: { date: string; appointment_consultation: number; diet_plan: number; dietitian_registration: number }[] = [];
+    const cursor = new Date(`${from}T00:00:00`);
+    const endDate = new Date(`${to}T00:00:00`);
+    while (cursor <= endDate) {
+      const key = `${cursor.getFullYear()}-${pad2(cursor.getMonth() + 1)}-${pad2(cursor.getDate())}`;
+      rows.push({
+        date: key,
+        appointment_consultation: apptMap.get(key) ?? 0,
+        diet_plan:                planMap.get(key) ?? 0,
+        dietitian_registration:   regMap.get(key)  ?? 0,
+      });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    return successResponse(res, 200, 'Export data fetched successfully', { rows });
+  } catch (err) {
+    console.error('Dashboard export error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
 // ── 8. System Overview ────────────────────────────────────────────────────────
 
 // GET /api/v1/admin/system-overview  (no date filter)

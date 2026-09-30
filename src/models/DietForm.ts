@@ -154,6 +154,7 @@ export interface PaymentReminderForm {
   full_name: string | null;
   whatsapp: string;
   submitted_at: Date;
+  plan_type?: number | null;
 }
 
 // Called from finalizeDietForm — idempotent (only sets once)
@@ -173,7 +174,7 @@ export const markPaymentReminderSent = async (id: number, step: 1 | 2 | 3): Prom
 // Forms where: submitted, have whatsapp, no paid payment, R1 not sent, 10+ min since submit
 export const getDuePaymentReminder1Forms = async (): Promise<PaymentReminderForm[]> =>
   query<PaymentReminderForm>(
-    `SELECT f.id, f.full_name, f.whatsapp, f.submitted_at
+    `SELECT f.id, f.full_name, f.whatsapp, f.submitted_at, f.plan_type
      FROM diet_forms f
      WHERE f.submitted_at IS NOT NULL
        AND f.whatsapp IS NOT NULL AND f.whatsapp != ''
@@ -189,7 +190,7 @@ export const getDuePaymentReminder1Forms = async (): Promise<PaymentReminderForm
 // Forms where: submitted, have whatsapp, no paid payment, R2 not sent, 2+ hours since submit
 export const getDuePaymentReminder2Forms = async (): Promise<PaymentReminderForm[]> =>
   query<PaymentReminderForm>(
-    `SELECT f.id, f.full_name, f.whatsapp, f.submitted_at
+    `SELECT f.id, f.full_name, f.whatsapp, f.submitted_at, f.plan_type
      FROM diet_forms f
      WHERE f.submitted_at IS NOT NULL
        AND f.whatsapp IS NOT NULL AND f.whatsapp != ''

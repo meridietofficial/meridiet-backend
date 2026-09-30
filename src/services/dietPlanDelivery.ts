@@ -363,6 +363,70 @@ ${banned.length + 2}. Good swap format: replace a common unhealthy habit with a 
 `;
 };
 
+// Returns diet-type-specific food name examples so the AI's naming convention
+// matches what a client of that diet type would actually eat.
+const foodNameRulesBlock = (form: DietForm): string => {
+  const isNonVeg = form.diet_type === 'non_vegetarian';
+  const isEgg    = form.diet_type === 'eggetarian';
+  const examples = isNonVeg
+    ? '"Chicken Curry", "Egg Bhurji", "Moong Dal", "Grilled Fish"'
+    : isEgg
+    ? '"Egg Bhurji", "Paneer Sabzi", "Moong Dal", "Egg Paratha"'
+    : '"Methi Thepla", "Moong Dal", "Palak Paneer", "Besan Chilla"';
+  return `FOOD NAME RULES (MANDATORY):
+- The "food" field must be a short, clean real dish name — like ${examples}. Max 4 words.
+- Do NOT use vague names that don't describe a real prepared dish.
+- Do NOT add cooking methods or adjectives in the name.`;
+};
+
+// Returns variety rules tuned to the client's diet type.
+// Prevents Gujarati vegetarian items (thepla/dhokla/khichu) from being forced on
+// non-vegetarian or eggetarian clients who would never eat those foods.
+const varietyRulesBlock = (form: DietForm): string => {
+  const isNonVeg = form.diet_type === 'non_vegetarian';
+  const isEgg    = form.diet_type === 'eggetarian';
+
+  const breakfastLine = isNonVeg
+    ? '- Breakfast rotation: do NOT repeat the same breakfast base (egg omelette/egg paratha/egg bhurji/poha/upma/oats/bread omelette) more than once. Vary the protein source each day — 2 eggs, chicken strips, fish tikki — not the same every day.'
+    : isEgg
+    ? '- Breakfast rotation: do NOT repeat the same breakfast base (omelette/egg paratha/egg bhurji/idli/dosa/upma/oats) more than once. Vary the protein each day — eggs, paneer chilla, curd with oats — not the same every day.'
+    : '- Breakfast rotation: do NOT repeat the same breakfast base (thepla/dhokla/handvo/khichu/pudla/muthia/chilla) more than once. Vary the fruit too — amla, guava, banana, orange, papaya, apple, pomegranate — not the same fruit every day.';
+
+  const proteinLine = isNonVeg
+    ? '- Protein dish rotation: vary protein source AND preparation each day — chicken curry, grilled fish, egg bhurji, mutton stew, chicken tikka, fish fry, tuna salad — never the same protein-preparation combination twice.'
+    : isEgg
+    ? '- Protein dish rotation: vary egg/paneer preparation each day — egg bhurji, paneer sabzi, omelette, paneer tikka, egg curry, egg paratha, paneer stir fry — never the same preparation twice.'
+    : '- Protein dish rotation: vary paneer/legume preparation each day — bhurji, sabzi, tikki, cutlet, stir fry, stuffed paratha, curry — never the same preparation twice.';
+
+  return `VARIETY RULES (MANDATORY — enforce strictly across all 7 days):
+- NO dish name may appear more than once across the entire week in ANY meal slot.
+- Dal rotation: use a DIFFERENT dal each day — moong, tuvar, masoor, chana, rajma, mixed dal, urad — max 2 repeats across 7 days.
+- Grain rotation: rotate roti base — whole wheat, bajra, jowar, multigrain — no grain repeats on consecutive days.
+${breakfastLine}
+- Nut variety: rotate nuts at breakfast — walnuts, almonds, cashews, peanuts, mixed seeds — not the same nut every single day.
+${proteinLine}`;
+};
+
+// Returns snack rules tuned to the client's diet type.
+// Non-veg clients get high-protein options like boiled eggs and grilled chicken;
+// vegetarian clients keep the original Gujarati-style rotation.
+const snackRulesBlock = (form: DietForm): string => {
+  const isNonVeg = form.diet_type === 'non_vegetarian';
+  const isEgg    = form.diet_type === 'eggetarian';
+
+  const snackList = isNonVeg
+    ? 'boiled eggs with veggies, grilled chicken strips, roasted chana, mixed nuts + fruit, makhana, sweet potato chaat, tuna with crackers'
+    : isEgg
+    ? 'boiled eggs, egg bhurji (small), roasted chana, fruit + peanut butter, makhana, moong sprouts chaat, sweet potato chaat'
+    : 'roasted chana, fruit + peanut butter, makhana, moong sprouts chaat, sweet potato chaat, rajgira chikki or til chikki, khaman dhokla';
+
+  return `SNACK RULES (MANDATORY):
+- Every day MUST have a completely different snack. Base item rotation across 7 days: ${snackList}.
+- Protein powder may appear on AT MOST 2 days. Seeds on AT MOST 2 days.
+- Each snack must have 1–2 items maximum. Do NOT add extra items to hit the snack calorie target — adjust quantities instead.
+- No juice or liquid-only items as a snack item.`;
+};
+
 // Injects a mandatory high-protein food checklist when the client is vegetarian + muscle gain.
 // Without this, the AI generates typical Indian meals that only reach 50-70g protein/day.
 // Adjusts recommendations when the client has uric acid, poor digestion, or a dairy allergy.
@@ -1095,6 +1159,32 @@ ${anchors ? `Reference foods for each cuisine:\n${anchors}` : ''}
 - Do NOT default to generic North Indian (roti-dal-sabzi) if the client has selected a different cuisine.
 - If multiple cuisines are listed, rotate between them across days so the client gets variety.
 - Adapt traditional recipes to meet the macro targets — e.g. use less oil, add more protein-rich ingredients.
+- DISH NAMING (MANDATORY): Write all "food" field values in English or widely-understood common Indian names. Do NOT use hyper-regional native-language names. Examples: write "Mustard Fish Curry" not "Shorshe Maach", "Spicy Egg Curry" not "Dim Kosha", "Potato Poppy Seed Curry" not "Aloo Posto", "Spicy Mutton Curry" not "Kosha Mangsho", "Flattened Rice with Curd" not "Chire Doi", "Puffed Rice Mix" not "Muri Makha". If the dish is already widely known by its Indian name (e.g. "Idli", "Dosa", "Dal Makhani", "Palak Paneer"), that name is fine. Otherwise use English.
+`;
+};
+
+// Extracts personal health/final notes and surfaces them as high-priority hard constraints.
+// Without this, the notes get buried in the long client block and the AI ignores them.
+// Any food the client says they dislike is treated the same as a food allergy.
+// Any meal-time restriction (e.g. "no carbs at dinner") is enforced as a hard rule.
+const personalNotesBlock = (form: DietForm): string => {
+  const healthText = form.health_notes?.trim() ?? '';
+  const finalText  = form.final_notes?.trim()  ?? '';
+  if (!healthText && !finalText) return '';
+
+  const parts: string[] = [];
+  if (healthText) parts.push(`Health Notes: "${healthText}"`);
+  if (finalText)  parts.push(`Personal Preferences / Goals: "${finalText}"`);
+
+  return `
+⚠️ CLIENT PERSONAL NOTES — HIGHEST PRIORITY — READ THIS BEFORE WRITING ANY MEAL:
+${parts.join('\n')}
+
+MANDATORY ACTIONS (failure to follow any of these is a critical error):
+1. Identify every food the client mentions disliking or wanting to avoid — treat each one EXACTLY like a food allergy: NEVER include it in any meal, snack, recipe, or ingredient list across the entire plan.
+2. Identify every meal-time restriction mentioned (e.g. "no rice at dinner", "no carbs at night", "no roti at dinner") — enforce it STRICTLY for EVERY day without exception.
+3. Identify any workout/gym context — if the client mentions gym or exercise, ensure pre/post-workout meals are timed appropriately and protein is prioritised.
+4. These notes OVERRIDE generic meal suggestions. Do NOT add any food or pattern the client has explicitly said they dislike or avoid.
 `;
 };
 
@@ -1167,11 +1257,11 @@ const finalCheckBlock = (form: DietForm, nt: ReturnType<typeof calcNutritionTarg
   }
 
   if (form.health_notes) {
-    items.push(`Health notes from client: "${form.health_notes}" — factor this into meal planning`);
+    items.push(`Health notes: "${form.health_notes}" — any foods or patterns mentioned here must be excluded or applied to every meal`);
   }
 
   if (form.final_notes) {
-    items.push(`Personal goals from client: "${form.final_notes}" — reflect this in the plan focus`);
+    items.push(`Personal notes: "${form.final_notes}" — any food disliked must never appear anywhere; any meal-time restriction (e.g. no carbs at dinner) must be enforced on EVERY day`);
   }
 
   items.push(`Calorie target: ${nt.calorieMin}–${nt.calorieMax} kcal/day — every day MUST fall within this range`);
@@ -1209,7 +1299,7 @@ const buildWeek1MetaPrompt = (
 You are an expert Indian clinical dietitian. Generate the plan summary, hydration guide, general tips, and exactly 4 featured recipes for a ${totalWeeks}-week personalized Indian diet plan in strict JSON format.
 
 ${clientBlock(form, vitals)}
-
+${personalNotesBlock(form)}
 CALORIE & PROTEIN TARGETS (calculated from client's TDEE of ${vitals.tdee} kcal/day and their goals):
 - Daily Calorie Range: ${nt.calorieRange}
 - Daily Protein Target: ${nt.proteinRange}
@@ -1260,7 +1350,7 @@ const buildWeek1DaysPrompt = (
 You are an expert Indian clinical dietitian. Generate EXACTLY 7 days for Week 1 of a ${totalWeeks}-week personalized Indian diet plan in strict JSON format.
 
 ${clientBlock(form, vitals)}
-
+${personalNotesBlock(form)}
 CALORIE & MACRO TARGETS (calculated from client's TDEE of ${vitals.tdee} kcal/day and their goals):
 - Daily Calorie Range: ${nt.calorieRange}
 - Daily Protein Target: ${nt.proteinRange}
@@ -1274,36 +1364,29 @@ CRITICAL RULES:
 - Each day must have breakfast, lunch, snack, and dinner as arrays of meal items.
 - Each meal item MUST include "protein_g": the estimated protein in grams for that item using standard Indian food nutrition values.
 
-FOOD NAME RULES (MANDATORY):
-- The "food" field must be a short, clean real dish name — like "Methi Thepla", "Moong Dal", "Palak Paneer", "Tofu Bhurji". Max 4 words.
-- Do NOT use vague names like "Tofu Chutney" (not a dish), "Lemon Juice" as a standalone snack item, or names that don't describe a real prepared dish.
-- Do NOT add cooking methods or adjectives in the name.
+${foodNameRulesBlock(form)}
 
-VARIETY RULES (MANDATORY — enforce strictly across all 7 days):
-- NO dish name may appear more than once across the entire week in ANY meal slot. If "Tofu Methi Shaak" is lunch on Day 1, it cannot be dinner on Day 4.
-- Dal rotation: use a DIFFERENT dal each day — moong, tuvar, masoor, chana, rajma, mixed dal, urad — max 2 repeats across 7 days.
-- Grain rotation: rotate rotli/rotla base — whole wheat, bajra, jowar, multigrain — no grain repeats on consecutive days.
-- Breakfast structure rotation: do NOT use the same breakfast base item (thepla/dhokla/handvo/khichu/pudla/muthia/chilla) more than once. Vary the fruit too — amla, guava, banana, orange, papaya, apple, pomegranate — not the same fruit every day.
-- Nut variety: rotate nuts at breakfast — walnuts, almonds, cashews, peanuts, mixed seeds — not the same nut every single day.
-- Protein dish rotation: tofu preparation must change each meal — bhurji, shaak, tikki, cutlet, stir fry, stuffed, marinated — never the same preparation twice.
+${varietyRulesBlock(form)}
 
-SNACK RULES (MANDATORY):
-- Every day MUST have a completely different snack. Base item rotation across 7 days: roasted chana, fruit + peanut butter, makhana, moong sprouts chaat, sweet potato chaat, rajgira chikki or til chikki, khaman dhokla.
-- Protein powder may appear on AT MOST 2 days. Seeds on AT MOST 2 days.
-- Each snack must include at least 2 items and have enough calories to hit the snack target — do NOT give a single item like only "Rajgira Chikki" with nothing else.
-- No juice or liquid-only items as a snack item (no "Lemon Juice 15ml" — that is not a food).
+${snackRulesBlock(form)}
 
-- QUANTITY FORMAT (MANDATORY): Always specify in grams (g) or ml. If using common units, always add gram/ml in brackets. NEVER use vague amounts.
+- QUANTITY FORMAT (MANDATORY): The "quantity" field must contain ONLY the serving size — e.g. "2 eggs (100g)", "1 cup (180g)", "30g", "200ml", "2 medium rotis (120g)". Do NOT include cooking methods, preparation steps, condiments, oils, spices, or any sub-ingredients in the quantity field. One food = one measurement only.
 - Use the client's preferred meal times for meal_timing in every day — DO NOT use generic times.
 - For EVERY meal item, set "kcal" to the estimated calorie count using standard Indian food nutrition values.
 - Set "total_kcal" as the EXACT SUM of all "kcal" values. The example JSON shows 0 as placeholder — replace with the real sum.
 - Aim for total_kcal within ${nt.calorieMin}–${nt.calorieMax} kcal/day.
-- CALORIE DISTRIBUTION PER MEAL:
-  • Breakfast: ${Math.round(nt.calorieTarget * 0.25)}–${Math.round(nt.calorieTarget * 0.27)} kcal — base item + protein source + healthy fat
-  • Lunch: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — protein dish + dal + roti/rice
-  • Snack: ${Math.round(nt.calorieTarget * 0.11)}–${Math.round(nt.calorieTarget * 0.13)} kcal — see snack rules above
-  • Dinner: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — protein dish + dal + roti/rice + varied side (raita/sabzi/salad/soup — rotate each night)
-  If any meal falls below its target, ADD more food — do NOT reduce another meal to compensate.
+- MEAL ITEM COUNT LIMITS (STRICT — do NOT exceed):
+  • Breakfast: 2–3 items maximum
+  • Lunch: 3–4 items maximum
+  • Snack: 1–2 items maximum
+  • Dinner: 3–4 items maximum
+- CALORIE DISTRIBUTION PER MEAL (targets that sum to ~100% of daily goal):
+  • Breakfast: ~${Math.round(nt.calorieTarget * 0.25)} kcal (25%) — base item + protein source + healthy fat
+  • Lunch: ~${Math.round(nt.calorieTarget * 0.32)} kcal (32%) — protein dish + dal + roti/rice
+  • Snack: ~${Math.round(nt.calorieTarget * 0.11)} kcal (11%) — see snack rules above
+  • Dinner: ~${Math.round(nt.calorieTarget * 0.32)} kcal (32%) — protein dish + dal + roti/rice + varied side (raita/sabzi/salad/soup — rotate each night)
+  If a meal falls slightly below its target, INCREASE the quantity of an existing item (e.g. add 50g more roti or 30ml more dal). Do NOT add an extra dish just to hit the calorie target.
+  If the sum of all meal kcals would exceed ${nt.calorieMax}, REDUCE portion sizes of existing items — do NOT drop an item entirely unless it genuinely does not fit.
 - Set "total_protein_g" as the actual SUM of all protein_g values. Keep between ${nt.proteinMin}–${nt.proteinMax} g/day.
 - Include water_liters (2.5–3.5) for each day.
 - Include 3 smart_swaps and 3 weekly_notes.
@@ -1358,7 +1441,7 @@ const buildWeekNPrompt = (
 You are an expert Indian clinical dietitian. Generate Week ${weekNumber} of a ${totalWeeks}-week personalized diet plan in strict JSON format.
 
 ${clientBlock(form, vitals)}
-
+${personalNotesBlock(form)}
 CALORIE & MACRO TARGETS (calculated from client's TDEE of ${vitals.tdee} kcal/day and their goals):
 - Daily Calorie Range: ${nt.calorieRange}
 - Daily Protein Target: ${nt.proteinRange}
@@ -1372,30 +1455,29 @@ INSTRUCTIONS:
 2. Use meals from the client's preferred cuisine(s) as specified above.
 3. Each day must have Breakfast, Lunch, Snack, and Dinner as arrays of meal items.
 4. Each meal item MUST include "protein_g": the estimated protein in grams for that item using standard Indian food nutrition values.
-5. FOOD NAME RULES (MANDATORY): Short real dish name, max 4 words. No vague names like "Tofu Chutney". No cooking methods or adjectives. No liquid-only items (like "Lemon Juice") as standalone snack items.
+5. ${foodNameRulesBlock(form)}
 
-6. VARIETY RULES (MANDATORY — enforce across all 7 days):
-   - NO dish name may appear more than once across the entire week in ANY meal slot.
-   - Dal rotation: use a DIFFERENT dal each day — moong, tuvar, masoor, chana, rajma, mixed dal, urad — max 2 repeats.
-   - Grain rotation: rotate whole wheat / bajra / jowar / multigrain — no grain repeats on consecutive days.
-   - Breakfast base rotation: each day a different base (thepla/dhokla/handvo/khichu/pudla/muthia/chilla) — not the same twice.
-   - Fruit variety: rotate amla/guava/banana/orange/papaya/apple/pomegranate — not the same fruit every day.
-   - Nut variety: rotate walnuts/almonds/cashews/peanuts — not the same nut every day.
-   - Protein dish rotation: vary tofu preparation — bhurji, shaak, tikki, cutlet, stir fry, stuffed — never the same preparation twice.
+6. ${varietyRulesBlock(form)}
 
-7. SNACK RULES (MANDATORY): Every day a completely different snack. Rotate: roasted chana, fruit + peanut butter, makhana, moong sprouts chaat, sweet potato chaat, rajgira/til chikki, khaman dhokla. Protein powder max 2 days. Seeds max 2 days. Every snack must have at least 2 food items and hit the calorie target.
+7. ${snackRulesBlock(form)}
 
 8. QUANTITY FORMAT (MANDATORY): Always specify in grams (g) or ml with gram/ml equivalent in brackets for common units. Never vague.
 9. Use the client's preferred meal times — DO NOT use generic times.
 10. For EVERY meal item, set "kcal" to the estimated calorie count using standard Indian food values.
 11. Set "total_kcal" as the EXACT SUM of all "kcal" values. Replace the 0 placeholder with the real sum.
 12. Aim for total_kcal within ${nt.calorieMin}–${nt.calorieMax} kcal/day.
-12a. CALORIE DISTRIBUTION:
-  • Breakfast: ${Math.round(nt.calorieTarget * 0.25)}–${Math.round(nt.calorieTarget * 0.27)} kcal — base + protein source + healthy fat
-  • Lunch: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — protein dish + dal + roti/rice
-  • Snack: ${Math.round(nt.calorieTarget * 0.11)}–${Math.round(nt.calorieTarget * 0.13)} kcal — see snack rules
-  • Dinner: ${Math.round(nt.calorieTarget * 0.30)}–${Math.round(nt.calorieTarget * 0.33)} kcal — protein dish + dal + roti/rice + varied side
-  If short, ADD more food — do NOT reduce another meal.
+12a. MEAL ITEM COUNT LIMITS (STRICT — do NOT exceed):
+  • Breakfast: 2–3 items maximum
+  • Lunch: 3–4 items maximum
+  • Snack: 1–2 items maximum
+  • Dinner: 3–4 items maximum
+12b. CALORIE DISTRIBUTION (targets that sum to ~100% of daily goal):
+  • Breakfast: ~${Math.round(nt.calorieTarget * 0.25)} kcal (25%) — base + protein source + healthy fat
+  • Lunch: ~${Math.round(nt.calorieTarget * 0.32)} kcal (32%) — protein dish + dal + roti/rice
+  • Snack: ~${Math.round(nt.calorieTarget * 0.11)} kcal (11%) — see snack rules
+  • Dinner: ~${Math.round(nt.calorieTarget * 0.32)} kcal (32%) — protein dish + dal + roti/rice + varied side
+  If a meal is slightly below target, INCREASE the quantity of an existing item. Do NOT add an extra dish to hit the calorie target.
+  If the sum would exceed ${nt.calorieMax}, REDUCE portion sizes of existing items.
 13. Set "total_protein_g" as the actual SUM of protein_g values. Keep between ${nt.proteinMin}–${nt.proteinMax} g/day.
 14. Include water_liters (2.5–3.5) for each day.
 15. Generate exactly 7 days for Week ${weekNumber}.
@@ -1444,7 +1526,6 @@ const validateAndFixWeeks = (
 ): WeekPlan[] => {
   const calorieTarget = Math.round((nt.calorieMin + nt.calorieMax) / 2);
   const calorieLow    = Math.round(nt.calorieMin * 0.80); // 20% below min is the warning threshold
-  const calorieHigh   = Math.round(nt.calorieMax * 1.20); // 20% above max is the warning threshold
   const proteinLow    = Math.round(nt.proteinMin * 0.75);
   const proteinHigh   = Math.round(nt.proteinMax * 1.25);
 
@@ -1480,9 +1561,22 @@ const validateAndFixWeeks = (
       if (!kcal || kcal < 400) {
         console.warn(`[validation] form ${formId} W${week.week} D${day.day}: total_kcal=${kcal} invalid — replacing with target ${calorieTarget}`);
         kcal = calorieTarget;
-      } else if (kcal < calorieLow || kcal > calorieHigh) {
-        // Soft warning — meals may just be lighter/heavier but not necessarily wrong
-        console.warn(`[validation] form ${formId} W${week.week} D${day.day}: total_kcal=${kcal} outside range ${nt.calorieMin}–${nt.calorieMax} (±20% threshold: ${calorieLow}–${calorieHigh})`);
+      } else if (kcal > nt.calorieMax) {
+        // Over budget — scale down each item's kcal proportionally so the PDF shows honest numbers
+        const scale = nt.calorieMax / kcal;
+        console.warn(`[validation] form ${formId} W${week.week} D${day.day}: total_kcal=${kcal} exceeds max ${nt.calorieMax} — scaling item kcals by ${scale.toFixed(3)}`);
+        const scaleMeal = (items: { kcal?: number }[]) =>
+          items.map((it) => ({ ...it, kcal: it.kcal ? Math.round(Number(it.kcal) * scale) : it.kcal }));
+        day = {
+          ...day,
+          breakfast: scaleMeal(day.breakfast ?? []) as typeof day.breakfast,
+          lunch:     scaleMeal(day.lunch     ?? []) as typeof day.lunch,
+          snack:     scaleMeal(day.snack     ?? []) as typeof day.snack,
+          dinner:    scaleMeal(day.dinner    ?? []) as typeof day.dinner,
+        };
+        kcal = nt.calorieMax;
+      } else if (kcal < calorieLow) {
+        console.warn(`[validation] form ${formId} W${week.week} D${day.day}: total_kcal=${kcal} below low threshold ${calorieLow}`);
       }
 
       // Cross-check: sum protein_g from every meal item — if the stated total deviates by
