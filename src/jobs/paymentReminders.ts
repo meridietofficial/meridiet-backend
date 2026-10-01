@@ -18,9 +18,15 @@ const REMINDER_1_OFFER: Record<number, { planName: string; offer: string; price:
 };
 
 const REMINDER_2_OFFER: Record<number, { offer: string; coupon: string }> = {
-  1: { offer: '10% OFF — Pay ₹179',       coupon: 'SAVE10' },
-  2: { offer: '20% OFF — Pay ₹399',       coupon: 'SAVE20' },
+  1: { offer: '10% OFF — Pay ₹179',         coupon: 'SAVE10' },
+  2: { offer: '20% OFF — Pay ₹399',         coupon: 'SAVE20' },
   3: { offer: 'FREE Dietitian Consultation', coupon: 'FREECONSULTATION' },
+};
+
+const REMINDER_3_OFFER: Record<number, { planName: string; coupon: string }> = {
+  1: { planName: '7-Day Personalized Diet Plan',   coupon: 'SAVE10' },
+  2: { planName: '1-Month Personalized Diet Plan', coupon: 'SAVE20' },
+  3: { planName: '3-Month Personalized Diet Plan', coupon: 'FREECONSULTATION' },
 };
 
 let isRunning = false;
@@ -79,7 +85,13 @@ const processPaymentReminders = async () => {
     // ── Reminder 3 — 24 hours ──────────────────────────────────────────────
     for (const form of due3) {
       try {
-        await sendPaymentReminder3WhatsApp(form.whatsapp, form.full_name ?? 'there');
+        const offer3 = REMINDER_3_OFFER[form.plan_type ?? 1] ?? REMINDER_3_OFFER[1];
+        await sendPaymentReminder3WhatsApp(
+          form.whatsapp,
+          form.full_name ?? 'there',
+          offer3.planName,
+          offer3.coupon,
+        );
         await markPaymentReminderSent(form.id, 3);
         console.log(`[payment-reminder] R3 sent for form ${form.id}`);
       } catch (e) {

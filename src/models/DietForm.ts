@@ -206,7 +206,7 @@ export const getDuePaymentReminder2Forms = async (): Promise<PaymentReminderForm
 // Forms where: submitted, have whatsapp, no paid payment, R3 not sent, 24+ hours since submit
 export const getDuePaymentReminder3Forms = async (): Promise<PaymentReminderForm[]> =>
   query<PaymentReminderForm>(
-    `SELECT f.id, f.full_name, f.whatsapp, f.submitted_at
+    `SELECT f.id, f.full_name, f.whatsapp, f.submitted_at, f.plan_type
      FROM diet_forms f
      WHERE f.submitted_at IS NOT NULL
        AND f.whatsapp IS NOT NULL AND f.whatsapp != ''
