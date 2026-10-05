@@ -7,6 +7,7 @@ import { findDietFormById, updateDietForm } from '../models/DietForm';
 import { resolveCoupon, createCouponUsage } from '../models/Coupon';
 import { successResponse, errorResponse } from '../utils/response';
 import { generateAndDeliverDietPlan } from '../services/dietPlanDelivery';
+import { getOrCreateRazorpayInvoice } from '../services/razorpayInvoice';
 
 // POST /api/v1/payment/create-order
 // Body: { plan: '1_week' | '1_month' | '3_months', diet_form_id: number, coupon_code?: string }
@@ -162,6 +163,20 @@ export const verifyPaymentAndSubmitForm = async (req: Request, res: Response) =>
     void generateAndDeliverDietPlan(form.id, userId, weeksOverride).catch((err) => {
       console.error('[payment] delivery pipeline error:', err);
     });
+
+    // Background: create Razorpay-hosted invoice (Razorpay emails it directly to the customer)
+    if (payment.razorpay_order_id && form.email) {
+      void getOrCreateRazorpayInvoice({
+        razorpayOrderId: payment.razorpay_order_id,
+        customerName:    form.full_name ?? 'Customer',
+        customerEmail:   form.email,
+        customerPhone:   form.whatsapp ?? null,
+        plan:            payment.plan,
+        amountPaid:      payment.final_amount ?? payment.amount,
+      }).catch((err) => {
+        console.error('[payment] Razorpay invoice error:', err);
+      });
+    }
 
     return successResponse(res, 201, 'Payment verified successfully', {
       diet_form: form,

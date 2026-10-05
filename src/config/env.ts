@@ -107,11 +107,8 @@ const envSchema = z.object({
   ADMIN_EMAIL: z.string().email().default('meridietofficial@gmail.com'),
 
   // GST Invoice — company registration details
-  COMPANY_GSTIN: z.string().default('27AABCM1234A1Z5'),
-  COMPANY_PAN:   z.string().default('AABCM1234A'),
+  COMPANY_GSTIN: z.string().default('09AAVCM0510H1ZE'),
 
-  // Razorpay GST tax ID — copy from Razorpay Dashboard → Settings → Tax
-  RAZORPAY_GST_TAX_ID: z.string().default(''),
 
   // Agora — 1-to-1 video calls with cloud recording
   AGORA_APP_ID: z.string().default(''),

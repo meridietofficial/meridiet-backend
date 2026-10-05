@@ -75,6 +75,7 @@ import {
   sendAppointmentCompletedWhatsApp,
 } from '../services/whatsapp';
 import { generateMeetingToken, verifyMeetingToken, userUid, dietitianUid } from '../utils/meetingToken';
+import { sendAppointmentGstInvoiceEmail } from '../services/sendAppointmentGstInvoiceEmail';
 
 // GET /api/v1/appointments/slots/:dietitianId?days=14
 export const getAvailableSlots = async (req: Request, res: Response) => {
@@ -371,6 +372,11 @@ export const verifyAppointmentPayment = async (req: Request, res: Response) => {
     }
 
     await updateAppointmentPayment(razorpay_order_id, razorpay_payment_id, 'paid', 'confirmed');
+
+    // Background: GST invoice PDF emailed to customer
+    void sendAppointmentGstInvoiceEmail(appointment.id).catch((err) => {
+      console.error('[appointment] GST invoice email error:', err);
+    });
 
     // Record coupon usage now that payment is confirmed
     if (appointment.coupon_id && appointment.discount_applied != null && appointment.final_amount != null) {

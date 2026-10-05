@@ -17,6 +17,8 @@ import { creditWallet } from '../models/Wallet';
 import { sendEmail } from './email';
 import { dietPlanReadyEmail } from './emails/dietPlanReady';
 import { sendDietPlanWhatsApp } from './whatsapp';
+import { buildGstInvoiceHtml } from './gstInvoiceHtml';
+import { generateGstInvoicePdf } from './generateGstInvoicePdf';
 
 // ── Shared helpers (duplicated from controller to keep service self-contained) ──
 
@@ -2003,7 +2005,50 @@ export const deliverDietPlanToUser = async (
         plan.pdf_url,
         cashbackAmount,
       );
-      await sendEmail({ to: form.email, subject, html, text });
+
+      // Attach GST invoice PDF if a paid payment exists for this form.
+      // For 3-month plans: only attach with the first monthly delivery (months_generated <= 1).
+      let invoiceAttachment: { filename: string; content: Buffer; contentType: string } | null = null;
+      try {
+        const payment = await findPaidPaymentByDietFormId(plan.form_id);
+        const isFirstDelivery = !payment || payment.plan !== '3_months' || payment.months_generated <= 1;
+        if (payment && isFirstDelivery) {
+          const createdAt = new Date(payment.created_at);
+          const y = createdAt.getFullYear();
+          const m = createdAt.getMonth() + 1;
+          const fy = m >= 4 ? `${y}-${String(y + 1).slice(-2)}` : `${y - 1}-${String(y).slice(-2)}`;
+          const invNumber = `MDT/INV/${fy}/${String(payment.id).padStart(5, '0')}`;
+          const fmtDate = (d: Date) => `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+          const planLabelMap: Record<string,string> = { '1_week':'1 Week', '1_month':'1 Month', '3_months':'3 Months' };
+          const invoiceHtml = buildGstInvoiceHtml({
+            invoiceNumber:     invNumber,
+            invoiceDate:       fmtDate(createdAt),
+            customerName:      form.full_name ?? 'Customer',
+            customerEmail:     form.email ?? '',
+            customerPhone:     form.whatsapp ?? null,
+            customerState:     form.state ?? null,
+            planLabel:         planLabelMap[payment.plan] ?? payment.plan,
+            amountPaid:        payment.final_amount ?? payment.amount,
+            razorpayPaymentId: payment.razorpay_payment_id,
+          });
+          const pdfBuffer = await generateGstInvoicePdf(invoiceHtml);
+          invoiceAttachment = {
+            filename:    `GST_Invoice_${invNumber.replace(/\//g, '-')}.pdf`,
+            content:     pdfBuffer,
+            contentType: 'application/pdf',
+          };
+        }
+      } catch (invErr) {
+        console.error('[deliverDietPlanToUser] GST invoice attachment error:', invErr);
+      }
+
+      await sendEmail({
+        to: form.email,
+        subject,
+        html,
+        text,
+        ...(invoiceAttachment ? { attachments: [invoiceAttachment] } : {}),
+      });
       sentEmail = true;
     } catch (mailErr) {
       console.error('[deliverDietPlanToUser] Email error:', mailErr);

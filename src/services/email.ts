@@ -1,6 +1,12 @@
 import type SMTPTransport from 'nodemailer/lib/smtp-transport';
 import { mailer, MAIL_FROM } from '../config/mailer';
 
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType: string;
+}
+
 export interface SendEmailOptions {
   to: string | string[];
   subject: string;
@@ -9,6 +15,7 @@ export interface SendEmailOptions {
   cc?: string | string[];
   bcc?: string | string[];
   replyTo?: string;
+  attachments?: EmailAttachment[];
 }
 
 /**
@@ -27,6 +34,11 @@ export const sendEmail = async (
     cc: options.cc,
     bcc: options.bcc,
     replyTo: options.replyTo,
+    attachments: options.attachments?.map((a) => ({
+      filename: a.filename,
+      content: a.content,
+      contentType: a.contentType,
+    })),
   });
 };
 

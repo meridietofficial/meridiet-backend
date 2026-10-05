@@ -3,8 +3,12 @@ import chromium from '@sparticuz/chromium';
 import puppeteer from 'puppeteer-core';
 import { findPaymentById } from '../models/Payment';
 import { findUserById } from '../models/User';
+import { findDietFormById } from '../models/DietForm';
 import { buildGstInvoiceHtml } from '../services/gstInvoiceHtml';
 import { getOrCreateRazorpayInvoice } from '../services/razorpayInvoice';
+import { generateGstInvoicePdf } from '../services/generateGstInvoicePdf';
+import { sendEmail } from '../services/email';
+import { dietPlanReadyEmail } from '../services/emails/dietPlanReady';
 import { errorResponse, successResponse } from '../utils/response';
 
 const LOCAL_CHROME_PATHS = [
@@ -51,21 +55,115 @@ const planLabel = (plan: string): string => {
 const buildInvoiceData = async (paymentId: number) => {
   const payment = await findPaymentById(paymentId);
   if (!payment) return null;
-  const user = payment.user_id ? await findUserById(payment.user_id) : null;
+  const [user, form] = await Promise.all([
+    payment.user_id ? findUserById(payment.user_id) : null,
+    payment.diet_form_id ? findDietFormById(payment.diet_form_id) : null,
+  ]);
   const amount = payment.final_amount ?? payment.amount;
   return {
     payment,
     html: buildGstInvoiceHtml({
       invoiceNumber:     invoiceNumber(payment.id, new Date(payment.created_at)),
       invoiceDate:       fmtDate(new Date(payment.created_at)),
-      customerName:      user?.full_name ?? 'Customer',
-      customerEmail:     user?.email ?? '',
+      customerName:      user?.full_name ?? form?.full_name ?? 'Customer',
+      customerEmail:     user?.email ?? form?.email ?? '',
       customerPhone:     user?.phone_number ? `${user.phone_code ?? '+91'} ${user.phone_number}` : null,
+      customerState:     form?.state ?? null,
       planLabel:         planLabel(payment.plan),
       amountPaid:        amount,
       razorpayPaymentId: payment.razorpay_payment_id,
     }),
   };
+};
+
+// GET /api/v1/invoice/gst/sample/preview?state=up  — renders a dummy diet-plan invoice (no auth, no DB)
+// ?state=up   → intra-state (CGST+SGST)   default
+// ?state=dl   → inter-state (IGST)
+export const previewSampleGstInvoice = (req: Request, res: Response) => {
+  const stateParam = (req.query.state as string | undefined) ?? 'up';
+  const customerState = stateParam === 'dl' ? 'Delhi' : 'Uttar Pradesh';
+  const now = new Date();
+  const html = buildGstInvoiceHtml({
+    invoiceNumber:     'MDT/INV/2026-27/00001',
+    invoiceDate:       fmtDate(now),
+    customerName:      'Priya Sharma',
+    customerEmail:     'priya.sharma@example.com',
+    customerPhone:     '+91 98765 43210',
+    customerState,
+    planLabel:         '1 Month',
+    amountPaid:        499,
+    razorpayPaymentId: 'pay_SamplePaymentId12',
+  });
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+};
+
+// GET /api/v1/invoice/appointment/sample/preview?type=video_call|in_person
+// Renders a dummy appointment invoice (no auth, no DB)
+export const previewSampleAppointmentInvoice = (req: Request, res: Response) => {
+  const typeParam = (req.query.type as string | undefined) ?? 'video_call';
+  const sessionLabel = typeParam === 'in_person' ? 'In-Person' : 'Video Call';
+  const now = new Date();
+  const html = buildGstInvoiceHtml({
+    invoiceNumber:      'MDT/APT/2026-27/00001',
+    invoiceDate:        fmtDate(now),
+    customerName:       'Rahul Verma',
+    customerEmail:      'rahul.verma@example.com',
+    customerPhone:      '+91 91234 56789',
+    customerState:      null,
+    planLabel:          sessionLabel,
+    serviceDescription: `Dietitian Consultation – ${sessionLabel}`,
+    amountPaid:         799,
+    razorpayPaymentId:  'pay_SampleAptPayment12',
+  });
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+};
+
+// GET /api/v1/invoice/gst/test-email?to=someone@example.com  — sends a combined diet plan + invoice email (no auth, dev only)
+export const sendTestInvoiceEmail = async (req: Request, res: Response) => {
+  const to = req.query.to as string | undefined;
+  if (!to) return errorResponse(res, 400, 'Query param ?to=email is required');
+
+  try {
+    const now = new Date();
+    const invNumber = 'MDT/INV/2026-27/00001';
+
+    // Build GST invoice PDF
+    const invoiceHtml = buildGstInvoiceHtml({
+      invoiceNumber:     invNumber,
+      invoiceDate:       fmtDate(now),
+      customerName:      'Manish Kumar',
+      customerEmail:     to,
+      customerPhone:     '+91 98765 43210',
+      customerState:     'Delhi',
+      planLabel:         '1 Month',
+      amountPaid:        499,
+      razorpayPaymentId: 'pay_TestPaymentId123',
+    });
+    const pdfBuffer = await generateGstInvoicePdf(invoiceHtml);
+
+    // Diet plan ready email body with invoice attached
+    const samplePdfUrl = 'https://meridiet.com/sample-diet-plan.pdf';
+    const { subject, html, text } = dietPlanReadyEmail('Manish Kumar', samplePdfUrl, null);
+
+    await sendEmail({
+      to,
+      subject,
+      html,
+      text,
+      attachments: [{
+        filename:    `GST_Invoice_${invNumber.replace(/\//g, '-')}.pdf`,
+        content:     pdfBuffer,
+        contentType: 'application/pdf',
+      }],
+    });
+
+    return successResponse(res, 200, `Test email sent to ${to}`);
+  } catch (err) {
+    console.error('[invoice] test email error:', err);
+    return errorResponse(res, 500, 'Failed to send test email');
+  }
 };
 
 // GET /api/v1/invoice/razorpay/:paymentId

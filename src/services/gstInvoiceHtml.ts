@@ -6,26 +6,33 @@ export interface GstInvoiceData {
   customerName: string;
   customerEmail: string;
   customerPhone: string | null;
+  customerState: string | null;   // customer's state — used to decide IGST vs CGST+SGST
   planLabel: string;
+  serviceDescription?: string;   // overrides the default "Personalised Diet Plan – <planLabel>" line
   amountPaid: number;   // GST-inclusive total the customer paid
   razorpayPaymentId: string | null;
 }
 
-const GST_RATE   = 0.18;
-const CGST_RATE  = 0.09;
-const SGST_RATE  = 0.09;
+const GST_RATE = 0.18;
 
-// Company details — override via env if needed
+// Returns true when the customer is in the same state as the company (Uttar Pradesh).
+// Intra-state → CGST 9% + SGST 9%.  Inter-state → IGST 18%.
+const isIntraState = (customerState: string | null): boolean => {
+  if (!customerState) return false;
+  const s = customerState.trim().toLowerCase();
+  return s === 'uttar pradesh' || s === 'up';
+};
+
 const COMPANY = {
-  name:    'Meridiet Technology Pvt Ltd',
-  address: '123, Health Street, Mumbai, Maharashtra – 400001',
-  email:   'support@meridiet.com',
-  phone:   '+91 960 960 6009',
-  website: 'www.meridiet.com',
-  gstin:   process.env.COMPANY_GSTIN ?? 'GSTIN: To be updated',
-  pan:     process.env.COMPANY_PAN   ?? 'PAN: To be updated',
-  state:   'Maharashtra',
-  stateCode: '27',
+  name:      'MERIDIET TECHNOLOGIES PRIVATE LIMITED',
+  cin:       'U62090UW2026PTC254182',
+  address:   'Shop No-UGF-17, Ansal Plaza Mall Alpha, Greater Noida, Gautam Buddha Nagar, Uttar Pradesh – 201310',
+  email:     'support@meridiet.com',
+  phone:     '+91 960 960 6009',
+  website:   'www.meridiet.com',
+  gstin:     process.env.COMPANY_GSTIN ?? '09AAVCM0510H1ZE',
+  state:     'Uttar Pradesh',
+  stateCode: '09',
 };
 
 const esc = (s: unknown): string =>
@@ -37,9 +44,14 @@ const inr = (n: number): string =>
 export const buildGstInvoiceHtml = (data: GstInvoiceData): string => {
   const total        = data.amountPaid;
   const taxableValue = parseFloat((total / (1 + GST_RATE)).toFixed(2));
-  const cgst         = parseFloat((taxableValue * CGST_RATE).toFixed(2));
-  const sgst         = parseFloat((taxableValue * SGST_RATE).toFixed(2));
-  const gstTotal     = parseFloat((cgst + sgst).toFixed(2));
+  const gstTotal     = parseFloat((total - taxableValue).toFixed(2));
+  const intraState   = isIntraState(data.customerState);
+
+  // Intra-state (UP customer): CGST 9% + SGST 9%
+  // Inter-state (all other states): IGST 18%
+  const cgst = intraState ? parseFloat((taxableValue * 0.09).toFixed(2)) : 0;
+  const sgst = intraState ? parseFloat((taxableValue * 0.09).toFixed(2)) : 0;
+  const igst = intraState ? 0 : gstTotal;
 
   const GREEN      = '#1E8E3E';
   const GREEN_DARK = '#14532d';
@@ -76,27 +88,46 @@ export const buildGstInvoiceHtml = (data: GstInvoiceData): string => {
 
   /* ── Header ── */
   .header {
-    background: ${GREEN_DARK};
-    color: ${WHITE};
-    padding: 28px 36px 22px;
+    background: ${WHITE};
+    color: ${INK};
+    padding: 24px 36px 18px;
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
+    border-bottom: 3px solid ${GREEN};
+  }
+  .header-left {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 14px;
+  }
+  .header-left img {
+    display: block;
+    height: 48px;
+    width: auto;
+    flex-shrink: 0;
+  }
+  .header-left .company-info {
+    display: flex;
+    flex-direction: column;
   }
   .header-left .company-name {
-    font-size: 20px;
+    font-size: 13px;
     font-weight: 700;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.3px;
+    color: ${INK};
+    margin: 0;
   }
   .header-left .company-sub {
-    font-size: 11px;
-    color: #a7f3d0;
+    font-size: 10px;
+    color: ${SUB};
     margin-top: 3px;
   }
   .header-left .company-meta {
-    font-size: 11px;
-    color: #d1fae5;
-    margin-top: 10px;
+    font-size: 10px;
+    color: ${SUB};
+    margin-top: 4px;
     line-height: 1.7;
   }
   .header-right {
@@ -104,32 +135,19 @@ export const buildGstInvoiceHtml = (data: GstInvoiceData): string => {
   }
   .header-right .tax-invoice-label {
     font-size: 22px;
-    font-weight: 700;
+    font-weight: 800;
     letter-spacing: 1px;
-    color: ${WHITE};
+    color: ${INK};
   }
   .header-right .invoice-meta {
     font-size: 11px;
-    color: #d1fae5;
+    color: ${SUB};
     margin-top: 6px;
     line-height: 1.7;
   }
   .header-right .invoice-meta span {
-    color: ${WHITE};
+    color: ${INK};
     font-weight: 600;
-  }
-
-  /* ── GST badge ── */
-  .gst-badge {
-    background: ${GREEN};
-    color: ${WHITE};
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    padding: 2px 8px;
-    border-radius: 3px;
-    display: inline-block;
-    margin-top: 6px;
   }
 
   /* ── Body ── */
@@ -138,33 +156,49 @@ export const buildGstInvoiceHtml = (data: GstInvoiceData): string => {
   /* ── Bill to ── */
   .bill-row {
     display: flex;
-    gap: 24px;
-    margin-bottom: 24px;
+    gap: 0;
+    margin-bottom: 22px;
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 18px;
   }
-  .bill-box {
+  .bill-col {
     flex: 1;
-    border: 1px solid ${BORDER};
-    border-radius: 6px;
-    padding: 14px 16px;
-    background: ${GREEN_BG};
+    padding-right: 24px;
   }
-  .bill-box h4 {
+  .bill-col + .bill-col {
+    padding-right: 0;
+    padding-left: 24px;
+    border-left: 1px solid #e5e7eb;
+  }
+  .bill-col .col-label {
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 1px;
-    color: ${GREEN_DARK};
+    color: ${GREEN};
     margin-bottom: 8px;
-    border-bottom: 1px solid ${BORDER};
-    padding-bottom: 5px;
   }
-  .bill-box p {
+  .bill-col .col-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: ${INK};
+    margin-bottom: 3px;
+  }
+  .bill-col .col-line {
+    font-size: 12px;
+    color: ${SUB};
+    line-height: 1.8;
+  }
+  .bill-col .col-kv {
     font-size: 12px;
     color: ${INK};
-    line-height: 1.7;
+    line-height: 1.9;
   }
-  .bill-box p strong { font-weight: 600; }
-  .bill-box p.muted { color: ${SUB}; font-size: 11px; }
+  .bill-col .col-kv span {
+    color: ${INK};
+    font-weight: 700;
+    margin-right: 6px;
+  }
 
   /* ── Items table ── */
   .items-section { margin-bottom: 20px; }
@@ -173,7 +207,7 @@ export const buildGstInvoiceHtml = (data: GstInvoiceData): string => {
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 1px;
-    color: ${GREEN_DARK};
+    color: ${GREEN};
     margin-bottom: 10px;
   }
   table.items {
@@ -182,15 +216,17 @@ export const buildGstInvoiceHtml = (data: GstInvoiceData): string => {
     font-size: 12px;
   }
   table.items thead tr {
-    background: ${GREEN_DARK};
-    color: ${WHITE};
+    background: #f3f4f6;
+    color: ${INK};
+    border-bottom: 2px solid ${GREEN};
   }
   table.items thead th {
     padding: 9px 12px;
     text-align: left;
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 700;
     letter-spacing: 0.4px;
+    color: ${INK};
   }
   table.items thead th.right { text-align: right; }
   table.items tbody tr {
@@ -203,40 +239,17 @@ export const buildGstInvoiceHtml = (data: GstInvoiceData): string => {
   }
   table.items tbody td.right { text-align: right; }
   table.items tbody td.muted { color: ${SUB}; font-size: 11px; }
-
-  /* ── Tax summary ── */
-  .summary-row {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: 8px;
-  }
-  .summary-box {
-    width: 300px;
-    border: 1px solid ${BORDER};
-    border-radius: 6px;
-    overflow: hidden;
-    font-size: 12px;
-  }
-  .summary-box .s-row {
-    display: flex;
-    justify-content: space-between;
-    padding: 8px 14px;
-    border-bottom: 1px solid ${BORDER};
-  }
-  .summary-box .s-row:last-child { border-bottom: none; }
-  .summary-box .s-row.total {
-    background: ${GREEN_DARK};
-    color: ${WHITE};
-    font-weight: 700;
-    font-size: 13px;
-  }
-  .summary-box .s-row.sub-head {
+  table.items tfoot tr {
     background: ${GREEN_BG};
-    font-weight: 600;
-    color: ${GREEN_DARK};
+    border-top: 2px solid ${GREEN};
   }
-  .summary-box .s-label { color: inherit; }
-  .summary-box .s-value { font-weight: 600; }
+  table.items tfoot td {
+    padding: 10px 12px;
+    font-size: 13px;
+    font-weight: 700;
+    color: ${INK};
+  }
+  table.items tfoot td.right { text-align: right; }
 
   /* ── Divider ── */
   .divider {
@@ -295,21 +308,21 @@ export const buildGstInvoiceHtml = (data: GstInvoiceData): string => {
   <!-- Header -->
   <div class="header">
     <div class="header-left">
-      <div class="company-name">${esc(COMPANY.name)}</div>
-      <div class="company-sub">CIN: U74999MH2024PTC000000 &nbsp;|&nbsp; ${esc(COMPANY.state)} (${esc(COMPANY.stateCode)})</div>
-      <div class="company-meta">
-        ${esc(COMPANY.address)}<br/>
-        ${esc(COMPANY.email)} &nbsp;|&nbsp; ${esc(COMPANY.phone)}<br/>
-        ${esc(COMPANY.website)}
+      <img src="${BRAND.logoUrl}" alt="${esc(BRAND.name)}" />
+      <div class="company-info">
+        <div class="company-name">${esc(COMPANY.name)}</div>
+        <div class="company-sub">GSTIN: ${esc(COMPANY.gstin)} &nbsp;|&nbsp; CIN: ${esc(COMPANY.cin)}</div>
+        <div class="company-meta">
+          ${esc(COMPANY.email)} &nbsp;|&nbsp; ${esc(COMPANY.phone)}<br/>
+          ${esc(COMPANY.website)}
+        </div>
       </div>
-      <div class="gst-badge">GSTIN: ${esc(COMPANY.gstin)}</div>
     </div>
     <div class="header-right">
       <div class="tax-invoice-label">TAX INVOICE</div>
       <div class="invoice-meta">
         Invoice No: <span>${esc(data.invoiceNumber)}</span><br/>
-        Invoice Date: <span>${esc(data.invoiceDate)}</span><br/>
-        Place of Supply: <span>${esc(COMPANY.state)} (${esc(COMPANY.stateCode)})</span>
+        Invoice Date: <span>${esc(data.invoiceDate)}</span>
       </div>
     </div>
   </div>
@@ -319,19 +332,17 @@ export const buildGstInvoiceHtml = (data: GstInvoiceData): string => {
 
     <!-- Bill To / Payment Info -->
     <div class="bill-row">
-      <div class="bill-box">
-        <h4>Bill To</h4>
-        <p><strong>${esc(data.customerName)}</strong></p>
-        <p>${esc(data.customerEmail)}</p>
-        ${data.customerPhone ? `<p>${esc(data.customerPhone)}</p>` : ''}
-        <p class="muted">Consumer (B2C)</p>
+      <div class="bill-col">
+        <div class="col-label">Bill To</div>
+        <div class="col-name">${esc(data.customerName)}</div>
+        <div class="col-line">${esc(data.customerEmail)}</div>
+        ${data.customerPhone ? `<div class="col-line">${esc(data.customerPhone)}</div>` : ''}
       </div>
-      <div class="bill-box">
-        <h4>Payment Details</h4>
-        ${data.razorpayPaymentId ? `<p><strong>Payment ID:</strong> ${esc(data.razorpayPaymentId)}</p>` : ''}
-        <p><strong>Mode:</strong> Online (Razorpay)</p>
-        <p><strong>Status:</strong> Paid</p>
-        <p class="muted">PAN: ${esc(COMPANY.pan)}</p>
+      <div class="bill-col">
+        <div class="col-label">Payment Details</div>
+        ${data.razorpayPaymentId ? `<div class="col-kv"><span>Payment ID</span>${esc(data.razorpayPaymentId)}</div>` : ''}
+        <div class="col-kv"><span>Mode</span>Online (Razorpay)</div>
+        <div class="col-kv"><span>Status</span>Paid</div>
       </div>
     </div>
 
@@ -343,10 +354,10 @@ export const buildGstInvoiceHtml = (data: GstInvoiceData): string => {
           <tr>
             <th>#</th>
             <th>Description of Service</th>
-            <th>HSN/SAC</th>
             <th class="right">Taxable Value</th>
-            <th class="right">CGST (9%)</th>
-            <th class="right">SGST (9%)</th>
+            ${intraState
+              ? `<th class="right">CGST (9%)</th><th class="right">SGST (9%)</th>`
+              : `<th class="right">IGST (18%)</th>`}
             <th class="right">Total</th>
           </tr>
         </thead>
@@ -354,43 +365,23 @@ export const buildGstInvoiceHtml = (data: GstInvoiceData): string => {
           <tr>
             <td>1</td>
             <td>
-              <strong>Personalised Diet Plan – ${esc(data.planLabel)}</strong>
-              <br/><span style="font-size:11px;color:#6b7280;">AI-generated nutrition plan with dietitian review</span>
+              <strong>${esc(data.serviceDescription ?? `Personalised Diet Plan – ${data.planLabel}`)}</strong>
             </td>
-            <td>998399</td>
             <td class="right">${inr(taxableValue)}</td>
-            <td class="right">${inr(cgst)}</td>
-            <td class="right">${inr(sgst)}</td>
-            <td class="right"><strong>${inr(total)}</strong></td>
+            ${intraState
+              ? `<td class="right">${inr(cgst)}</td><td class="right">${inr(sgst)}</td>`
+              : `<td class="right">${inr(igst)}</td>`}
+            <td class="right">${inr(total)}</td>
           </tr>
         </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="${intraState ? 4 : 3}"></td>
+            <td class="right">Grand Total</td>
+            <td class="right">${inr(total)}</td>
+          </tr>
+        </tfoot>
       </table>
-    </div>
-
-    <!-- Summary -->
-    <div class="summary-row">
-      <div class="summary-box">
-        <div class="s-row sub-head">
-          <span class="s-label">Taxable Amount</span>
-          <span class="s-value">${inr(taxableValue)}</span>
-        </div>
-        <div class="s-row">
-          <span class="s-label">CGST @ 9%</span>
-          <span class="s-value">${inr(cgst)}</span>
-        </div>
-        <div class="s-row">
-          <span class="s-label">SGST @ 9%</span>
-          <span class="s-value">${inr(sgst)}</span>
-        </div>
-        <div class="s-row">
-          <span class="s-label">Total GST (18%)</span>
-          <span class="s-value">${inr(gstTotal)}</span>
-        </div>
-        <div class="s-row total">
-          <span class="s-label">Grand Total (INR)</span>
-          <span class="s-value">${inr(total)}</span>
-        </div>
-      </div>
     </div>
 
     <div class="divider"></div>
@@ -399,10 +390,10 @@ export const buildGstInvoiceHtml = (data: GstInvoiceData): string => {
     <div class="notes">
       <strong>Notes &amp; Declaration:</strong><br/>
       1. This is a computer-generated invoice and does not require a physical signature.<br/>
-      2. This service is classified under SAC 998399 – Other information technology services.<br/>
-      3. Tax (CGST + SGST) is applicable as per GST Act, 2017. Supply is intra-state (Maharashtra).<br/>
-      4. Amount shown is inclusive of GST. Taxable value is computed as: Total ÷ 1.18.<br/>
-      5. For support: ${esc(BRAND.supportEmail)} | ${esc(BRAND.supportPhone)}
+      2. ${intraState
+        ? 'CGST + SGST applicable — intra-state supply (Uttar Pradesh). CGST 9% + SGST 9% = 18%.'
+        : 'IGST applicable — inter-state supply. IGST 18% charged as per GST Act, 2017.'}<br/>
+      3. Amount shown is inclusive of GST. Taxable value is computed as: Total ÷ 1.18.
     </div>
 
   </div><!-- /body -->
@@ -414,7 +405,7 @@ export const buildGstInvoiceHtml = (data: GstInvoiceData): string => {
       <div class="footer-sub">${esc(BRAND.tagline)} &nbsp;|&nbsp; ${esc(BRAND.website)}</div>
     </div>
     <div class="footer-right">
-      GSTIN: ${esc(COMPANY.gstin)} &nbsp;|&nbsp; PAN: ${esc(COMPANY.pan)}<br/>
+      GSTIN: ${esc(COMPANY.gstin)}<br/>
       This invoice is system-generated.
     </div>
   </div>

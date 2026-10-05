@@ -13,49 +13,62 @@ interface InvoiceInput {
   customerEmail: string;
   customerPhone: string | null;
   plan: string;
-  amountPaid: number;   // GST-inclusive, in INR
+  amountPaid: number;   // GST-inclusive total, in INR
 }
 
-// Returns the Razorpay invoice short_url (browser-viewable, no auth needed)
-export const getOrCreateRazorpayInvoice = async (input: InvoiceInput): Promise<string> => {
-  // Reuse existing invoice for this order if one was already created
-  const existing = await razorpay.invoices.all({ count: 5 } as Parameters<typeof razorpay.invoices.all>[0]);
-  const found = existing.items.find((inv) => (inv as any).order_id === input.razorpayOrderId);
-  if (found?.short_url) return found.short_url;
+const findExistingInvoice = async (orderId: string): Promise<string | null> => {
+  try {
+    const invoices = await razorpay.invoices.all({
+      type:  'invoice',
+      count: 25,
+    } as Parameters<typeof razorpay.invoices.all>[0]);
 
-  const useTaxId = !!env.RAZORPAY_GST_TAX_ID;
-  const taxableAmountPaise = Math.round((input.amountPaid / 1.18) * 100);
-
-  const lineItem: Record<string, unknown> = {
-    name:        PLAN_LABEL[input.plan] ?? input.plan,
-    description: 'AI-powered personalised nutrition plan (SAC: 998399)',
-    amount:      taxableAmountPaise,
-    currency:    'INR',
-    quantity:    1,
-  };
-
-  if (useTaxId) {
-    // Use the pre-configured GST tax from Razorpay dashboard — it handles CGST/SGST split
-    lineItem['tax_id'] = env.RAZORPAY_GST_TAX_ID;
-  } else {
-    // Fallback: inline 18% rate (Razorpay will show as GST 18%, no CGST/SGST split)
-    lineItem['tax_inclusive'] = false;
+    const found = (invoices.items as any[]).find(
+      (inv) => inv.order_id === orderId && inv.short_url,
+    );
+    return found?.short_url ?? null;
+  } catch {
+    return null;
   }
+};
+
+// Creates a Razorpay-hosted invoice for a completed payment.
+// Passes the GST-inclusive amount directly — no Tax ID required.
+// Razorpay emails the invoice to the customer when email_notify = 1.
+export const getOrCreateRazorpayInvoice = async (input: InvoiceInput): Promise<string> => {
+  const existing = await findExistingInvoice(input.razorpayOrderId);
+  if (existing) return existing;
+
+  const totalPaise = Math.round(input.amountPaid * 100);
+
+  const taxableInr  = parseFloat((input.amountPaid / 1.18).toFixed(2));
+  const cgstInr     = parseFloat((taxableInr * 0.09).toFixed(2));
+  const sgstInr     = parseFloat((taxableInr * 0.09).toFixed(2));
+
+  const planName = PLAN_LABEL[input.plan] ?? input.plan;
 
   const invoice = await razorpay.invoices.create({
-    type:         'invoice',
-    date:         Math.floor(Date.now() / 1000),
-    order_id:     input.razorpayOrderId,
+    type:     'invoice',
+    date:     Math.floor(Date.now() / 1000),
+    order_id: input.razorpayOrderId,
     customer: {
       name:    input.customerName,
-      email:   input.customerEmail ?? undefined,
+      email:   input.customerEmail,
       contact: input.customerPhone ?? undefined,
     },
-    line_items:    [lineItem as any],
-    currency:      'INR',
-    sms_notify:    0,
-    email_notify:  0,
-    description:   `Payment for ${PLAN_LABEL[input.plan] ?? input.plan}`,
+    line_items: [
+      {
+        name:        planName,
+        description: `Taxable: ₹${taxableInr} | CGST 9%: ₹${cgstInr} | SGST 9%: ₹${sgstInr}`,
+        amount:      totalPaise,
+        currency:    'INR',
+        quantity:    1,
+      } as any,
+    ],
+    currency:     'INR',
+    sms_notify:   input.customerPhone ? 1 : 0,
+    email_notify: input.customerEmail ? 1 : 0,
+    description:  `Payment for ${planName} — GSTIN: ${env.COMPANY_GSTIN} | GST @18% incl.`,
   });
 
   return invoice.short_url ?? '';
