@@ -19,7 +19,7 @@ export interface Appointment {
   payment_approved_by: number | null;
   payment_id: string | null;
   order_id: string | null;
-  appointment_source: 'platform' | 'dietitian';
+  appointment_source: 'platform' | 'dietitian' | 'admin';
   payment_method: 'razorpay' | 'cash' | 'upi' | 'card' | 'other' | null;
   coupon_id: number | null;
   discount_applied: number | null;
@@ -71,7 +71,7 @@ export interface CreateAppointmentData {
   fee: number;
   currency?: string;
   order_id?: string | null;
-  appointment_source?: 'platform' | 'dietitian';
+  appointment_source?: 'platform' | 'dietitian' | 'admin';
   payment_method?: 'razorpay' | 'cash' | 'upi' | 'card' | 'other' | null;
   coupon_id?: number | null;
   discount_applied?: number | null;
@@ -536,6 +536,13 @@ export const markAppointmentPaymentRefunded = async (id: number) => {
   );
 };
 
+export const confirmFreeAppointment = async (id: number) => {
+  await execute(
+    `UPDATE appointments SET status = 'confirmed', payment_status = 'paid' WHERE id = ?`,
+    [id],
+  );
+};
+
 // ── Offline appointment helpers ───────────────────────────────────────────────
 
 export const markOfflinePaymentPaid = async (
@@ -859,7 +866,7 @@ export interface SessionRow {
   session_type: 'video_call' | 'in_person';
   status: string;
   payment_status: string;
-  appointment_source: 'platform' | 'dietitian';
+  appointment_source: 'platform' | 'dietitian' | 'admin';
   payment_method: string | null;
   notes: string | null;
   diet_plan_sent: number;
@@ -883,7 +890,7 @@ export const getDietitianSessionsList = async (
   search: string | undefined,
   page: number,
   limit: number,
-  source?: 'platform' | 'dietitian',
+  source?: 'platform' | 'dietitian' | 'admin',
 ) => {
   const offset = (page - 1) * limit;
   const searchCond = search ? "AND COALESCE(u.full_name, a.name) LIKE ?" : "";
@@ -1438,7 +1445,7 @@ export interface AdminAppointmentFilters {
   status?: string;
   payment_status?: string;
   session_type?: string;
-  source?: 'platform' | 'dietitian';
+  source?: 'platform' | 'dietitian' | 'admin' | ('platform' | 'dietitian' | 'admin')[];
   dietitian_id?: number;
   date_from?: string;
   date_to?: string;
@@ -1459,7 +1466,15 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
   if (filters.status)        { conditions.push('a.status = ?');              params.push(filters.status); }
   if (filters.payment_status){ conditions.push('a.payment_status = ?');      params.push(filters.payment_status); }
   if (filters.session_type)  { conditions.push('a.session_type = ?');        params.push(filters.session_type); }
-  if (filters.source)        { conditions.push('a.appointment_source = ?');  params.push(filters.source); }
+  if (filters.source) {
+    if (Array.isArray(filters.source)) {
+      conditions.push(`a.appointment_source IN (${filters.source.map(() => '?').join(',')})`);
+      params.push(...filters.source);
+    } else {
+      conditions.push('a.appointment_source = ?');
+      params.push(filters.source);
+    }
+  }
   if (filters.dietitian_id)  { conditions.push('a.dietitian_id = ?');        params.push(filters.dietitian_id); }
   if (filters.date_from)     { conditions.push('a.appointment_date >= ?'); params.push(filters.date_from); }
   if (filters.date_to)       { conditions.push('a.appointment_date <= ?'); params.push(filters.date_to); }

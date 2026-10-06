@@ -17,6 +17,7 @@ import {
   adminMarkNoShow,
   adminApproveNoShow,
   adminMarkComplete,
+  adminBookAppointment,
 } from '../controllers/adminAppointment';
 import {
   getBmiCategories, createBmiCategory, updateBmiCategory, deleteBmiCategory,
@@ -133,6 +134,7 @@ adminRouter.post('/diet-plans/:plan_id/retry',   authenticate, authorize('admin'
 
 // ── Appointment management ────────────────────────────────────────────────────
 // Static routes must be before /:id to avoid conflict
+adminRouter.post('/appointments/book',                     authenticate, authorize('admin'), adminBookAppointment);
 adminRouter.get ('/appointments/online',                   authenticate, authorize('admin'), adminGetOnlineAppointments);
 adminRouter.get ('/appointments/offline',                  authenticate, authorize('admin'), adminGetOfflineAppointments);
 adminRouter.get ('/appointments/pending-approval',         authenticate, authorize('admin'), adminGetPendingApprovalsList);

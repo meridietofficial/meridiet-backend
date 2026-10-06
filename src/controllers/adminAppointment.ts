@@ -3,6 +3,8 @@ import {
   adminListAppointments,
   adminGetAppointmentDetail,
   findAppointmentById,
+  createAppointment,
+  confirmFreeAppointment,
   markPaymentApproved,
   markAppointmentMissedWithType,
   markAppointmentPaymentRefunded,
@@ -21,11 +23,17 @@ import {
   NO_SHOW_PENALTY,
 } from '../models/DietitianWallet';
 import { findDietitianById } from '../models/Dietitian';
+import { findUserById } from '../models/User';
 import { getSetting } from '../models/Setting';
 import { successResponse, errorResponse } from '../utils/response';
 import { sendEmail } from '../services/email';
 import { appointmentPaymentApprovedEmail } from '../services/emails/appointmentPaymentApproved';
+import { appointmentConfirmationEmail } from '../services/emails/appointmentConfirmation';
+import { appointmentNewBookingEmail } from '../services/emails/appointmentNewBooking';
 import { noShowPenaltyEmail } from '../services/emails/noShowPenaltyEmail';
+import { sendAppointmentBookedWhatsApp, sendDietitianNewBookingWhatsApp } from '../services/whatsapp';
+import { generateMeetingToken, userUid } from '../utils/meetingToken';
+import { env } from '../config/env';
 import { razorpay } from '../config/razorpay';
 
 // GET /api/v1/admin/appointments/pending-approval
@@ -116,7 +124,7 @@ export const adminGetOnlineAppointments = async (req: Request, res: Response) =>
 
   try {
     const result = await adminListAppointments({
-      source:        'platform',
+      source:        ['platform', 'admin'],
       session_type:  'video_call',
       page:          page  ? Number(page)  : 1,
       limit:         limit ? Number(limit) : 20,
@@ -202,7 +210,7 @@ export const adminGetAppointments = async (req: Request, res: Response) => {
     const validStatuses  = ['confirmed', 'completed', 'cancelled', 'missed'];
     const validPayments  = ['unpaid', 'paid', 'refunded'];
     const validSessions  = ['video_call', 'in_person'];
-    const validSources   = ['platform', 'dietitian'];
+    const validSources   = ['platform', 'dietitian', 'admin'];
     const validNoShow    = ['user', 'dietitian', 'any'];
 
     if (status && !validStatuses.includes(status)) {
@@ -233,7 +241,7 @@ export const adminGetAppointments = async (req: Request, res: Response) => {
       status,
       payment_status,
       session_type,
-      source:         source as 'platform' | 'dietitian' | undefined,
+      source:         source as 'platform' | 'dietitian' | 'admin' | undefined,
       dietitian_id:   dietitian_id ? Number(dietitian_id) : undefined,
       date_from,
       date_to,
@@ -709,6 +717,128 @@ export const adminApproveNoShow = async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('Admin approve no-show error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// POST /api/v1/admin/appointments/book
+// Admin books a free consultation appointment on behalf of a user (e.g., 3-month plan perk).
+export const adminBookAppointment = async (req: Request, res: Response) => {
+  try {
+    const { user_id, dietitian_id, appointment_date, slot, session_type, duration, notes } = req.body;
+
+    if (!dietitian_id)      return errorResponse(res, 400, 'dietitian_id is required');
+    if (!appointment_date)  return errorResponse(res, 400, 'appointment_date is required');
+    if (!slot)              return errorResponse(res, 400, 'slot is required');
+
+    const dietitian = await findDietitianById(Number(dietitian_id));
+    if (!dietitian) return errorResponse(res, 404, 'Dietitian not found');
+
+    let name  = 'Guest';
+    let email: string | null = null;
+    let phone: string | null = null;
+
+    if (user_id) {
+      const user = await findUserById(Number(user_id));
+      if (!user) return errorResponse(res, 404, 'User not found');
+      name  = user.full_name;
+      email = user.email ?? null;
+      phone = user.phone_number
+        ? `${user.phone_code ?? '+91'}${user.phone_number}`
+        : null;
+    }
+
+    const appt = await createAppointment({
+      dietitian_id:       Number(dietitian_id),
+      user_id:            user_id ? Number(user_id) : null,
+      name,
+      email,
+      phone,
+      appointment_date,
+      slot,
+      duration:           duration ? Number(duration) : 30,
+      session_type:       session_type === 'in_person' ? 'in_person' : 'video_call',
+      fee:                0,
+      currency:           'INR',
+      appointment_source: 'admin',
+      payment_method:     null,
+      notes:              notes ?? null,
+    });
+
+    if (!appt) return errorResponse(res, 500, 'Failed to create appointment');
+
+    await confirmFreeAppointment(appt.id);
+
+    const confirmed = await findAppointmentById(appt.id);
+
+    // Fire confirmation notifications in background (same as website post-payment flow)
+    setImmediate(async () => {
+      try {
+        const baseUrl        = env.APP_BASE_URL ?? 'http://localhost:3000';
+        const isVideo        = confirmed?.session_type === 'video_call';
+        const userJoinUrl    = isVideo
+          ? `${baseUrl}/meet/${appt.id}?t=${generateMeetingToken(appt.id, userUid(appt.id))}`
+          : undefined;
+        const dietitianName  = dietitian.full_name ?? 'Your Dietitian';
+
+        if (confirmed?.email) {
+          const mail = appointmentConfirmationEmail({
+            userName:        confirmed.name,
+            dietitianName,
+            appointmentDate: confirmed.appointment_date,
+            slot:            confirmed.slot,
+            sessionType:     confirmed.session_type,
+            fee:             confirmed.fee,
+            currency:        confirmed.currency,
+            joinUrl:         userJoinUrl,
+          });
+          await sendEmail({ to: confirmed.email, subject: mail.subject, html: mail.html, text: mail.text })
+            .catch((e) => console.error('[adminBook] User confirmation email failed:', e));
+        }
+
+        if (dietitian.email) {
+          const mail = appointmentNewBookingEmail({
+            dietitianName,
+            patientName:     confirmed?.name ?? name,
+            appointmentDate: confirmed?.appointment_date ?? appointment_date,
+            slot:            confirmed?.slot ?? slot,
+            sessionType:     confirmed?.session_type ?? (session_type === 'in_person' ? 'in_person' : 'video_call'),
+            notes:           confirmed?.notes ?? null,
+          });
+          await sendEmail({ to: dietitian.email, subject: mail.subject, html: mail.html, text: mail.text })
+            .catch((e) => console.error('[adminBook] Dietitian new-booking email failed:', e));
+        }
+
+        if (confirmed?.phone) {
+          await sendAppointmentBookedWhatsApp(
+            confirmed.phone,
+            confirmed.name,
+            confirmed.appointment_date,
+            confirmed.slot,
+            userJoinUrl,
+          ).catch((e) => console.error('[adminBook] User WhatsApp failed:', e));
+        }
+
+        if (dietitian.phone_number) {
+          const dietitianPhone = dietitian.phone_code
+            ? `${dietitian.phone_code}${dietitian.phone_number}`
+            : dietitian.phone_number;
+          await sendDietitianNewBookingWhatsApp(
+            dietitianPhone,
+            dietitianName,
+            confirmed?.name ?? name,
+            confirmed?.appointment_date ?? appointment_date,
+            confirmed?.slot ?? slot,
+          ).catch((e) => console.error('[adminBook] Dietitian WhatsApp failed:', e));
+        }
+      } catch (e) {
+        console.error('[adminBook] Notification error:', e);
+      }
+    });
+
+    return successResponse(res, 201, 'Appointment booked successfully', confirmed);
+  } catch (err) {
+    console.error('Admin book appointment error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };

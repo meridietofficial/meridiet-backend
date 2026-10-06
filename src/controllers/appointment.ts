@@ -683,7 +683,7 @@ export const getDietitianSessions = async (req: Request, res: Response) => {
       ? req.query.tab as typeof allowed[number]
       : 'all';
 
-    const allowedSources = ['platform', 'dietitian'] as const;
+    const allowedSources = ['platform', 'dietitian', 'admin'] as const;
     const source = allowedSources.includes(req.query.source as typeof allowedSources[number])
       ? req.query.source as typeof allowedSources[number]
       : undefined;
