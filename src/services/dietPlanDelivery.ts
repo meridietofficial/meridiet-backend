@@ -39,7 +39,7 @@ const calcVitals = (form: DietForm, config: NutritionConfig) => {
   let weightKg = parseFloat(String(form.weight ?? 0));
   if (form.weight_unit === 'lbs') weightKg *= 0.453592;
 
-  let age = form.age ?? null;
+  let age = (form.age != null && form.age > 0) ? form.age : null;
   if (age === null && form.dob) {
     const birth = new Date(form.dob);
     if (!Number.isNaN(birth.getTime())) {
@@ -524,6 +524,33 @@ CRITICAL: Before writing total_protein_g for any day, SUM the protein_g of every
 `;
 };
 
+// Injects a protein distribution guide for eggetarian + muscle gain.
+// Eggs are a complete protein and the primary advantage over vegetarian — this block
+// ensures the AI actually uses them at the right quantities and meal slots.
+const eggetarianProteinBoostBlock = (form: DietForm, nt: ReturnType<typeof calcNutritionTargets>): string => {
+  const goals = ((form.goals ?? []) as string[]).map((g) => g.toLowerCase());
+  const isMuscle = goals.some((g) => g.includes('muscle') || g.includes('strength') || g.includes('bulk'));
+  if (form.diet_type !== 'eggetarian' || !isMuscle) return '';
+
+  return `
+EGGETARIAN HIGH-PROTEIN REQUIREMENT (MANDATORY — to hit ${nt.proteinTarget}g protein/day):
+Each day MUST include AT LEAST these protein anchors:
+1. Eggs: minimum 3 whole eggs across the day (~18–21g protein) — use at breakfast (omelette/egg bhurji/boiled eggs) OR post-workout snack
+2. Paneer: minimum 100g total across meals (~18g protein) — at lunch or dinner
+3. Dal / Legumes: minimum 1.5 cups cooked (~15–18g protein)
+4. Curd or Greek Yogurt: 200g total (~7–11g protein) — breakfast side or snack
+5. Whole grains (roti, oats): at least 3 servings (~9–12g protein)
+
+PROTEIN DISTRIBUTION — structure every day like this to reliably hit ${nt.proteinTarget}g:
+- Breakfast (target 20–25g): 2–3 egg omelette/bhurji/boiled + curd or a small paneer side
+- Lunch (target 25–30g): roti + paneer sabzi OR egg curry + dal
+- Snack (target 10–15g): boiled eggs (2) OR roasted chana OR Greek yogurt (200g)
+- Dinner (target 20–25g): roti + dal + paneer or egg-based dish
+
+CRITICAL: Before writing total_protein_g for any day, SUM the protein_g of every meal item you listed. If the sum is below ${nt.proteinMin}g, add more eggs or paneer — do NOT echo ${nt.proteinTarget}g as the total when the meals do not actually contain it.
+`;
+};
+
 // Decides whether to suggest whey or plant-based protein supplementation.
 // Logic: only fire when the protein target is genuinely hard to hit from whole food alone.
 // Adjusts recommendation based on diet type, digestive health, and contraindications.
@@ -553,12 +580,12 @@ const wheyProteinBlock = (form: DietForm, nt: ReturnType<typeof calcNutritionTar
     if (hasDairyAllergy) {
       return `
 PROTEIN SUPPLEMENTATION — PLANT PROTEIN (client is already using it):
-The client is already using plant-based protein powder. Include 1 scoop (25–30g) in the plan — preferably post-workout or as an afternoon snack. Count its protein (~20–25g) toward that day's total_protein_g.
+The client is already using plant-based protein powder. Include 1 scoop (25–30g) on up to 4–5 days of the week — preferably post-workout or as an afternoon snack. Count its protein (~20–25g) toward that day's total_protein_g. Do NOT add it every single day — on days where whole food already meets the protein target, skip the supplement.
 `;
     }
     return `
 PROTEIN SUPPLEMENTATION — WHEY PROTEIN (client is already using it):
-The client is already using whey protein. Include 1 scoop (25–30g) in the plan — preferably post-workout or as an afternoon snack. Count its protein (~24–27g) toward that day's total_protein_g. Mix with water or milk.
+The client is already using whey protein. Include 1 scoop (25–30g) on up to 4–5 days of the week — preferably post-workout or as an afternoon snack. Count its protein (~24–27g) toward that day's total_protein_g. Mix with water or milk. Do NOT add it every single day — on days where whole food already meets the protein target, skip the supplement.
 `;
   }
 
@@ -1148,7 +1175,7 @@ const cuisineEnforcementBlock = (form: DietForm): string => {
 
   const anchors = cuisines
     .map((c) => {
-      const key = c.toLowerCase().trim();
+      const key = c.toLowerCase().trim().replace(/_/g, ' ');
       const anchor = Object.entries(CUISINE_ANCHORS).find(([k]) => key.includes(k))?.[1];
       return anchor ? `  • ${c}: typical foods include — ${anchor}` : null;
     })
@@ -1206,14 +1233,13 @@ const clientBlock = (form: DietForm, vitals: ReturnType<typeof calcVitals>): str
 - Workout Type: ${form.workout_type ?? 'none'}
 - Diet Type: ${dietTypeLabel(form.diet_type ?? null)}
 - Cuisine Preference: ${((form.cuisine_preference as string[])?.filter(Boolean).length ? (form.cuisine_preference as string[]).join(', ') : 'No specific preference — use a balanced mix of regional Indian cuisines')}
-- Food Allergies: ${(form.food_allergies as string[])?.join(', ') ?? 'none'}
+- Food Allergies: ${((form.food_allergies as string[])?.filter((a) => a && a.toLowerCase() !== 'none') ?? []).join(', ') || 'none'}
 - Foods Disliked: ${form.foods_dislike ?? 'none'}
 - Favorite Foods: ${form.favorite_foods ?? 'N/A'}
 - Medical Conditions: ${(form.medical_conditions as string[])?.join(', ') ?? 'none'}${form.other_condition ? ` | Other: ${form.other_condition}` : ''}
 - On Medication: ${form.on_medication ?? 'no'} ${form.medications ? `(${form.medications})` : ''}
 - Digestive Health: ${form.digestive_health ?? 'good'}
 - Smoking/Alcohol: ${form.smoke_alcohol ?? 'neither'}
-- Date of Birth: ${form.dob ?? 'N/A'}
 - City/State: ${form.city ?? ''}, ${form.state ?? ''}
 - Health Notes: ${form.health_notes ?? 'none'}
 - Final Notes / Personal Goals: ${form.final_notes ?? 'none'}
@@ -1227,7 +1253,7 @@ const finalCheckBlock = (form: DietForm, nt: ReturnType<typeof calcNutritionTarg
 
   items.push(`Diet type: ${dietTypeLabel(form.diet_type ?? null)} — apply to EVERY single meal item without exception`);
 
-  const allergies = ((form.food_allergies ?? []) as string[]).filter(Boolean);
+  const allergies = ((form.food_allergies ?? []) as string[]).filter((a) => a && a.toLowerCase() !== 'none');
   if (allergies.length > 0) {
     items.push(`Food allergies: ${allergies.join(', ')} — these must NEVER appear in any meal, snack, or recipe`);
   }
@@ -1237,13 +1263,13 @@ const finalCheckBlock = (form: DietForm, nt: ReturnType<typeof calcNutritionTarg
   }
 
   if (form.favorite_foods) {
-    items.push(`Favourite foods: ${form.favorite_foods} — include these where appropriate to improve adherence`);
+    items.push(`Favourite foods: ${form.favorite_foods} — include these where appropriate to improve adherence, BUT only if they are compatible with the diet type above. Do NOT include a favourite food that violates the diet type (e.g. chicken biryani for a vegetarian client).`);
   }
 
   const conditions = [
     ...((form.medical_conditions ?? []) as string[]),
     form.other_condition ?? '',
-  ].filter(Boolean);
+  ].filter((c) => c && c.toLowerCase() !== 'none');
   if (conditions.length > 0) {
     items.push(`Medical conditions: ${conditions.join(', ')} — all dietary constraints for these conditions listed above MUST be followed in every meal`);
   }
@@ -1284,6 +1310,10 @@ const finalCheckBlock = (form: DietForm, nt: ReturnType<typeof calcNutritionTarg
     }
   }
 
+  if (form.diet_type === 'eggetarian' && isMuscleGoal) {
+    items.push(`Eggetarian protein check — before finalising each day, confirm: (a) eggs appear in at least one meal at ≥3 whole eggs, (b) paneer ≥100g OR dal ≥1.5 cups at lunch or dinner, (c) the SUM of all protein_g values across breakfast+lunch+snack+dinner is ≥${nt.proteinMin}g. If not, add more eggs or paneer before writing the day.`);
+  }
+
   return `
 === MANDATORY FINAL CHECKLIST — VERIFY EVERY POINT BEFORE WRITING ANY MEAL ===
 ${items.map((item, i) => `${i + 1}. ${item}`).join('\n')}
@@ -1310,7 +1340,7 @@ CALORIE & PROTEIN TARGETS (calculated from client's TDEE of ${vitals.tdee} kcal/
 - Daily Carbs Target: ~${nt.carbsTarget} g/day
 - Daily Fat Target: ~${nt.fatTarget} g/day
 - Daily Fiber Target: ~${nt.fiberTarget} g/day (from dal, sabzi, whole grains, fruits — essential for digestion and nutrient absorption)
-${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${digestiveHealthBlock(form)}${smokeAlcoholBlock(form)}${genderNutritionBlock(form, nt)}${medicationTimingBlock(form)}${supplementGuidanceBlock(form)}${cuisineEnforcementBlock(form)}${vegetarianProteinBoostBlock(form, nt)}${wheyProteinBlock(form, nt)}
+${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${digestiveHealthBlock(form)}${smokeAlcoholBlock(form)}${genderNutritionBlock(form, nt)}${medicationTimingBlock(form)}${supplementGuidanceBlock(form)}${cuisineEnforcementBlock(form)}${vegetarianProteinBoostBlock(form, nt)}${eggetarianProteinBoostBlock(form, nt)}${wheyProteinBlock(form, nt)}
 INSTRUCTIONS:
 1. Recipes must respect the diet type and strictly avoid disliked foods and allergens.
 2. Use recipes from the client's preferred cuisine(s) as specified above.
@@ -1319,7 +1349,7 @@ INSTRUCTIONS:
 5. QUANTITY FORMAT (MANDATORY for all recipe ingredients): All ingredient quantities must be in grams (g) or millilitres (ml). Examples: "150g paneer", "200ml curd", "2 medium tomatoes (100g)", "1 tsp cumin seeds (3g)". NEVER use vague amounts like "some", "a handful", or "as needed".
 6. Recipe calorie counts must be consistent with the daily calorie range above.
 7. general_tips MUST include any supplement guidance notes provided above — frame them as "Discuss with your doctor".
-8. Keep each general_tips item to 1 short sentence (max 15 words). No long paragraphs.
+8. Generate EXACTLY 6 general_tips — no more, no fewer. Keep each to 1 short sentence (max 15 words). No long paragraphs.
 9. Return VALID JSON only — no markdown, no comments, no code blocks.
 10. All numeric fields must be numbers, not strings.
 ${finalCheckBlock(form, nt)}
@@ -1327,7 +1357,7 @@ Return ONLY this JSON structure:
 {
   "summary": { "client_name": "...", "calorie_range": "${nt.calorieRange}", "protein_target_g": ${nt.proteinTarget}, "carbs_target_g": ${nt.carbsTarget}, "fat_target_g": ${nt.fatTarget}, "primary_goal": "...", "plan_duration": "${duration}", "diet_type": "${form.diet_type ?? ''}" },
   "hydration_guide": "...",
-  "general_tips": ["...", "...", "...", "...", "..."],
+  "general_tips": ["...", "...", "...", "...", "...", "..."],
   "featured_recipes": [
     { "name":"...", "cook_time":"20 mins", "servings":1, "calories":0, "ingredients":["...","...","...","...","...","..."], "steps":["...","...","...","..."], "macros":{"carbs_g":0,"protein_g":0,"fat_g":0,"fiber_g":0} },
     { "name":"...", "cook_time":"20 mins", "servings":1, "calories":0, "ingredients":["...","...","...","...","...","..."], "steps":["...","...","...","..."], "macros":{"carbs_g":0,"protein_g":0,"fat_g":0,"fiber_g":0} },
@@ -1345,7 +1375,6 @@ const buildWeek1DaysPrompt = (
   nt: ReturnType<typeof calcNutritionTargets>,
   usedSwaps: string[] = [],
 ): string => {
-  const mp = nt.proteinTarget;
   const bt = form.breakfast_time    ?? '8:00 AM';
   const lt = form.lunch_time        ?? '1:00 PM';
   const st = form.evening_snack_time ?? '5:00 PM';
@@ -1399,7 +1428,7 @@ ${snackRulesBlock(form)}
 - Include water_liters (2.5–3.5) for each day.
 - Include 3 smart_swaps and 3 weekly_notes.
 - TITLE FORMAT: Must be "Personalized Diet Plan for [Primary Goal]" — e.g. "Personalized Diet Plan for Fat Loss". Do NOT mention cuisine or diet type in the title.
-- DESCRIPTION FORMAT: Must follow this exact pattern — "A ${totalWeeks}-week ${form.diet_type ?? 'diet'} diet plan focusing on [goal], [health aspect], and [nutrient aspect]." Keep it to 1 sentence.
+- DESCRIPTION FORMAT: Must follow this exact pattern — "A ${totalWeeks}-week ${form.diet_type?.replace(/_/g, ' ') ?? 'diet'} diet plan focusing on [goal], [health aspect], and [nutrient aspect]." Keep it to 1 sentence.
 - FOCUS FORMAT: Each focus item must be a short 2–3 word keyword only, all lowercase — e.g. "fat loss", "muscle gain", "gut health", "protein intake". No full sentences.
 - WHAT TO EXPECT FORMAT: Must start with "Expect" and be 1 short sentence — e.g. "Expect gradual fat loss, improved energy, and better digestion."
 - Keep each "weekly_notes" item to 1 short sentence (max 15 words).
@@ -1415,13 +1444,13 @@ Return ONLY this JSON structure (days array must have exactly 7 items):
     "focus": ["...", "...", "..."],
     "what_to_expect": "...",
     "days": [
-      { "day": 1, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 5}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
-      { "day": 2, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 2}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
-      { "day": 3, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 4}, "total_fiber_g": ${nt.fiberTarget - 2}, "water_liters": 2.5 },
-      { "day": 4, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 3}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
-      { "day": 5, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp}, "total_fiber_g": ${nt.fiberTarget + 2}, "water_liters": 3.5 },
-      { "day": 6, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 5}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
-      { "day": 7, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 1}, "total_fiber_g": ${nt.fiberTarget + 1}, "water_liters": 3 }
+      { "day": 1, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": 0, "total_fiber_g": 0, "water_liters": 3 },
+      { "day": 2, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": 0, "total_fiber_g": 0, "water_liters": 3 },
+      { "day": 3, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": 0, "total_fiber_g": 0, "water_liters": 2.5 },
+      { "day": 4, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": 0, "total_fiber_g": 0, "water_liters": 3 },
+      { "day": 5, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": 0, "total_fiber_g": 0, "water_liters": 3.5 },
+      { "day": 6, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": 0, "total_fiber_g": 0, "water_liters": 3 },
+      { "day": 7, "breakfast": [...], "lunch": [...], "snack": [...], "dinner": [...], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": 0, "total_fiber_g": 0, "water_liters": 3 }
     ],
     "weekly_notes": ["...", "...", "..."],
     "smart_swaps": [{"instead_of":"...","choose":"..."},{"instead_of":"...","choose":"..."},{"instead_of":"...","choose":"..."}]
@@ -1440,7 +1469,6 @@ const buildWeekNPrompt = (
   nt: ReturnType<typeof calcNutritionTargets>,
   usedSwaps: string[] = [],
 ): string => {
-  const mp = nt.proteinTarget;
   const bt = form.breakfast_time     ?? '8:00 AM';
   const lt = form.lunch_time         ?? '1:00 PM';
   const st = form.evening_snack_time ?? '5:00 PM';
@@ -1456,7 +1484,7 @@ CALORIE & MACRO TARGETS (calculated from client's TDEE of ${vitals.tdee} kcal/da
 - Daily Fiber Target: ~${nt.fiberTarget} g/day (from dal, sabzi, whole grains, fruits)
 ${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${digestiveHealthBlock(form)}${smokeAlcoholBlock(form)}${genderNutritionBlock(form, nt)}${medicationTimingBlock(form)}${cuisineEnforcementBlock(form)}${vegetarianProteinBoostBlock(form, nt)}${wheyProteinBlock(form, nt)}
 MEALS ALREADY USED IN PREVIOUS WEEKS — do NOT repeat any of these:
-${usedMeals.slice(0, 400).join(', ')}
+${usedMeals.slice(0, 600).join(', ')}
 
 CRITICAL — how to avoid repeats: use a COMPLETELY DIFFERENT REAL DISH. Do NOT add an ingredient prefix to disguise a used dish (e.g. do NOT rename "Rajma Dal" as "Ginger Rajma Dal" or "Moong Dal" as "Turmeric Moong Dal" — these are still the same dish and will be treated as repeats). If a dish is in the used list, pick an entirely different dish.
 
@@ -1497,13 +1525,13 @@ INSTRUCTIONS:
 15. Generate exactly 7 days for Week ${weekNumber}.
 16. Never repeat the same meals within this week or from the already used meals list above.
 17. Include smart swaps and weekly tips for Week ${weekNumber}.
-16. TITLE FORMAT: Must be "Personalized Diet Plan for [Primary Goal]" — e.g. "Personalized Diet Plan for Fat Loss". Do NOT mention cuisine or diet type in the title.
-17. DESCRIPTION FORMAT: Must follow this exact pattern — "A ${totalWeeks}-week ${form.diet_type ?? 'diet'} diet plan focusing on [goal], [health aspect], and [nutrient aspect]." Keep it to 1 sentence.
-18. FOCUS FORMAT: Each focus item must be a short 2–3 word keyword only, all lowercase — e.g. "fat loss", "muscle gain", "gut health", "protein intake". No full sentences.
-19. WHAT TO EXPECT FORMAT: Must start with "Expect" and be 1 short sentence — e.g. "Expect gradual fat loss, improved energy, and better digestion."
-20. Keep each "weekly_notes" item to 1 short sentence (max 15 words).
-20. Return VALID JSON only — no markdown, no comments, no code blocks.
-21. All numeric fields must be numbers, not strings.
+18. TITLE FORMAT: Must be "Personalized Diet Plan for [Primary Goal]" — e.g. "Personalized Diet Plan for Fat Loss". Do NOT mention cuisine or diet type in the title.
+19. DESCRIPTION FORMAT: Must follow this exact pattern — "A ${totalWeeks}-week ${form.diet_type?.replace(/_/g, ' ') ?? 'diet'} diet plan focusing on [goal], [health aspect], and [nutrient aspect]." Keep it to 1 sentence.
+20. FOCUS FORMAT: Each focus item must be a short 2–3 word keyword only, all lowercase — e.g. "fat loss", "muscle gain", "gut health", "protein intake". No full sentences.
+21. WHAT TO EXPECT FORMAT: Must start with "Expect" and be 1 short sentence — e.g. "Expect gradual fat loss, improved energy, and better digestion."
+22. Keep each "weekly_notes" item to 1 short sentence (max 15 words).
+23. Return VALID JSON only — no markdown, no comments, no code blocks.
+24. All numeric fields must be numbers, not strings.
 ${smartSwapConstraintsBlock(form, usedSwaps)}
 ${finalCheckBlock(form, nt)}
 Return ONLY this JSON structure (days array MUST have exactly 7 items):
@@ -1515,13 +1543,13 @@ Return ONLY this JSON structure (days array MUST have exactly 7 items):
     "focus": ["...", "...", "..."],
     "what_to_expect": "...",
     "days": [
-      { "day": 1, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 5}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
-      { "day": 2, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 2}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
-      { "day": 3, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 4}, "total_fiber_g": ${nt.fiberTarget - 2}, "water_liters": 2.5 },
-      { "day": 4, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 3}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
-      { "day": 5, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp}, "total_fiber_g": ${nt.fiberTarget + 2}, "water_liters": 3.5 },
-      { "day": 6, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 5}, "total_fiber_g": ${nt.fiberTarget}, "water_liters": 3 },
-      { "day": 7, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": ${mp - 1}, "total_fiber_g": ${nt.fiberTarget + 1}, "water_liters": 3 }
+      { "day": 1, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": 0, "total_fiber_g": 0, "water_liters": 3 },
+      { "day": 2, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": 0, "total_fiber_g": 0, "water_liters": 3 },
+      { "day": 3, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": 0, "total_fiber_g": 0, "water_liters": 2.5 },
+      { "day": 4, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": 0, "total_fiber_g": 0, "water_liters": 3 },
+      { "day": 5, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": 0, "total_fiber_g": 0, "water_liters": 3.5 },
+      { "day": 6, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": 0, "total_fiber_g": 0, "water_liters": 3 },
+      { "day": 7, "breakfast": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "lunch": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "snack": [{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "dinner": [{"food":"...","quantity":"...","kcal":0,"protein_g":0},{"food":"...","quantity":"...","kcal":0,"protein_g":0}], "meal_timing": {"breakfast":"${bt}","lunch":"${lt}","snack":"${st}","dinner":"${dt}"}, "total_kcal": 0, "total_protein_g": 0, "total_fiber_g": 0, "water_liters": 3 }
     ],
     "weekly_notes": ["...", "...", "..."],
     "smart_swaps": [{"instead_of":"...","choose":"..."},{"instead_of":"...","choose":"..."},{"instead_of":"...","choose":"..."}]
@@ -1788,8 +1816,6 @@ export const generateAndDeliverDietPlan = async (
   dietitianId?: number | null,
   appointmentId?: number | null,
   existingPlanId?: number | null,
-  calorieOverrideMin?: number | null,
-  calorieOverrideMax?: number | null,
 ): Promise<void> => {
   const [form, config] = await Promise.all([
     findDietFormById(formId),
@@ -1821,22 +1847,7 @@ export const generateAndDeliverDietPlan = async (
   const planType = form.plan_type ?? 1;
   const totalWeeks = weeksOverride ?? PLAN_WEEKS[planType] ?? 1;
   const duration = weeksOverride === 4 ? '1 Month (4 Weeks)' : (PLAN_LABELS[planType] ?? '1 Week');
-  const baseNt = calcNutritionTargets(form, vitals, config);
-  const nt = (calorieOverrideMin != null && calorieOverrideMax != null) ? (() => {
-    const calorieTarget = Math.round((calorieOverrideMin + calorieOverrideMax) / 2);
-    const baseFatPct    = baseNt.fatTarget * 9 / baseNt.calorieTarget;
-    const fatTarget     = Math.round((calorieTarget * baseFatPct) / 9);
-    const carbsTarget   = Math.max(Math.round((calorieTarget - baseNt.proteinTarget * 4 - fatTarget * 9) / 4), 130);
-    return {
-      ...baseNt,
-      calorieMin:    calorieOverrideMin,
-      calorieMax:    calorieOverrideMax,
-      calorieTarget,
-      calorieRange:  `${calorieOverrideMin}–${calorieOverrideMax} kcal/day`,
-      fatTarget,
-      carbsTarget,
-    };
-  })() : baseNt;
+  const nt = calcNutritionTargets(form, vitals, config);
 
   try {
     // Week 1 — split into two calls to stay within OpenAI's 16 384-token output limit
