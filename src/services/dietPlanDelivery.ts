@@ -375,10 +375,12 @@ const foodNameRulesBlock = (form: DietForm): string => {
     : isEgg
     ? '"Egg Bhurji", "Paneer Sabzi", "Moong Dal", "Egg Paratha"'
     : '"Methi Thepla", "Moong Dal", "Palak Paneer", "Besan Chilla"';
-  return `FOOD NAME RULES (MANDATORY):
-- The "food" field must be a short, clean real dish name — like ${examples}. Max 4 words.
-- Do NOT use vague names that don't describe a real prepared dish.
-- Do NOT add cooking methods or adjectives in the name.`;
+  return `FOOD NAME RULES (MANDATORY — violating these is a critical error):
+- The "food" field must be a REAL, RECOGNISABLE Indian dish name that any Indian would immediately understand — like ${examples}. Max 4 words.
+- Use only standard dish names: "Rajma", "Moong Dal", "Palak Paneer", "Curd", "Chaas", "Upma", "Egg Bhurji", "Omelette", "Poha". These are real dishes.
+- Do NOT prefix ingredient names onto a dish to create fake variety. NEVER write "Ginger Rajma Dal", "Amla Curd", "Turmeric Sabzi", "Garlic Carrot Beet", "Ginger Seven Dal", "Amla Pumpkin Seed Curd", "Wheat Jeera Phulka", "Barley Dal Dosa". Write "Rajma Dal", "Curd", "Lauki Sabzi", "Phulka", "Dosa".
+- Do NOT use ingredient lists as dish names (e.g. "Garlic Carrot Beet" or "Turmeric Beet Greens" are NOT dish names — they are just ingredients).
+- To create variety across weeks, use a COMPLETELY DIFFERENT REAL DISH — never the same dish with an added spice/ingredient prefix.`;
 };
 
 // Returns variety rules tuned to the client's diet type.
@@ -1372,21 +1374,25 @@ ${varietyRulesBlock(form)}
 
 ${snackRulesBlock(form)}
 
-- QUANTITY FORMAT (MANDATORY): The "quantity" field must contain ONLY the serving size — e.g. "2 eggs (100g)", "1 cup (180g)", "30g", "200ml", "2 medium rotis (120g)". Do NOT include cooking methods, preparation steps, condiments, oils, spices, or any sub-ingredients in the quantity field. One food = one measurement only.
+- QUANTITY FORMAT (MANDATORY — one rule per food type, no exceptions):
+  • Liquids (chaas, milk, water, juice): ml only — e.g. "200ml", "300ml".
+  • Countable items (rotis, eggs, pieces, parathas): count + grams — e.g. "3 rotis (90g)", "2 eggs (100g)".
+  • Solid foods (dal, sabzi, curd, paneer, chaat, upma, porridge, salad): grams ONLY — e.g. "180g", "250g". Do NOT add cup/bowl measures alongside grams.
+  • NEVER write both a volume unit AND grams for the same item — do NOT write "1.5 cups (250g)", just write "250g".
 - Use the client's preferred meal times for meal_timing in every day — DO NOT use generic times.
 - For EVERY meal item, set "kcal" to the estimated calorie count using standard Indian food nutrition values.
 - Set "total_kcal" as the EXACT SUM of all "kcal" values. The example JSON shows 0 as placeholder — replace with the real sum.
 - Aim for total_kcal within ${nt.calorieMin}–${nt.calorieMax} kcal/day.
 - MEAL ITEM COUNT LIMITS (STRICT — do NOT exceed):
   • Breakfast: 2–3 items maximum
-  • Lunch: 3–4 items maximum
+  • Lunch: 2–3 items maximum
   • Snack: 1–2 items maximum
-  • Dinner: 3–4 items maximum
+  • Dinner: 2–3 items maximum
 - CALORIE DISTRIBUTION PER MEAL (targets that sum to ~100% of daily goal):
   • Breakfast: ~${Math.round(nt.calorieTarget * 0.25)} kcal (25%) — base item + protein source + healthy fat
-  • Lunch: ~${Math.round(nt.calorieTarget * 0.32)} kcal (32%) — protein dish + dal + roti/rice
+  • Lunch: ~${Math.round(nt.calorieTarget * 0.32)} kcal (32%) — roti/rice + protein dish + dal (3 items max)
   • Snack: ~${Math.round(nt.calorieTarget * 0.11)} kcal (11%) — see snack rules above
-  • Dinner: ~${Math.round(nt.calorieTarget * 0.32)} kcal (32%) — protein dish + dal + roti/rice + varied side (raita/sabzi/salad/soup — rotate each night)
+  • Dinner: ~${Math.round(nt.calorieTarget * 0.32)} kcal (32%) — roti/rice + sabzi/protein + dal or raita (3 items max; rotate the third item each night)
   If a meal falls slightly below its target, INCREASE the quantity of an existing item (e.g. add 50g more roti or 30ml more dal). Do NOT add an extra dish just to hit the calorie target.
   If the sum of all meal kcals would exceed ${nt.calorieMax}, REDUCE portion sizes of existing items — do NOT drop an item entirely unless it genuinely does not fit.
 - Set "total_protein_g" as the actual SUM of all protein_g values. Keep between ${nt.proteinMin}–${nt.proteinMax} g/day.
@@ -1452,6 +1458,8 @@ ${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${dig
 MEALS ALREADY USED IN PREVIOUS WEEKS — do NOT repeat any of these:
 ${usedMeals.slice(0, 400).join(', ')}
 
+CRITICAL — how to avoid repeats: use a COMPLETELY DIFFERENT REAL DISH. Do NOT add an ingredient prefix to disguise a used dish (e.g. do NOT rename "Rajma Dal" as "Ginger Rajma Dal" or "Moong Dal" as "Turmeric Moong Dal" — these are still the same dish and will be treated as repeats). If a dish is in the used list, pick an entirely different dish.
+
 INSTRUCTIONS:
 1. All meals must respect the diet type and strictly avoid disliked foods and allergens.
 2. Use meals from the client's preferred cuisine(s) as specified above.
@@ -1463,21 +1471,25 @@ INSTRUCTIONS:
 
 7. ${snackRulesBlock(form)}
 
-8. QUANTITY FORMAT (MANDATORY): Always specify in grams (g) or ml with gram/ml equivalent in brackets for common units. Never vague.
+8. QUANTITY FORMAT (MANDATORY — one rule per food type, no exceptions):
+  • Liquids (chaas, milk, water, juice): ml only — e.g. "200ml", "300ml".
+  • Countable items (rotis, eggs, pieces, parathas): count + grams — e.g. "3 rotis (90g)", "2 eggs (100g)".
+  • Solid foods (dal, sabzi, curd, paneer, chaat, upma, porridge, salad): grams ONLY — e.g. "180g", "250g".
+  • NEVER write both a volume unit AND grams (e.g. do NOT write "1.5 cups (250g)" — just "250g").
 9. Use the client's preferred meal times — DO NOT use generic times.
 10. For EVERY meal item, set "kcal" to the estimated calorie count using standard Indian food values.
 11. Set "total_kcal" as the EXACT SUM of all "kcal" values. Replace the 0 placeholder with the real sum.
 12. Aim for total_kcal within ${nt.calorieMin}–${nt.calorieMax} kcal/day.
 12a. MEAL ITEM COUNT LIMITS (STRICT — do NOT exceed):
   • Breakfast: 2–3 items maximum
-  • Lunch: 3–4 items maximum
+  • Lunch: 2–3 items maximum
   • Snack: 1–2 items maximum
-  • Dinner: 3–4 items maximum
+  • Dinner: 2–3 items maximum
 12b. CALORIE DISTRIBUTION (targets that sum to ~100% of daily goal):
   • Breakfast: ~${Math.round(nt.calorieTarget * 0.25)} kcal (25%) — base + protein source + healthy fat
-  • Lunch: ~${Math.round(nt.calorieTarget * 0.32)} kcal (32%) — protein dish + dal + roti/rice
+  • Lunch: ~${Math.round(nt.calorieTarget * 0.32)} kcal (32%) — roti/rice + protein dish + dal (3 items max)
   • Snack: ~${Math.round(nt.calorieTarget * 0.11)} kcal (11%) — see snack rules
-  • Dinner: ~${Math.round(nt.calorieTarget * 0.32)} kcal (32%) — protein dish + dal + roti/rice + varied side
+  • Dinner: ~${Math.round(nt.calorieTarget * 0.32)} kcal (32%) — roti/rice + sabzi/protein + dal or raita (3 items max; rotate the third item each night)
   If a meal is slightly below target, INCREASE the quantity of an existing item. Do NOT add an extra dish to hit the calorie target.
   If the sum would exceed ${nt.calorieMax}, REDUCE portion sizes of existing items.
 13. Set "total_protein_g" as the actual SUM of protein_g values. Keep between ${nt.proteinMin}–${nt.proteinMax} g/day.
@@ -1776,6 +1788,8 @@ export const generateAndDeliverDietPlan = async (
   dietitianId?: number | null,
   appointmentId?: number | null,
   existingPlanId?: number | null,
+  calorieOverrideMin?: number | null,
+  calorieOverrideMax?: number | null,
 ): Promise<void> => {
   const [form, config] = await Promise.all([
     findDietFormById(formId),
@@ -1807,7 +1821,22 @@ export const generateAndDeliverDietPlan = async (
   const planType = form.plan_type ?? 1;
   const totalWeeks = weeksOverride ?? PLAN_WEEKS[planType] ?? 1;
   const duration = weeksOverride === 4 ? '1 Month (4 Weeks)' : (PLAN_LABELS[planType] ?? '1 Week');
-  const nt = calcNutritionTargets(form, vitals, config);
+  const baseNt = calcNutritionTargets(form, vitals, config);
+  const nt = (calorieOverrideMin != null && calorieOverrideMax != null) ? (() => {
+    const calorieTarget = Math.round((calorieOverrideMin + calorieOverrideMax) / 2);
+    const baseFatPct    = baseNt.fatTarget * 9 / baseNt.calorieTarget;
+    const fatTarget     = Math.round((calorieTarget * baseFatPct) / 9);
+    const carbsTarget   = Math.max(Math.round((calorieTarget - baseNt.proteinTarget * 4 - fatTarget * 9) / 4), 130);
+    return {
+      ...baseNt,
+      calorieMin:    calorieOverrideMin,
+      calorieMax:    calorieOverrideMax,
+      calorieTarget,
+      calorieRange:  `${calorieOverrideMin}–${calorieOverrideMax} kcal/day`,
+      fatTarget,
+      carbsTarget,
+    };
+  })() : baseNt;
 
   try {
     // Week 1 — split into two calls to stay within OpenAI's 16 384-token output limit

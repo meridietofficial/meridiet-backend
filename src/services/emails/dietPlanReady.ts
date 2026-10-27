@@ -7,7 +7,7 @@ export const dietPlanReadyEmail = (
   cashback: number | null,
 ): { subject: string; html: string; text: string } => {
   const firstName = fullName.trim().split(/\s+/)[0] || 'there';
-  const subject = `🥗 Your Personalized Diet Plan is Ready — Download Now!`;
+  const subject = `Your personalized diet plan from ${BRAND.name} is ready`;
 
   const cashbackBanner = cashback && cashback > 0 ? `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px 0;">
@@ -18,10 +18,10 @@ export const dietPlanReadyEmail = (
               <td width="40" valign="middle" style="font-size:24px;">🎁</td>
               <td valign="middle">
                 <div style="font-size:14px;font-weight:700;color:${c.orange};">
-                  ₹${cashback.toFixed(2)} Cashback Credited to Your Wallet!
+                  A reward has been added to your ${BRAND.name} account!
                 </div>
                 <div style="font-size:12px;color:${c.textMid};margin-top:2px;">
-                  As a reward for choosing ${BRAND.name}, we've added ₹${cashback.toFixed(2)} to your wallet. Use it on your next plan!
+                  As a thank-you for choosing ${BRAND.name}, we've added a reward to your account. You can use it on your next plan.
                 </div>
               </td>
             </tr>
@@ -140,7 +140,7 @@ export const dietPlanReadyEmail = (
     `DOWNLOAD YOUR DIET PLAN`,
     pdfUrl,
     ``,
-    cashback && cashback > 0 ? `CASHBACK: ₹${cashback.toFixed(2)} has been credited to your wallet!\n` : '',
+    cashback && cashback > 0 ? `REWARD: A reward has been added to your ${BRAND.name} account.\n` : '',
     `WHAT'S INSIDE:`,
     `- Personalized daily meals (Breakfast, Lunch, Snack, Dinner)`,
     `- Week-by-week structured meal schedule`,

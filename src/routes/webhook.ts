@@ -7,6 +7,7 @@ import type { WithdrawalStatus } from '../models/DietitianWithdrawal';
 import { findByOrderId, markRegistrationPaid } from '../models/DietitianRegistrationPayment';
 import { activateDietitianSubscription } from '../models/Dietitian';
 import { creditRegistrationBonus } from '../models/DietitianWallet';
+import { findAppointmentByOrderId, updateAppointmentPayment } from '../models/Appointment';
 import { env } from '../config/env';
 
 export const webhookRouter = Router();
@@ -90,10 +91,22 @@ webhookRouter.post('/razorpay', async (req: Request, res: Response) => {
 
     if (!orderId || !paymentId) return res.json({ status: 'ignored' });
 
+    // Check if this is an appointment payment first
+    const appointment = await findAppointmentByOrderId(orderId);
+    if (appointment) {
+      if (appointment.payment_status === 'paid') {
+        console.log(`Razorpay webhook: appointment order ${orderId} already paid — skipping`);
+        return res.json({ status: 'already_paid' });
+      }
+      await updateAppointmentPayment(orderId, paymentId, 'paid', 'confirmed');
+      console.log(`Razorpay webhook: payment.captured → appointment ${appointment.id} marked paid`);
+      return res.json({ status: 'ok' });
+    }
+
     // Find the registration payment record
     const record = await findByOrderId(orderId);
     if (!record) {
-      console.log(`Razorpay webhook: no registration record for order ${orderId} — ignoring`);
+      console.log(`Razorpay webhook: no record for order ${orderId} — ignoring`);
       return res.json({ status: 'ignored' });
     }
 

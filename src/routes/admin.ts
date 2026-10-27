@@ -18,6 +18,7 @@ import {
   adminApproveNoShow,
   adminMarkComplete,
   adminBookAppointment,
+  adminForceMarkPaid,
 } from '../controllers/adminAppointment';
 import {
   getBmiCategories, createBmiCategory, updateBmiCategory, deleteBmiCategory,
@@ -144,6 +145,7 @@ adminRouter.get ('/appointments/pending-no-show-approval', authenticate, authori
 adminRouter.get ('/appointments',                          authenticate, authorize('admin'), adminGetAppointments);
 adminRouter.get ('/appointments/:id',                      authenticate, authorize('admin'), adminGetAppointmentById);
 adminRouter.post('/appointments/:id/approve-payment',      authenticate, authorize('admin'), adminApprovePayment);
+adminRouter.post('/appointments/:id/force-mark-paid',      authenticate, authorize('admin'), adminForceMarkPaid);
 adminRouter.post('/appointments/:id/mark-complete',        authenticate, authorize('admin'), adminMarkComplete);
 adminRouter.post('/appointments/:id/mark-no-show',         authenticate, authorize('admin'), adminMarkNoShow);
 adminRouter.post('/appointments/:id/approve-no-show',      authenticate, authorize('admin'), adminApproveNoShow);

@@ -14,7 +14,7 @@ export const coursePaymentSuccessUserEmail = (
   },
 ): { subject: string; html: string; text: string } => {
   const firstName = name.trim().split(/\s+/)[0] || 'there';
-  const subject = `Payment Confirmed — Welcome to ${BRAND.name} Course!`;
+  const subject = `Welcome to ${BRAND.name} Course — enrollment confirmed`;
   const formattedAmount = `₹${details.amountPaid.toLocaleString('en-IN')}`;
 
   const bodyHtml = `
@@ -193,7 +193,7 @@ export const coursePaymentSuccessAdminEmail = (data: {
   razorpayPaymentId: string;
   razorpayOrderId: string;
 }): { subject: string; html: string; text: string } => {
-  const subject = `[Payment Received] ${data.name} — ₹${data.amountPaid.toLocaleString('en-IN')} — Course Enrollment #${data.enrollmentId}`;
+  const subject = `[Enrollment Confirmed] ${data.name} — Course #${data.enrollmentId}`;
   const formattedAmount = `₹${data.amountPaid.toLocaleString('en-IN')}`;
 
   const bodyHtml = `

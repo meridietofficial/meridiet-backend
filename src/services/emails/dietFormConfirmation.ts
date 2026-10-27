@@ -10,7 +10,7 @@ export const dietFormConfirmationEmail = (
   },
 ): { subject: string; html: string; text: string } => {
   const firstName = fullName.trim().split(/\s+/)[0] || 'there';
-  const subject = `Your Diet Form is Received — We're Preparing Your Plan! 🥗`;
+  const subject = `Your diet form has been received — ${BRAND.name}`;
 
   const formatLabel = (val: string) =>
     val.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());

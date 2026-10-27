@@ -10,7 +10,7 @@ export const courseEnrollmentUserEmail = (
   details: { email: string; phone: string; enrollmentId: number },
 ): { subject: string; html: string; text: string } => {
   const firstName = name.trim().split(/\s+/)[0] || 'there';
-  const subject = `Complete Your Payment to Confirm Enrollment — ${BRAND.name} Course`;
+  const subject = `Your enrollment is registered — ${BRAND.name} Course`;
 
   const bodyHtml = `
     <h1 style="margin:0 0 16px 0;font-size:24px;font-weight:800;color:${c.textDark};line-height:1.3;">

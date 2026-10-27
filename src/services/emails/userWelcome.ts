@@ -3,7 +3,7 @@ import { c, iconImg, stepRow, emailLayout, footerText } from './layout';
 
 export const userWelcomeEmail = (fullName: string): { subject: string; html: string; text: string } => {
   const firstName = fullName.trim().split(/\s+/)[0] || 'there';
-  const subject = `Welcome to ${BRAND.name} — your journey to a healthier you starts now!`;
+  const subject = `Welcome to ${BRAND.name}`;
 
   const bodyHtml = `
     <h1 style="margin:0 0 16px 0;font-size:24px;font-weight:800;color:${c.textDark};text-transform:uppercase;line-height:1.3;">Hi ${firstName}, welcome to ${BRAND.name}! 🌿</h1>

@@ -38,8 +38,8 @@ export const appointmentPaymentApprovedEmail = (params: {
   const currency      = params.currency ?? 'INR';
 
   const subject = params.isNoShow
-    ? `No-Show Compensation Credited — ₹${params.netAmount} for ${params.patientName}`
-    : `Payment Credited — ₹${params.netAmount} for ${params.patientName}`;
+    ? `No-show compensation for ${params.patientName}`
+    : `Consultation payment processed for ${params.patientName}`;
 
   const detailRow = (label: string, value: string, highlight = false) => `
     <tr>

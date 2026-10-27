@@ -43,9 +43,7 @@ export const noShowPenaltyEmail = (params: {
 
   const isDietitianNoShow = missedType === 'dietitian_no_show';
 
-  const subject = isDietitianNoShow
-    ? `₹${penaltyAmount} Deducted — You Missed Appointment on ${formatDate(appointmentDate)}`
-    : `₹${penaltyAmount} Penalty — Both Parties Missed Appointment on ${formatDate(appointmentDate)}`;
+  const subject = `No-show policy applied — ${formatDate(appointmentDate)}`;
 
   const reasonText = isDietitianNoShow
     ? `You did not attend your scheduled appointment with <strong>${patientName}</strong>. As per ${BRAND.name}'s no-show policy, a penalty of <strong style="color:#e53e3e;">₹${penaltyAmount}</strong> has been deducted from your wallet.`

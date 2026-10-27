@@ -11,7 +11,7 @@ export const coursePaymentFailedUserEmail = (
   },
 ): { subject: string; html: string; text: string } => {
   const firstName = name.trim().split(/\s+/)[0] || 'there';
-  const subject = `Payment Failed — Please Try Again | ${BRAND.name} Course`;
+  const subject = `Action needed — course enrollment update | ${BRAND.name}`;
   const formattedAmount = `₹${details.amountAttempted.toLocaleString('en-IN')}`;
 
   const bodyHtml = `

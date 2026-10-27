@@ -13,6 +13,7 @@ import {
   adminGetPendingNoShowApprovals,
   adminGetPaymentHistory,
   adminGetNoShowQueue,
+  updateAppointmentPayment,
   type MissedType,
 } from '../models/Appointment';
 import { getRescheduleHistory } from '../models/AppointmentRescheduleHistory';
@@ -839,6 +840,47 @@ export const adminBookAppointment = async (req: Request, res: Response) => {
     return successResponse(res, 201, 'Appointment booked successfully', confirmed);
   } catch (err) {
     console.error('Admin book appointment error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// POST /api/v1/admin/appointments/:id/force-mark-paid
+// Manually marks an appointment as paid when Razorpay captured the payment
+// but the frontend dropped off before calling /verify-payment.
+// Body: { razorpay_payment_id: string }
+export const adminForceMarkPaid = async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const { razorpay_payment_id } = req.body as { razorpay_payment_id?: string };
+    if (!razorpay_payment_id) return errorResponse(res, 400, 'razorpay_payment_id is required');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+
+    if (appointment.payment_status === 'paid') {
+      return errorResponse(res, 409, 'Appointment is already marked as paid');
+    }
+
+    if (appointment.appointment_source === 'dietitian') {
+      return errorResponse(res, 400, 'Offline appointments cannot be force-marked via this endpoint');
+    }
+
+    if (!appointment.order_id) {
+      return errorResponse(res, 400, 'Appointment has no Razorpay order ID — cannot link payment');
+    }
+
+    await updateAppointmentPayment(appointment.order_id, razorpay_payment_id, 'paid', 'confirmed');
+
+    return successResponse(res, 200, 'Appointment marked as paid and confirmed', {
+      appointment_id:      id,
+      payment_status:      'paid',
+      status:              'confirmed',
+      razorpay_payment_id,
+    });
+  } catch (err) {
+    console.error('Admin force-mark-paid error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };
