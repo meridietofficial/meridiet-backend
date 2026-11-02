@@ -1145,6 +1145,24 @@ const dietTypeLabel = (dietType: string | null): string => {
   }
 };
 
+// Enforces realistic non-veg meal frequency for non-vegetarian clients.
+// Without this, the AI puts chicken/fish/meat in every meal every day.
+// Real Indian non-veg eating patterns: non-veg appears at lunch OR dinner,
+// not at breakfast, and not in every single meal of every day.
+const nonVegFrequencyBlock = (form: DietForm): string => {
+  if (form.diet_type !== 'non_vegetarian') return '';
+  return `
+NON-VEG MEAL FREQUENCY RULES (MANDATORY — violating these is a critical error):
+1. Non-veg (chicken, fish, mutton, eggs) is ALLOWED but NOT required at every meal. Most days should follow a typical Indian non-veg eating pattern.
+2. MAXIMUM non-veg days per week: 4 out of 7 days. The remaining 3 days must be fully vegetarian (dal, paneer, sabzi, curd — no meat, no fish). Eggs count as non-veg for this rule.
+3. On non-veg days: include non-veg in ONLY ONE meal — either lunch OR dinner, NOT BOTH. Breakfast on non-veg days should be vegetarian (poha, upma, oats, paratha with curd) unless the day's non-veg item is eggs at breakfast only.
+4. Eggs at breakfast: Eggs may appear at breakfast on at most 2 days per week (egg bhurji, omelette, boiled eggs). On those days, lunch and dinner must be vegetarian.
+5. NEVER put non-veg items (chicken, fish, mutton) at breakfast. Breakfast must always be vegetarian or egg-based.
+6. Distribute non-veg days spread across the week — do NOT cluster all 4 non-veg days together.
+7. On vegetarian days, use high-quality vegetarian protein: paneer, rajma, chole, moong dal, toor dal, curd — so the protein target is still met.
+`;
+};
+
 // Injects mandatory cuisine guidance when the client has specified preferences.
 // Without this, the AI defaults to generic North Indian regardless of what the client selected.
 const cuisineEnforcementBlock = (form: DietForm): string => {
@@ -1340,7 +1358,7 @@ CALORIE & PROTEIN TARGETS (calculated from client's TDEE of ${vitals.tdee} kcal/
 - Daily Carbs Target: ~${nt.carbsTarget} g/day
 - Daily Fat Target: ~${nt.fatTarget} g/day
 - Daily Fiber Target: ~${nt.fiberTarget} g/day (from dal, sabzi, whole grains, fruits — essential for digestion and nutrient absorption)
-${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${digestiveHealthBlock(form)}${smokeAlcoholBlock(form)}${genderNutritionBlock(form, nt)}${medicationTimingBlock(form)}${supplementGuidanceBlock(form)}${cuisineEnforcementBlock(form)}${vegetarianProteinBoostBlock(form, nt)}${eggetarianProteinBoostBlock(form, nt)}${wheyProteinBlock(form, nt)}
+${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${digestiveHealthBlock(form)}${smokeAlcoholBlock(form)}${genderNutritionBlock(form, nt)}${medicationTimingBlock(form)}${supplementGuidanceBlock(form)}${cuisineEnforcementBlock(form)}${nonVegFrequencyBlock(form)}${vegetarianProteinBoostBlock(form, nt)}${eggetarianProteinBoostBlock(form, nt)}${wheyProteinBlock(form, nt)}
 INSTRUCTIONS:
 1. Recipes must respect the diet type and strictly avoid disliked foods and allergens.
 2. Use recipes from the client's preferred cuisine(s) as specified above.
@@ -1388,7 +1406,7 @@ CALORIE & MACRO TARGETS (calculated from client's TDEE of ${vitals.tdee} kcal/da
 - Daily Calorie Range: ${nt.calorieRange}
 - Daily Protein Target: ${nt.proteinRange}
 - Daily Fiber Target: ~${nt.fiberTarget} g/day (from dal, sabzi, whole grains, fruits)
-${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${digestiveHealthBlock(form)}${smokeAlcoholBlock(form)}${genderNutritionBlock(form, nt)}${medicationTimingBlock(form)}${cuisineEnforcementBlock(form)}${vegetarianProteinBoostBlock(form, nt)}${wheyProteinBlock(form, nt)}
+${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${digestiveHealthBlock(form)}${smokeAlcoholBlock(form)}${genderNutritionBlock(form, nt)}${medicationTimingBlock(form)}${cuisineEnforcementBlock(form)}${nonVegFrequencyBlock(form)}${vegetarianProteinBoostBlock(form, nt)}${wheyProteinBlock(form, nt)}
 CRITICAL RULES:
 - You MUST generate all 7 days: day 1, day 2, day 3, day 4, day 5, day 6, day 7. Do NOT stop early.
 - The "days" array must contain exactly 7 objects.
@@ -1482,7 +1500,7 @@ CALORIE & MACRO TARGETS (calculated from client's TDEE of ${vitals.tdee} kcal/da
 - Daily Calorie Range: ${nt.calorieRange}
 - Daily Protein Target: ${nt.proteinRange}
 - Daily Fiber Target: ~${nt.fiberTarget} g/day (from dal, sabzi, whole grains, fruits)
-${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${digestiveHealthBlock(form)}${smokeAlcoholBlock(form)}${genderNutritionBlock(form, nt)}${medicationTimingBlock(form)}${cuisineEnforcementBlock(form)}${vegetarianProteinBoostBlock(form, nt)}${wheyProteinBlock(form, nt)}
+${medicalConstraintsBlock(nt.medicalNotes)}${deficiencyGuidanceBlock(form)}${digestiveHealthBlock(form)}${smokeAlcoholBlock(form)}${genderNutritionBlock(form, nt)}${medicationTimingBlock(form)}${cuisineEnforcementBlock(form)}${nonVegFrequencyBlock(form)}${vegetarianProteinBoostBlock(form, nt)}${wheyProteinBlock(form, nt)}
 MEALS ALREADY USED IN PREVIOUS WEEKS — do NOT repeat any of these:
 ${usedMeals.slice(0, 600).join(', ')}
 
