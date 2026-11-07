@@ -1484,10 +1484,14 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
     if (filters.no_show === 'dietitian') conditions.push('a.dietitian_joined_at IS NULL');
     if (filters.no_show === 'any')       conditions.push('(a.user_joined_at IS NULL OR a.dietitian_joined_at IS NULL)');
   }
+  // Exclude ghost bookings (unpaid+abandoned platform reservations) unless admin explicitly filters by payment_status
+  if (!filters.payment_status) {
+    conditions.push("(a.payment_status <> 'unpaid' OR a.status = 'confirmed' OR a.appointment_source = 'dietitian')");
+  }
   if (filters.search) {
-    conditions.push('(a.name LIKE ? OR a.email LIKE ? OR a.phone LIKE ?)');
+    conditions.push('(a.name LIKE ? OR a.email LIKE ? OR a.phone LIKE ? OR du.full_name LIKE ?)');
     const like = `%${filters.search}%`;
-    params.push(like, like, like);
+    params.push(like, like, like, like);
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -1524,6 +1528,7 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
       diet_plan_status: string | null;
       diet_plan_pdf_url: string | null;
       diet_plan_sent_at: Date | null;
+      reschedule_count: number;
     }>(
       `SELECT
          a.id,
@@ -1552,7 +1557,8 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
          dp.id         AS diet_plan_id,
          dp.status     AS diet_plan_status,
          dp.pdf_url    AS diet_plan_pdf_url,
-         dp.sent_at    AS diet_plan_sent_at
+         dp.sent_at    AS diet_plan_sent_at,
+         (SELECT COUNT(*) FROM appointment_reschedule_history WHERE appointment_id = a.id) AS reschedule_count
        FROM appointments a
        JOIN dietitians d  ON a.dietitian_id = d.id
        JOIN users du      ON d.user_id = du.id
@@ -1611,6 +1617,7 @@ export const adminListAppointments = async (filters: AdminAppointmentFilters) =>
         pdf_url: r.diet_plan_pdf_url,
         sent_at: r.diet_plan_sent_at,
       } : null,
+      reschedule_count: Number(r.reschedule_count),
     })),
     total: countRows[0]?.total ?? 0,
     page,
@@ -1633,6 +1640,8 @@ export const adminGetAppointmentDetail = async (id: number) => {
     order_id: string | null;
     fee: number;
     currency: string;
+    discount_applied: number | null;
+    final_amount: number | null;
     notes: string | null;
     dietitian_notes: string | null;
     missed_reason: string | null;
@@ -1680,7 +1689,7 @@ export const adminGetAppointmentDetail = async (id: number) => {
        a.duration, a.session_type,
        a.status, a.payment_status, a.payment_approved_at, a.payment_approved_by,
        a.payment_id, a.order_id,
-       a.fee, a.currency,
+       a.fee, a.currency, a.discount_applied, a.final_amount,
        a.notes, a.dietitian_notes, a.missed_reason, a.missed_type,
        a.user_rating, a.user_review, a.user_reviewed_at,
        a.dietitian_rating, a.dietitian_review, a.dietitian_reviewed_at,
@@ -1740,6 +1749,8 @@ export const adminGetAppointmentDetail = async (id: number) => {
     order_id: r.order_id,
     fee: r.fee,
     currency: r.currency,
+    discount_applied: r.discount_applied ?? null,
+    final_amount: r.final_amount ?? null,
     notes: r.notes,
     dietitian_notes: r.dietitian_notes,
     missed_reason: r.missed_reason,

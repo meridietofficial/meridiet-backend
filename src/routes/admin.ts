@@ -19,6 +19,7 @@ import {
   adminMarkComplete,
   adminBookAppointment,
   adminForceMarkPaid,
+  adminRescheduleAppointment,
 } from '../controllers/adminAppointment';
 import {
   getBmiCategories, createBmiCategory, updateBmiCategory, deleteBmiCategory,
@@ -148,7 +149,8 @@ adminRouter.post('/appointments/:id/approve-payment',      authenticate, authori
 adminRouter.post('/appointments/:id/force-mark-paid',      authenticate, authorize('admin'), adminForceMarkPaid);
 adminRouter.post('/appointments/:id/mark-complete',        authenticate, authorize('admin'), adminMarkComplete);
 adminRouter.post('/appointments/:id/mark-no-show',         authenticate, authorize('admin'), adminMarkNoShow);
-adminRouter.post('/appointments/:id/approve-no-show',      authenticate, authorize('admin'), adminApproveNoShow);
+adminRouter.post ('/appointments/:id/approve-no-show',      authenticate, authorize('admin'), adminApproveNoShow);
+adminRouter.patch('/appointments/:id/reschedule',           authenticate, authorize('admin'), adminRescheduleAppointment);
 
 // ── Coupon management ─────────────────────────────────────────────────────────
 adminRouter.post  ('/coupons',           authenticate, authorize('admin'), adminCreateCoupon);

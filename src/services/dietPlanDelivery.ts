@@ -9,6 +9,7 @@ import {
   updateDietPlanStatus,
   findDietPlanById,
   findDietPlanByFormId,
+  markDietPlanSent,
 } from '../models/DietPlan';
 import type { WeekPlan, FeaturedRecipe } from '../models/DietPlan';
 import { getSetting } from '../models/Setting';
@@ -1841,10 +1842,10 @@ export const generateAndDeliverDietPlan = async (
   ]);
   if (!form) { console.error(`[delivery] form ${formId} not found`); return; }
 
-  // Skip if a completed plan already exists for this form (non-dietitian flow only)
+  // Skip if a completed or already-sent plan exists for this form (non-dietitian flow only)
   if (!dietitianId && !existingPlanId) {
     const existing = await findDietPlanByFormId(formId);
-    if (existing && existing.status === 'completed') return;
+    if (existing && (existing.status === 'completed' || existing.status === 'sent')) return;
   }
 
   const vitals = calcVitals(form, config);
@@ -1960,7 +1961,6 @@ export const generateAndDeliverDietPlan = async (
   }, 'completed');
 
   // ── Step 2: Wallet credit ────────────────────────────────────────────────────
-  // PDF generation and delivery happen later when admin clicks "Send to User".
   if (userId) {
     try {
       const payment = await findPaidPaymentByDietFormId(formId);
@@ -2012,6 +2012,22 @@ export const generateAndDeliverDietPlan = async (
       }
     } catch (cbErr) {
       console.error('[delivery] Wallet credit error:', cbErr);
+    }
+  }
+
+  // ── Step 3: Auto-deliver to user ─────────────────────────────────────────────
+  // Skip for dietitian plans — dietitian reviews and sends separately via /send.
+  if (!dietitianId) {
+    try {
+      const { sentEmail, sentWhatsApp } = await deliverDietPlanToUser(plan.id);
+      if (sentEmail || sentWhatsApp) {
+        await markDietPlanSent(plan.id);
+        console.log(`[delivery] Plan ${plan.id} delivered and marked sent (email=${sentEmail}, whatsapp=${sentWhatsApp})`);
+      } else {
+        console.warn(`[delivery] Plan ${plan.id} generated but delivery failed — not marked as sent`);
+      }
+    } catch (deliveryErr) {
+      console.error('[delivery] Auto-delivery error:', deliveryErr);
     }
   }
 

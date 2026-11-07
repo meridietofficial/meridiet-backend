@@ -14,9 +14,11 @@ import {
   adminGetPaymentHistory,
   adminGetNoShowQueue,
   updateAppointmentPayment,
+  isSlotTaken,
+  rescheduleAppointment,
   type MissedType,
 } from '../models/Appointment';
-import { getRescheduleHistory } from '../models/AppointmentRescheduleHistory';
+import { getRescheduleHistory, createRescheduleHistory } from '../models/AppointmentRescheduleHistory';
 import {
   creditDietitianForAppointment,
   creditDietitianForNoShow,
@@ -32,7 +34,8 @@ import { appointmentPaymentApprovedEmail } from '../services/emails/appointmentP
 import { appointmentConfirmationEmail } from '../services/emails/appointmentConfirmation';
 import { appointmentNewBookingEmail } from '../services/emails/appointmentNewBooking';
 import { noShowPenaltyEmail } from '../services/emails/noShowPenaltyEmail';
-import { sendAppointmentBookedWhatsApp, sendDietitianNewBookingWhatsApp } from '../services/whatsapp';
+import { sendAppointmentBookedWhatsApp, sendDietitianNewBookingWhatsApp, sendAppointmentRescheduledWhatsApp, sendDietitianRescheduledWhatsApp } from '../services/whatsapp';
+import { appointmentRescheduledUserEmail, appointmentRescheduledDietitianEmail } from '../services/emails/appointmentRescheduled';
 import { generateMeetingToken, userUid } from '../utils/meetingToken';
 import { env } from '../config/env';
 import { razorpay } from '../config/razorpay';
@@ -208,7 +211,7 @@ export const adminGetAppointments = async (req: Request, res: Response) => {
       no_show,
     } = req.query as Record<string, string | undefined>;
 
-    const validStatuses  = ['confirmed', 'completed', 'cancelled', 'missed'];
+    const validStatuses  = ['pending', 'confirmed', 'completed', 'cancelled', 'missed'];
     const validPayments  = ['unpaid', 'paid', 'refunded'];
     const validSessions  = ['video_call', 'in_person'];
     const validSources   = ['platform', 'dietitian', 'admin'];
@@ -881,6 +884,145 @@ export const adminForceMarkPaid = async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('Admin force-mark-paid error:', err);
+    return errorResponse(res, 500, 'Something went wrong');
+  }
+};
+
+// PATCH /api/v1/admin/appointments/:id/reschedule
+// Admin only. Reschedule any appointment to a new date/slot.
+// No reschedule count limit — admin can reschedule as many times as needed.
+// Body: { appointment_date, slot, reason? }
+export const adminRescheduleAppointment = async (req: Request, res: Response) => {
+  try {
+    const adminUserId = Number(req.user!.sub);
+    const id = Number(req.params.id);
+    if (isNaN(id)) return errorResponse(res, 400, 'Invalid appointment ID');
+
+    const appointment = await findAppointmentById(id);
+    if (!appointment) return errorResponse(res, 404, 'Appointment not found');
+
+    if (appointment.status === 'completed') {
+      return errorResponse(res, 400, 'Completed appointments cannot be rescheduled');
+    }
+
+    const { appointment_date, slot, reason } = req.body as {
+      appointment_date?: string;
+      slot?: string;
+      reason?: string;
+    };
+
+    if (!appointment_date) return errorResponse(res, 400, 'appointment_date is required');
+    if (!slot) return errorResponse(res, 400, 'slot is required');
+
+    if (!/^\d{2}:\d{2}$/.test(slot)) {
+      return errorResponse(res, 400, 'slot must be in HH:MM format (e.g. "09:30")');
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(appointment_date)) {
+      return errorResponse(res, 400, 'appointment_date must be in YYYY-MM-DD format');
+    }
+
+    const [yr, mo, dy] = appointment_date.split('-').map(Number);
+    const requestedDate = new Date(yr, mo - 1, dy);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (requestedDate < today) {
+      return errorResponse(res, 400, 'appointment_date cannot be in the past');
+    }
+
+    const taken = await isSlotTaken(appointment.dietitian_id, appointment_date, slot, id);
+    if (taken) {
+      return errorResponse(res, 409, 'This slot is already booked. Please choose another.');
+    }
+
+    await createRescheduleHistory({
+      appointment_id: id,
+      rescheduled_by: adminUserId,
+      previous_date: appointment.appointment_date,
+      previous_slot: appointment.slot,
+      new_date: appointment_date,
+      new_slot: slot,
+      reason: reason?.trim() || null,
+    });
+
+    await rescheduleAppointment(id, appointment_date, slot, reason?.trim() || null);
+
+    const updated = await findAppointmentById(id);
+
+    setImmediate(async () => {
+      try {
+        const fullDietitian = await findDietitianById(appointment.dietitian_id);
+        const dietitianName = fullDietitian?.full_name ?? 'Your Dietitian';
+
+        const isVideoCall = appointment.session_type === 'video_call';
+        const baseUrl = env.APP_BASE_URL ?? 'http://localhost:3000';
+        const userJoinUrl = isVideoCall
+          ? `${baseUrl}/meet/${id}?t=${generateMeetingToken(id, userUid(id))}`
+          : undefined;
+
+        if (appointment.email) {
+          const userMail = appointmentRescheduledUserEmail({
+            userName: appointment.name,
+            dietitianName,
+            previousDate: appointment.appointment_date,
+            previousSlot: appointment.slot,
+            newDate: appointment_date,
+            newSlot: slot,
+            sessionType: appointment.session_type,
+            reason: reason?.trim() || null,
+            joinUrl: userJoinUrl,
+          });
+          await sendEmail({ to: appointment.email, subject: userMail.subject, html: userMail.html, text: userMail.text })
+            .catch((e) => console.error('[admin reschedule] User email failed:', e));
+        }
+
+        if (fullDietitian?.email) {
+          const dietMail = appointmentRescheduledDietitianEmail({
+            dietitianName,
+            patientName: appointment.name,
+            previousDate: appointment.appointment_date,
+            previousSlot: appointment.slot,
+            newDate: appointment_date,
+            newSlot: slot,
+            sessionType: appointment.session_type,
+          });
+          await sendEmail({ to: fullDietitian.email, subject: dietMail.subject, html: dietMail.html, text: dietMail.text })
+            .catch((e) => console.error('[admin reschedule] Dietitian email failed:', e));
+        }
+
+        if (appointment.phone) {
+          await sendAppointmentRescheduledWhatsApp(
+            appointment.phone,
+            appointment.name,
+            appointment.appointment_date,
+            appointment.slot,
+            appointment_date,
+            slot,
+            userJoinUrl,
+          ).catch((e) => console.error('[admin reschedule] User WhatsApp failed:', e));
+        }
+
+        if (fullDietitian?.phone_number) {
+          const dietitianPhone = fullDietitian.phone_code
+            ? `${fullDietitian.phone_code}${fullDietitian.phone_number}`
+            : fullDietitian.phone_number;
+          await sendDietitianRescheduledWhatsApp(
+            dietitianPhone,
+            dietitianName,
+            appointment.name,
+            appointment.appointment_date,
+            appointment.slot,
+            appointment_date,
+            slot,
+          ).catch((e) => console.error('[admin reschedule] Dietitian WhatsApp failed:', e));
+        }
+      } catch (e) {
+        console.error('[admin reschedule] Post-reschedule notification error:', e);
+      }
+    });
+
+    return successResponse(res, 200, 'Appointment rescheduled successfully', updated);
+  } catch (err) {
+    console.error('Admin reschedule appointment error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
 };
