@@ -8,6 +8,9 @@ import { findByOrderId, markRegistrationPaid } from '../models/DietitianRegistra
 import { activateDietitianSubscription } from '../models/Dietitian';
 import { creditRegistrationBonus } from '../models/DietitianWallet';
 import { findAppointmentByOrderId, updateAppointmentPayment } from '../models/Appointment';
+import { findPaymentByOrderId, markPaymentPaid } from '../models/Payment';
+import { findDietFormById } from '../models/DietForm';
+import { generateAndDeliverDietPlan } from '../services/dietPlanDelivery';
 import { env } from '../config/env';
 
 export const webhookRouter = Router();
@@ -100,6 +103,34 @@ webhookRouter.post('/razorpay', async (req: Request, res: Response) => {
       }
       await updateAppointmentPayment(orderId, paymentId, 'paid', 'confirmed');
       console.log(`Razorpay webhook: payment.captured → appointment ${appointment.id} marked paid`);
+      return res.json({ status: 'ok' });
+    }
+
+    // Check if this is a diet plan payment
+    const dietPayment = await findPaymentByOrderId(orderId);
+    if (dietPayment) {
+      if (dietPayment.status === 'paid') {
+        console.log(`Razorpay webhook: diet plan order ${orderId} already paid — skipping`);
+        return res.json({ status: 'already_paid' });
+      }
+
+      if (!dietPayment.diet_form_id) {
+        console.log(`Razorpay webhook: diet plan order ${orderId} has no diet_form_id — ignoring`);
+        return res.json({ status: 'ignored' });
+      }
+
+      await markPaymentPaid(orderId, paymentId, '', dietPayment.diet_form_id);
+
+      const form = await findDietFormById(dietPayment.diet_form_id);
+      if (form) {
+        const userId = form.user_id ?? dietPayment.user_id;
+        const weeksOverride = dietPayment.plan === '3_months' ? 4 : undefined;
+        void generateAndDeliverDietPlan(form.id, userId, weeksOverride).catch((err) => {
+          console.error('[webhook] diet plan delivery error:', err);
+        });
+      }
+
+      console.log(`Razorpay webhook: payment.captured → diet plan order ${orderId} (form ${dietPayment.diet_form_id}) marked paid`);
       return res.json({ status: 'ok' });
     }
 
