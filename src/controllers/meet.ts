@@ -380,6 +380,7 @@ const meetingRoomPage = (opts: {
       if (localVideoTrack) { localVideoTrack.stop(); localVideoTrack.close(); }
       await client.leave();
     } catch (_) {}
+
     document.body.innerHTML = \`
       <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
                   height:100dvh;gap:16px;text-align:center;padding:24px;background:#0f0f0f;">

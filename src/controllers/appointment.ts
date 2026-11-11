@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import type { Request, Response } from 'express';
-import { razorpay } from '../config/razorpay';
+import { razorpay, testRazorpay, TEST_RAZORPAY_KEY_ID, TEST_RAZORPAY_KEY_SECRET } from '../config/razorpay';
 import { env } from '../config/env';
 import {
   AGORA_RECORDING_UID,
@@ -148,7 +148,11 @@ const isSlotWithinSchedule = (slot: string, ranges: string[]): boolean => {
 // POST /api/v1/appointments/create-order
 // Body: { dietitian_id, appointment_date, slot, name, email?, phone?, notes? }
 // Platform bookings are always video_call — session_type is not accepted from the client.
-export const createAppointmentOrder = async (req: Request, res: Response) => {
+async function createAppointmentOrderImpl(
+  req: Request, res: Response,
+  rzpInstance: typeof razorpay,
+  rzpKeyId: string,
+) {
   try {
     const {
       dietitian_id,
@@ -271,7 +275,7 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
     // Reuse that row with a fresh Razorpay order instead of creating a duplicate.
     const staleAppointment = await findUnpaidSlotAppointment(dietitian_id, appointment_date, slot, userId);
     if (staleAppointment) {
-      const freshOrder = await razorpay.orders.create({
+      const freshOrder = await rzpInstance.orders.create({
         amount: chargeInPaise,
         currency,
         receipt: `appt_${Date.now()}`,
@@ -284,12 +288,12 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
         final_amount:     finalAmount,
         discount_applied: discountApplied ?? 0,
         currency,
-        key_id:           env.RAZORPAY_KEY_ID,
+        key_id:           rzpKeyId,
       });
     }
 
     // Create Razorpay order only after all checks pass
-    const order = await razorpay.orders.create({
+    const order = await rzpInstance.orders.create({
       amount: chargeInPaise,
       currency,
       receipt: `appt_${Date.now()}`,
@@ -323,22 +327,23 @@ export const createAppointmentOrder = async (req: Request, res: Response) => {
       final_amount:     finalAmount,
       discount_applied: discountApplied ?? 0,
       currency,
-      key_id:           env.RAZORPAY_KEY_ID,
+      key_id:           rzpKeyId,
     });
   } catch (err: unknown) {
     if ((err as { code?: string }).code === 'ER_DUP_ENTRY') {
-      // Another user holds an unpaid reservation on this slot — it hasn't been paid yet
-      // but the DB unique constraint prevents a second row. Ask the user to retry shortly.
       return errorResponse(res, 409, 'This slot is temporarily held by another booking. Please try again in a few minutes or choose a different slot.');
     }
     console.error('Create appointment order error:', err);
     return errorResponse(res, 500, 'Failed to create appointment order');
   }
-};
+}
+
+export const createAppointmentOrder     = (req: Request, res: Response) => createAppointmentOrderImpl(req, res, razorpay,     env.RAZORPAY_KEY_ID);
+export const createTestAppointmentOrder = (req: Request, res: Response) => createAppointmentOrderImpl(req, res, testRazorpay, TEST_RAZORPAY_KEY_ID);
 
 // POST /api/v1/appointments/verify
 // Body: { razorpay_order_id, razorpay_payment_id, razorpay_signature }
-export const verifyAppointmentPayment = async (req: Request, res: Response) => {
+async function verifyAppointmentPaymentImpl(req: Request, res: Response, rzpKeySecret: string) {
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body as {
     razorpay_order_id?: string;
     razorpay_payment_id?: string;
@@ -350,7 +355,7 @@ export const verifyAppointmentPayment = async (req: Request, res: Response) => {
   }
 
   const expectedSignature = crypto
-    .createHmac('sha256', env.RAZORPAY_KEY_SECRET)
+    .createHmac('sha256', rzpKeySecret)
     .update(`${razorpay_order_id}|${razorpay_payment_id}`)
     .digest('hex');
 
@@ -475,7 +480,10 @@ export const verifyAppointmentPayment = async (req: Request, res: Response) => {
     console.error('Verify appointment payment error:', err);
     return errorResponse(res, 500, 'Something went wrong');
   }
-};
+}
+
+export const verifyAppointmentPayment     = (req: Request, res: Response) => verifyAppointmentPaymentImpl(req, res, env.RAZORPAY_KEY_SECRET);
+export const verifyTestAppointmentPayment = (req: Request, res: Response) => verifyAppointmentPaymentImpl(req, res, TEST_RAZORPAY_KEY_SECRET);
 
 // POST /api/v1/appointments/failed
 // Body: { razorpay_order_id }

@@ -4,6 +4,8 @@ import {
   createAppointmentOrder,
   verifyAppointmentPayment,
   failAppointmentPayment,
+  createTestAppointmentOrder,
+  verifyTestAppointmentPayment,
   getMyAppointments,
   getDietitianAppointments,
   getDietitianSessions,
@@ -50,6 +52,11 @@ appointmentRouter.get('/slots/:dietitianId', getAvailableSlots);
 appointmentRouter.post('/create-order', optionalAuth, createAppointmentOrder);
 appointmentRouter.post('/verify', optionalAuth, verifyAppointmentPayment);
 appointmentRouter.post('/failed', optionalAuth, failAppointmentPayment);
+
+// Test payment flow — always uses hardcoded Razorpay test credentials
+appointmentRouter.post('/test-create-order', optionalAuth, createTestAppointmentOrder);
+appointmentRouter.post('/test-verify', optionalAuth, verifyTestAppointmentPayment);
+appointmentRouter.post('/test-failed', optionalAuth, failAppointmentPayment);
 
 // User — must be logged in
 appointmentRouter.get('/my', authenticate, getMyAppointments);
