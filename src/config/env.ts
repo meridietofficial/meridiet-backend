@@ -110,6 +110,9 @@ const envSchema = z.object({
   COMPANY_GSTIN: z.string().default('09AAVCM0510H1ZE'),
 
 
+  // Meta Conversions API — server-side Purchase events
+  META_CAPI_ACCESS_TOKEN: z.string().default(''),
+
   // Agora — 1-to-1 video calls with cloud recording
   AGORA_APP_ID: z.string().default(''),
   AGORA_APP_CERTIFICATE: z.string().default(''),

@@ -76,6 +76,7 @@ import {
 } from '../services/whatsapp';
 import { generateMeetingToken, verifyMeetingToken, userUid, dietitianUid } from '../utils/meetingToken';
 import { sendAppointmentGstInvoiceEmail } from '../services/sendAppointmentGstInvoiceEmail';
+import { sendCapiPurchase } from '../utils/metaCapi';
 
 // GET /api/v1/appointments/slots/:dietitianId?days=14
 export const getAvailableSlots = async (req: Request, res: Response) => {
@@ -377,6 +378,17 @@ async function verifyAppointmentPaymentImpl(req: Request, res: Response, rzpKeyS
     }
 
     await updateAppointmentPayment(razorpay_order_id, razorpay_payment_id, 'paid', 'confirmed');
+
+    void sendCapiPurchase({
+      eventId:         razorpay_order_id,
+      value:           appointment.final_amount ?? appointment.fee,
+      currency:        appointment.currency ?? 'INR',
+      funnelType:      'consultation',
+      email:           appointment.email,
+      phone:           appointment.phone,
+      clientIp:        req.ip,
+      clientUserAgent: req.headers['user-agent'] as string | undefined,
+    }).catch((err) => console.error('[CAPI] Consultation purchase failed:', err));
 
     // Background: GST invoice PDF emailed to customer
     void sendAppointmentGstInvoiceEmail(appointment.id).catch((err) => {

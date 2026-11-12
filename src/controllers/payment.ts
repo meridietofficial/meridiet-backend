@@ -8,6 +8,7 @@ import { resolveCoupon, createCouponUsage } from '../models/Coupon';
 import { successResponse, errorResponse } from '../utils/response';
 import { generateAndDeliverDietPlan } from '../services/dietPlanDelivery';
 import { getOrCreateRazorpayInvoice } from '../services/razorpayInvoice';
+import { sendCapiPurchase } from '../utils/metaCapi';
 
 // POST /api/v1/payment/create-order
 // Body: { plan: '1_week' | '1_month' | '3_months', diet_form_id: number, coupon_code?: string }
@@ -133,6 +134,17 @@ export const verifyPaymentAndSubmitForm = async (req: Request, res: Response) =>
     if (!form) return errorResponse(res, 404, 'Diet form not found');
 
     await markPaymentPaid(razorpay_order_id, razorpay_payment_id, razorpay_signature, payment.diet_form_id);
+
+    void sendCapiPurchase({
+      eventId:          razorpay_order_id,
+      value:            payment.final_amount ?? payment.amount,
+      currency:         payment.currency ?? 'INR',
+      funnelType:       'diet_plan',
+      email:            form.email,
+      phone:            form.whatsapp,
+      clientIp:         req.ip,
+      clientUserAgent:  req.headers['user-agent'] as string | undefined,
+    }).catch((err) => console.error('[CAPI] Diet plan purchase failed:', err));
 
     // Record coupon usage now that payment is confirmed
     if (payment.coupon_id && payment.discount_applied != null && payment.final_amount != null) {

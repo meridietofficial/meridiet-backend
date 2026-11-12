@@ -14,6 +14,7 @@ import { resolveCoupon, createCouponUsage } from '../models/Coupon';
 import { sendCoursePaymentWhatsApp } from '../services/whatsapp';
 import { successResponse, errorResponse } from '../utils/response';
 import { env } from '../config/env';
+import { sendCapiPurchase } from '../utils/metaCapi';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -329,6 +330,17 @@ export const verifyCoursePayment = async (req: Request, res: Response) => {
       payment_verified_at:  new Date(),
       ...(isEmi ? { emi_installments_paid: newInstallmentCount! } : {}),
     });
+
+    void sendCapiPurchase({
+      eventId:         razorpay_order_id,
+      value:           amountPaid,
+      currency:        'INR',
+      funnelType:      'certification_course',
+      email:           enrollment.email,
+      phone:           enrollment.phone,
+      clientIp:        req.ip,
+      clientUserAgent: req.headers['user-agent'] as string | undefined,
+    }).catch((err) => console.error('[CAPI] Course purchase failed:', err));
 
     // Record coupon usage if a coupon was applied at order creation (full plan only)
     if (enrollment.coupon_id) {

@@ -14,6 +14,7 @@ import {
 import { getDietitianRegistrationFee } from '../models/Setting';
 import { creditRegistrationBonus } from '../models/DietitianWallet';
 import { successResponse, errorResponse } from '../utils/response';
+import { sendCapiPurchase } from '../utils/metaCapi';
 
 // POST /api/v1/dietitian/registration-fee/create-order
 // Called after trial expires — creates a Razorpay order for the one-time registration fee
@@ -88,6 +89,16 @@ export const verifyRegistrationFeePayment = async (req: Request, res: Response) 
 
     await markRegistrationPaid(record.id, razorpay_payment_id, razorpay_signature);
     await activateDietitianSubscription(record.dietitian_id!);
+
+    void sendCapiPurchase({
+      eventId:         razorpay_order_id,
+      value:           record.amount,
+      currency:        'INR',
+      funnelType:      'dietitian_onboarding',
+      email:           record.email,
+      clientIp:        req.ip,
+      clientUserAgent: req.headers['user-agent'] as string | undefined,
+    }).catch((err) => console.error('[CAPI] Dietitian registration purchase failed:', err));
 
     // 500 AI diet plan credits — idempotent, safe to call alongside webhook
     void creditRegistrationBonus(record.dietitian_id!)
