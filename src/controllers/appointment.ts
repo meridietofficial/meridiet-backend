@@ -234,18 +234,7 @@ async function createAppointmentOrderImpl(
     }
     // --- End availability check ---
 
-    let fee = Number(dietitian.appointment_fee ?? 0);
-
-    // If global offer is active and this dietitian is under the offer, apply the offer price
-    if (dietitian.is_under_offer) {
-      const [isOfferActive, offerPriceRaw] = await Promise.all([
-        getSetting('is_offer'),
-        getSetting('appointment_offer_price'),
-      ]);
-      if (isOfferActive === '1' && offerPriceRaw != null) {
-        fee = Number(offerPriceRaw);
-      }
-    }
+    const fee = Number(dietitian.appointment_fee ?? 0);
 
     if (Math.round(fee * 100) < 100) {
       return errorResponse(res, 400, 'This dietitian has not set a valid appointment fee (minimum ₹1)');
