@@ -395,16 +395,20 @@ export const updateAppointmentStatus = async (
   await execute('UPDATE appointments SET status = ? WHERE id = ?', [status, id]);
 };
 
+// Returns true only if this call actually transitioned the row to paid.
+// The AND payment_status != 'paid' guard prevents concurrent duplicate webhooks
+// from both committing and double-firing CAPI.
 export const updateAppointmentPayment = async (
   orderId: string,
   paymentId: string,
   paymentStatus: Appointment['payment_status'],
   status: Appointment['status'],
-) => {
-  await execute(
-    'UPDATE appointments SET payment_id = ?, payment_status = ?, status = ? WHERE order_id = ?',
+): Promise<boolean> => {
+  const result = await execute(
+    'UPDATE appointments SET payment_id = ?, payment_status = ?, status = ? WHERE order_id = ? AND payment_status != \'paid\'',
     [paymentId, paymentStatus, status, orderId],
   );
+  return result.affectedRows === 1;
 };
 
 export const markAppointmentCancelled = async (orderId: string) => {

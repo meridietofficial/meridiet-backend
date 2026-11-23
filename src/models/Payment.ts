@@ -55,17 +55,21 @@ export const findPaymentByOrderId = async (razorpay_order_id: string) => {
   return rows[0] ?? null;
 };
 
+// Returns true only if this call actually transitioned the row to 'paid'.
+// The AND status != 'paid' guard makes the transition atomic at the DB level,
+// so concurrent duplicate webhook calls cannot both commit and double-fire CAPI.
 export const markPaymentPaid = async (
   razorpay_order_id: string,
   razorpay_payment_id: string,
   razorpay_signature: string,
   diet_form_id: number,
-) => {
-  await execute(
-    `UPDATE payments SET status = 'paid', razorpay_payment_id = ?, razorpay_signature = ?, diet_form_id = ? WHERE razorpay_order_id = ?`,
+): Promise<boolean> => {
+  const result = await execute(
+    `UPDATE payments SET status = 'paid', razorpay_payment_id = ?, razorpay_signature = ?, diet_form_id = ?
+      WHERE razorpay_order_id = ? AND status != 'paid'`,
     [razorpay_payment_id, razorpay_signature, diet_form_id, razorpay_order_id],
   );
-  return findPaymentByOrderId(razorpay_order_id);
+  return result.affectedRows === 1;
 };
 
 export const markPaymentFailed = async (razorpay_order_id: string) => {

@@ -124,7 +124,6 @@ export const verifyPaymentAndSubmitForm = async (req: Request, res: Response) =>
   try {
     const payment = await findPaymentByOrderId(razorpay_order_id);
     if (!payment) return errorResponse(res, 404, 'Order not found');
-    if (payment.status === 'paid') return errorResponse(res, 409, 'Payment already verified');
 
     if (!payment.diet_form_id) {
       return errorResponse(res, 400, 'No diet form linked to this order');
@@ -133,22 +132,41 @@ export const verifyPaymentAndSubmitForm = async (req: Request, res: Response) =>
     const form = await findDietFormById(payment.diet_form_id);
     if (!form) return errorResponse(res, 404, 'Diet form not found');
 
-    await markPaymentPaid(razorpay_order_id, razorpay_payment_id, razorpay_signature, payment.diet_form_id);
+    // If webhook already processed this payment, return success without re-firing anything
+    if (payment.status === 'paid') {
+      return successResponse(res, 200, 'Payment already confirmed', {
+        diet_form: form,
+        payment: { order_id: razorpay_order_id, plan: payment.plan, amount: payment.amount },
+      });
+    }
 
+    // Attempt atomic transition — webhook may win this race concurrently
+    const won = await markPaymentPaid(razorpay_order_id, razorpay_payment_id, razorpay_signature, payment.diet_form_id);
+    if (!won) {
+      // Webhook won the concurrent race — it handles CAPI, coupon, invoice, and delivery
+      return successResponse(res, 200, 'Payment already confirmed', {
+        diet_form: form,
+        payment: { order_id: razorpay_order_id, plan: payment.plan, amount: payment.amount },
+      });
+    }
+
+    // Verify won the atomic race — fire all post-payment actions
+
+    // CAPI Purchase event
     void sendCapiPurchase({
-      eventId:          razorpay_order_id,
-      value:            payment.final_amount ?? payment.amount,
-      currency:         payment.currency ?? 'INR',
-      funnelType:       'diet_plan',
-      email:            form.email,
-      phone:            form.whatsapp,
-      clientIp:         req.ip,
-      clientUserAgent:  req.headers['user-agent'] as string | undefined,
-    }).catch((err) => console.error('[CAPI] Diet plan purchase failed:', err));
+      eventId:         razorpay_order_id,
+      value:           payment.final_amount ?? payment.amount,
+      currency:        payment.currency ?? 'INR',
+      funnelType:      'diet_plan',
+      email:           form.email ?? null,
+      phone:           form.whatsapp ?? null,
+      clientIp:        req.ip,
+      clientUserAgent: req.headers['user-agent'] as string | undefined,
+    }).catch((err) => console.error('[CAPI] verify diet_plan purchase failed:', err));
 
-    // Record coupon usage now that payment is confirmed
+    // Coupon usage
     if (payment.coupon_id && payment.discount_applied != null && payment.final_amount != null) {
-      await createCouponUsage({
+      void createCouponUsage({
         coupon_id:        payment.coupon_id,
         user_id:          payment.user_id,
         applicable_type:  'diet_plan',
@@ -160,34 +178,30 @@ export const verifyPaymentAndSubmitForm = async (req: Request, res: Response) =>
       }).catch((e) => console.error('[payment] Failed to record coupon usage:', e));
     }
 
-    // If the form was submitted as a guest (user_id null), back-fill it now using the payment's user_id
+    // Back-fill form user_id for guest checkouts
     const userId = form.user_id ?? payment.user_id;
     if (!form.user_id && userId) {
-      await updateDietForm(form.id, { user_id: userId }).catch((err) => {
+      void updateDietForm(form.id, { user_id: userId }).catch((err) => {
         console.error('[payment] failed to back-fill form user_id:', err);
       });
     }
 
-    // Background: generate plan → PDF → S3 → cashback/subscription credit → email
-    // Always trigger generation even for guest checkouts (userId may be null).
-    // generateAndDeliverDietPlan already handles null userId — wallet credit is skipped gracefully.
+    // Generate plan → PDF → S3 → cashback/subscription credit → email
     const weeksOverride = payment.plan === '3_months' ? 4 : undefined;
     void generateAndDeliverDietPlan(form.id, userId, weeksOverride).catch((err) => {
       console.error('[payment] delivery pipeline error:', err);
     });
 
-    // Background: create Razorpay-hosted invoice (Razorpay emails it directly to the customer)
-    if (payment.razorpay_order_id && form.email) {
+    // Razorpay-hosted invoice (emailed directly to customer by Razorpay)
+    if (form.email) {
       void getOrCreateRazorpayInvoice({
-        razorpayOrderId: payment.razorpay_order_id,
+        razorpayOrderId: razorpay_order_id,
         customerName:    form.full_name ?? 'Customer',
         customerEmail:   form.email,
         customerPhone:   form.whatsapp ?? null,
         plan:            payment.plan,
         amountPaid:      payment.final_amount ?? payment.amount,
-      }).catch((err) => {
-        console.error('[payment] Razorpay invoice error:', err);
-      });
+      }).catch((err) => console.error('[payment] Razorpay invoice error:', err));
     }
 
     return successResponse(res, 201, 'Payment verified successfully', {

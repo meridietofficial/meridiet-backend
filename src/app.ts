@@ -14,6 +14,11 @@ import { meetRouter } from './routes/meet';
 
 export const app = express();
 
+// Trust the first proxy hop (Nginx/load-balancer) so req.ip and X-Forwarded-For
+// return the real client IP rather than the proxy's internal address.
+// Required for accurate Meta CAPI client_ip_address and for rate-limiter correctness.
+app.set('trust proxy', 1);
+
 // Security — CSP disabled globally (API routes return JSON, CSP only matters for HTML)
 // The /meet page sets its own permissive CSP below to allow Agora SDK + WebRTC
 app.use(helmet({ contentSecurityPolicy: false }));

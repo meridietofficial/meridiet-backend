@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import type { Request, Response } from 'express';
 import { razorpay } from '../config/razorpay';
 import { env } from '../config/env';
-import { findDietitianByUserId, activateDietitianSubscription } from '../models/Dietitian';
+import { findDietitianByUserId, findDietitianById, activateDietitianSubscription } from '../models/Dietitian';
 import { findUserById } from '../models/User';
 import {
   createPostTrialRegistrationOrder,
@@ -85,10 +85,36 @@ export const verifyRegistrationFeePayment = async (req: Request, res: Response) 
   try {
     const record = await findByOrderId(razorpay_order_id);
     if (!record) return errorResponse(res, 404, 'Order not found');
-    if (record.status === 'paid') return errorResponse(res, 409, 'Payment already verified');
 
-    await markRegistrationPaid(record.id, razorpay_payment_id, razorpay_signature);
+    // If webhook already won the race, return success without re-activating or firing CAPI
+    if (record.status === 'paid') {
+      return successResponse(res, 200, 'Payment already confirmed', {
+        dietitian_id:        record.dietitian_id,
+        subscription_status: 'active',
+      });
+    }
+
+    // Attempt atomic transition — webhook may win this race concurrently
+    const won = await markRegistrationPaid(record.id, razorpay_payment_id, razorpay_signature);
+    if (!won) {
+      // Webhook won the concurrent race — it handles activation and CAPI
+      return successResponse(res, 200, 'Payment already confirmed', {
+        dietitian_id:        record.dietitian_id,
+        subscription_status: 'active',
+      });
+    }
+
+    // Verify won the atomic race — activate subscription, credit bonus, fire CAPI
     await activateDietitianSubscription(record.dietitian_id!);
+
+    void creditRegistrationBonus(record.dietitian_id!)
+      .catch((err) => console.error('[registration] plan credit failed:', err));
+
+    // CAPI Purchase event — get phone from dietitian profile (DietitianWithUser has phone fields)
+    const dietitian = await findDietitianById(record.dietitian_id!).catch(() => null);
+    const phone = dietitian?.phone_code
+      ? `${dietitian.phone_code}${dietitian.phone_number}`
+      : (dietitian?.phone_number ?? null);
 
     void sendCapiPurchase({
       eventId:         razorpay_order_id,
@@ -96,13 +122,10 @@ export const verifyRegistrationFeePayment = async (req: Request, res: Response) 
       currency:        'INR',
       funnelType:      'dietitian_onboarding',
       email:           record.email,
+      phone,
       clientIp:        req.ip,
       clientUserAgent: req.headers['user-agent'] as string | undefined,
-    }).catch((err) => console.error('[CAPI] Dietitian registration purchase failed:', err));
-
-    // 500 AI diet plan credits — idempotent, safe to call alongside webhook
-    void creditRegistrationBonus(record.dietitian_id!)
-      .catch((err) => console.error('Registration fee plan credit failed:', err));
+    }).catch((err) => console.error('[CAPI] verify dietitian_onboarding purchase failed:', err));
 
     return successResponse(res, 200, 'Payment verified. Full access activated.', {
       dietitian_id:        record.dietitian_id,

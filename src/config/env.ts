@@ -36,7 +36,9 @@ const envSchema = z.object({
   // Razorpay — payment gateway
   RAZORPAY_KEY_ID: z.string().min(1, 'RAZORPAY_KEY_ID is required'),
   RAZORPAY_KEY_SECRET: z.string().min(1, 'RAZORPAY_KEY_SECRET is required'),
-  RAZORPAY_WEBHOOK_SECRET: z.string().default(''),
+  // Webhook secret is REQUIRED — empty string bypasses auth entirely and is not permitted.
+  // Set this to the secret shown in Razorpay Dashboard → Settings → Webhooks.
+  RAZORPAY_WEBHOOK_SECRET: z.string().min(1, 'RAZORPAY_WEBHOOK_SECRET is required — set this to the Razorpay webhook secret'),
 
   // Cashfree Payouts
   CASHFREE_CLIENT_ID: z.string().default(''),
@@ -112,6 +114,9 @@ const envSchema = z.object({
 
   // Meta Conversions API — server-side Purchase events
   META_CAPI_ACCESS_TOKEN: z.string().default(''),
+  // Set only in staging/dev to route events through the Test Events tab in Meta Events Manager.
+  // MUST be empty (or unset) in production — test codes suppress real event attribution.
+  META_CAPI_TEST_EVENT_CODE: z.string().default(''),
 
   // Agora — 1-to-1 video calls with cloud recording
   AGORA_APP_ID: z.string().default(''),

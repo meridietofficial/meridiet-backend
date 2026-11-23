@@ -42,17 +42,21 @@ export const findByOrderId = async (orderId: string): Promise<DietitianRegistrat
   return rows[0] ?? null;
 };
 
+// Returns true only if this call actually transitioned the row to 'paid'.
+// The AND status != 'paid' guard prevents concurrent duplicate webhooks
+// from both committing and double-firing CAPI.
 export const markRegistrationPaid = async (
   id: number,
   paymentId: string,
   signature: string,
-): Promise<void> => {
-  await execute(
+): Promise<boolean> => {
+  const result = await execute(
     `UPDATE dietitian_registration_payments
         SET status = 'paid', razorpay_payment_id = ?, razorpay_signature = ?, payment_verified_at = NOW()
-      WHERE id = ?`,
+      WHERE id = ? AND status != 'paid'`,
     [paymentId, signature, id],
   );
+  return result.affectedRows === 1;
 };
 
 export const markRegistrationFailed = async (orderId: string): Promise<void> => {

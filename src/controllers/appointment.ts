@@ -358,16 +358,37 @@ async function verifyAppointmentPaymentImpl(req: Request, res: Response, rzpKeyS
     const appointment = await findAppointmentByOrderId(razorpay_order_id);
     if (!appointment) return errorResponse(res, 404, 'Appointment not found for this order');
 
-    if (appointment.payment_status === 'paid') {
-      return errorResponse(res, 409, 'Payment already verified');
-    }
-
     if (appointment.status === 'cancelled') {
       return errorResponse(res, 409, 'This appointment slot was cancelled. Please book again.');
     }
 
-    await updateAppointmentPayment(razorpay_order_id, razorpay_payment_id, 'paid', 'confirmed');
+    // If webhook already won the race, return success without re-firing CAPI or notifications
+    if (appointment.payment_status === 'paid') {
+      return successResponse(res, 200, 'Payment already confirmed', {
+        appointment_id:   appointment.id,
+        status:           'confirmed',
+        payment_status:   'paid',
+        appointment_date: appointment.appointment_date,
+        slot:             appointment.slot,
+      });
+    }
 
+    // Attempt atomic transition — webhook may win this race concurrently
+    const won = await updateAppointmentPayment(razorpay_order_id, razorpay_payment_id, 'paid', 'confirmed');
+    if (!won) {
+      // Webhook won the concurrent race — it handles CAPI, coupon, and notifications
+      return successResponse(res, 200, 'Payment already confirmed', {
+        appointment_id:   appointment.id,
+        status:           'confirmed',
+        payment_status:   'paid',
+        appointment_date: appointment.appointment_date,
+        slot:             appointment.slot,
+      });
+    }
+
+    // Verify won the atomic race — fire all post-payment actions
+
+    // CAPI Purchase event
     void sendCapiPurchase({
       eventId:         razorpay_order_id,
       value:           appointment.final_amount ?? appointment.fee,
@@ -377,16 +398,16 @@ async function verifyAppointmentPaymentImpl(req: Request, res: Response, rzpKeyS
       phone:           appointment.phone,
       clientIp:        req.ip,
       clientUserAgent: req.headers['user-agent'] as string | undefined,
-    }).catch((err) => console.error('[CAPI] Consultation purchase failed:', err));
+    }).catch((err) => console.error('[CAPI] verify consultation purchase failed:', err));
 
-    // Background: GST invoice PDF emailed to customer
+    // GST invoice PDF emailed to customer
     void sendAppointmentGstInvoiceEmail(appointment.id).catch((err) => {
       console.error('[appointment] GST invoice email error:', err);
     });
 
-    // Record coupon usage now that payment is confirmed
+    // Coupon usage
     if (appointment.coupon_id && appointment.discount_applied != null && appointment.final_amount != null) {
-      await createCouponUsage({
+      void createCouponUsage({
         coupon_id:        appointment.coupon_id,
         user_id:          appointment.user_id,
         applicable_type:  'appointment',
@@ -398,20 +419,18 @@ async function verifyAppointmentPaymentImpl(req: Request, res: Response, rzpKeyS
       }).catch((e) => console.error('[appointment] Failed to record coupon usage:', e));
     }
 
-    // Fire notifications in background — don't let failures block the response
+    // Notifications in background — failures must not block the response
     setImmediate(async () => {
       try {
         const dietitian = await findDietitianById(appointment.dietitian_id);
         const dietitianName = dietitian?.full_name ?? 'Your Dietitian';
 
-        // Generate meeting links for video call appointments
         const isVideoCall = appointment.session_type === 'video_call';
         const baseUrl = env.APP_BASE_URL ?? 'http://localhost:3000';
         const userJoinUrl = isVideoCall
           ? `${baseUrl}/meet/${appointment.id}?t=${generateMeetingToken(appointment.id, userUid(appointment.id))}`
           : undefined;
 
-        // Email to user
         if (appointment.email) {
           const userMail = appointmentConfirmationEmail({
             userName: appointment.name,
@@ -427,7 +446,6 @@ async function verifyAppointmentPaymentImpl(req: Request, res: Response, rzpKeyS
             .catch((e) => console.error('[appointment] User confirmation email failed:', e));
         }
 
-        // Email to dietitian
         if (dietitian?.email) {
           const dietMail = appointmentNewBookingEmail({
             dietitianName,
@@ -441,7 +459,6 @@ async function verifyAppointmentPaymentImpl(req: Request, res: Response, rzpKeyS
             .catch((e) => console.error('[appointment] Dietitian new-booking email failed:', e));
         }
 
-        // WhatsApp to user
         if (appointment.phone) {
           await sendAppointmentBookedWhatsApp(
             appointment.phone,
@@ -452,7 +469,6 @@ async function verifyAppointmentPaymentImpl(req: Request, res: Response, rzpKeyS
           ).catch((e) => console.error('[appointment] User WhatsApp failed:', e));
         }
 
-        // WhatsApp to dietitian
         if (dietitian?.phone_number) {
           const dietitianPhone = dietitian.phone_code
             ? `${dietitian.phone_code}${dietitian.phone_number}`
@@ -471,11 +487,11 @@ async function verifyAppointmentPaymentImpl(req: Request, res: Response, rzpKeyS
     });
 
     return successResponse(res, 200, 'Payment verified. Appointment confirmed.', {
-      appointment_id: appointment.id,
-      status: 'confirmed',
-      payment_status: 'paid',
+      appointment_id:   appointment.id,
+      status:           'confirmed',
+      payment_status:   'paid',
       appointment_date: appointment.appointment_date,
-      slot: appointment.slot,
+      slot:             appointment.slot,
     });
   } catch (err) {
     console.error('Verify appointment payment error:', err);
